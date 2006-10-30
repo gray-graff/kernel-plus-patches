@@ -699,19 +699,19 @@ static void agp_v3_parse_one(u32 *requested_mode, u32 *bridge_agpstat, u32 *vga_
 			*bridge_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
 			*vga_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
 		} else {
-			printk(KERN_INFO PFX "Fell back to AGPx4 mode because");
 			if (!(*bridge_agpstat & AGPSTAT3_8X)) {
-				printk(KERN_INFO PFX "bridge couldn't do x8. bridge_agpstat:%x (orig=%x)\n",
+				printk(KERN_INFO PFX "Bridge couldn't do x8. bridge_agpstat:%x (orig=%x)\n",
 					*bridge_agpstat, origbridge);
 				*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
 				*bridge_agpstat |= AGPSTAT3_4X;
 			}
 			if (!(*vga_agpstat & AGPSTAT3_8X)) {
-				printk(KERN_INFO PFX "graphics card couldn't do x8. vga_agpstat:%x (orig=%x)\n",
+				printk(KERN_INFO PFX "Graphics card couldn't do x8. vga_agpstat:%x (orig=%x)\n",
 					*vga_agpstat, origvga);
 				*vga_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
 				*vga_agpstat |= AGPSTAT3_4X;
 			}
+			printk(KERN_INFO PFX "Fell back to AGPx4 mode.\n");
 		}
 	}
 
