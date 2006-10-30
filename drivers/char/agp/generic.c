@@ -669,13 +669,13 @@ static void agp_v3_parse_one(u32 *requested_mode, u32 *bridge_agpstat, u32 *vga_
 			*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
 			*bridge_agpstat |= AGPSTAT3_4X;
 			printk(KERN_INFO PFX "%s requested AGPx8 but bridge not capable.\n", current->comm);
-			return;
+			goto done;
 		}
 		if (!(*vga_agpstat & AGPSTAT3_8X)) {
 			*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
 			*bridge_agpstat |= AGPSTAT3_4X;
 			printk(KERN_INFO PFX "%s requested AGPx8 but graphic card not capable.\n", current->comm);
-			return;
+			goto done;
 		}
 		/* All set, bridge & device can do AGP x8*/
 		*bridge_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
