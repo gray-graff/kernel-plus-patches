@@ -930,9 +930,27 @@ error:
  */
 int cap_syslog(int type)
 {
-	if ((type != 3 && type != 10) && !capable(CAP_SYS_ADMIN))
-		return -EPERM;
-	return 0;
+	switch (type) {
+	case 3:		/* Read last kernel messages */
+	case 10:	/* Size of the log buffer */
+		/* Allow dmesg for unprivileged users. */
+		return 0;
+
+	case 2:		/* Read from log */
+	case 9:		/* Number of chars in the log buffer */
+		/*
+		 * Allow read() and poll() on a /proc/kmsg file descriptor
+		 * opened by a privileged process.  This does not enable
+		 * uncontrolled access through the syslog system call, because
+		 * sys_syslog() additionally checks the syslog open permission.
+		 */
+		return 0;
+
+	default:
+		if (!capable(CAP_SYS_ADMIN))
+			return -EPERM;
+		return 0;
+	}
 }
 
 /**
