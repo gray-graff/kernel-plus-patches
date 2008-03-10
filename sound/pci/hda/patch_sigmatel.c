@@ -3755,10 +3755,12 @@ static int patch_stac922x(struct hda_codec *codec)
 		case 0x106b1700:
 		case 0x106b0200:
 		case 0x106b1e00:
+		case 0x100: /* Invalid subsystem ID, happens randomly on
+			     * MacBook Pro 1st generation
+			     */
 			spec->board_config = STAC_INTEL_MAC_V3;
 			break;
 		case 0x106b1a00:
-		case 0x00000100:
 			spec->board_config = STAC_INTEL_MAC_V4;
 			break;
 		case 0x106b0a00:
