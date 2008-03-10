@@ -100,6 +100,7 @@ enum {
 	/* for backward compatibility */
 	STAC_MACMINI,
 	STAC_MACBOOK,
+	STAC_MACBOOK_V2,
 	STAC_MACBOOK_PRO_V1,
 	STAC_MACBOOK_PRO_V2,
 	STAC_IMAC_INTEL,
@@ -1514,6 +1515,7 @@ static const char *stac922x_models[STAC_922X_MODELS] = {
 	/* for backward compatibility */
 	[STAC_MACMINI]	= "macmini",
 	[STAC_MACBOOK]	= "macbook",
+	[STAC_MACBOOK_V2]	= "macbook-v2",
 	[STAC_MACBOOK_PRO_V1]	= "macbook-pro-v1",
 	[STAC_MACBOOK_PRO_V2]	= "macbook-pro",
 	[STAC_IMAC_INTEL] = "imac-intel",
