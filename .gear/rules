@@ -1,1 +1,1 @@
-tar.bz2: v@version@:.
+tar.bz2: v2.6.26:. name=linux-2.6.26
