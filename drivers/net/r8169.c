@@ -1956,7 +1956,8 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		dev->do_ioctl = rtl8169_ioctl;
 	}
 
-	/* Read MAC address from EEPROM */
+	spin_lock_init(&tp->lock);
+
 	rtl_init_mac_address(tp, ioaddr);
 
 	/* Get MAC address */
@@ -1998,8 +1999,6 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	init_timer(&tp->timer);
 	tp->timer.data = (unsigned long) dev;
 	tp->timer.function = rtl8169_phy_timer;
-
-	spin_lock_init(&tp->lock);
 
 	rc = register_netdev(dev);
 	if (rc < 0)
