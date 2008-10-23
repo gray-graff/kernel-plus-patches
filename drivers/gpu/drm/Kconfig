@@ -6,7 +6,7 @@
 #
 menuconfig DRM
 	tristate "Direct Rendering Manager (XFree86 4.1.0 and higher DRI support)"
-	depends on (AGP || AGP=n) && PCI && !EMULATED_CMPXCHG
+	depends on (AGP || AGP=n) && PCI && !EMULATED_CMPXCHG && MMU
 	help
 	  Kernel-level support for the Direct Rendering Infrastructure (DRI)
 	  introduced in XFree86 4.0. If you say Y here, you need to select
@@ -87,6 +87,7 @@ config DRM_MGA
 config DRM_SIS
 	tristate "SiS video cards"
 	depends on DRM && AGP
+	depends on FB_SIS || FB_SIS=n
 	help
 	  Choose this option if you have a SiS 630 or compatible video
           chipset. If M is selected the module will be called sis. AGP
@@ -105,3 +106,14 @@ config DRM_SAVAGE
 	help
 	  Choose this option if you have a Savage3D/4/SuperSavage/Pro/Twister
 	  chipset. If M is selected the module will be called savage.
+
+config DRM_MACH64
+	tristate "ATI Rage Pro (Mach64)"
+	depends on DRM && PCI
+	help
+	  Choose this option if you have an ATI Rage Pro (mach64 chipset)
+	  graphics card.  Example cards include:  3D Rage Pro, Xpert 98,
+	  3D Rage LT Pro, 3D Rage XL/XC, and 3D Rage Mobility (P/M, M1).
+	  Cards earlier than ATI Rage Pro (e.g. Rage II) are not supported.
+	  If M is selected, the module will be called mach64.  AGP support for
+	  this card is strongly suggested (unless you have a PCI version).

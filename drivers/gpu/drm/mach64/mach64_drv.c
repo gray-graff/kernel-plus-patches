@@ -1,8 +1,7 @@
-/* r128_drv.c -- ATI Rage 128 driver -*- linux-c -*-
- * Created: Mon Dec 13 09:47:27 1999 by faith@precisioninsight.com
+/* mach64_drv.c -- mach64 (Rage Pro) driver -*- linux-c -*-
+ * Created: Fri Nov 24 18:34:32 2000 by gareth@valinux.com
  *
- * Copyright 1999 Precision Insight, Inc., Cedar Park, Texas.
- * Copyright 2000 VA Linux Systems, Inc., Sunnyvale, California.
+ * Copyright 2000 Gareth Hughes
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -19,46 +18,43 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * VA LINUX SYSTEMS AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- * OTHER DEALINGS IN THE SOFTWARE.
+ * GARETH HUGHES BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  * Authors:
- *    Rickard E. (Rik) Faith <faith@valinux.com>
  *    Gareth Hughes <gareth@valinux.com>
+ *    Leif Delgass <ldelgass@retinalburn.net>
  */
 
 #include "drmP.h"
 #include "drm.h"
-#include "r128_drm.h"
-#include "r128_drv.h"
+#include "mach64_drm.h"
+#include "mach64_drv.h"
 
 #include "drm_pciids.h"
 
 static struct pci_device_id pciidlist[] = {
-	r128_PCI_IDS
+	mach64_PCI_IDS
 };
 
 static struct drm_driver driver = {
 	.driver_features =
-	    DRIVER_USE_AGP | DRIVER_USE_MTRR | DRIVER_PCI_DMA | DRIVER_SG |
-	    DRIVER_HAVE_DMA | DRIVER_HAVE_IRQ | DRIVER_IRQ_SHARED,
-	.dev_priv_size = sizeof(drm_r128_buf_priv_t),
-	.preclose = r128_driver_preclose,
-	.lastclose = r128_driver_lastclose,
-	.get_vblank_counter = r128_get_vblank_counter,
-	.enable_vblank = r128_enable_vblank,
-	.disable_vblank = r128_disable_vblank,
-	.irq_preinstall = r128_driver_irq_preinstall,
-	.irq_postinstall = r128_driver_irq_postinstall,
-	.irq_uninstall = r128_driver_irq_uninstall,
-	.irq_handler = r128_driver_irq_handler,
+	    DRIVER_USE_AGP | DRIVER_USE_MTRR | DRIVER_PCI_DMA | DRIVER_HAVE_DMA
+	    | DRIVER_HAVE_IRQ | DRIVER_IRQ_SHARED | DRIVER_IRQ_VBL,
+	.lastclose = mach64_driver_lastclose,
+	.get_vblank_counter = mach64_get_vblank_counter,
+	.enable_vblank = mach64_enable_vblank,
+	.disable_vblank = mach64_disable_vblank,
+	.irq_preinstall = mach64_driver_irq_preinstall,
+	.irq_postinstall = mach64_driver_irq_postinstall,
+	.irq_uninstall = mach64_driver_irq_uninstall,
+	.irq_handler = mach64_driver_irq_handler,
 	.reclaim_buffers = drm_core_reclaim_buffers,
 	.get_map_ofs = drm_core_get_map_ofs,
 	.get_reg_ofs = drm_core_get_reg_ofs,
-	.ioctls = r128_ioctls,
-	.dma_ioctl = r128_cce_buffers,
+	.ioctls = mach64_ioctls,
+	.dma_ioctl = mach64_dma_buffers,
 	.fops = {
 		.owner = THIS_MODULE,
 		.open = drm_open,
@@ -67,10 +63,7 @@ static struct drm_driver driver = {
 		.mmap = drm_mmap,
 		.poll = drm_poll,
 		.fasync = drm_fasync,
-#ifdef CONFIG_COMPAT
-		.compat_ioctl = r128_compat_ioctl,
-#endif
-	},
+		},
 	.pci_driver = {
 		.name = DRIVER_NAME,
 		.id_table = pciidlist,
@@ -84,20 +77,19 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-static int __init r128_init(void)
+static int __init mach64_init(void)
 {
-	driver.num_ioctls = r128_max_ioctl;
-
+	driver.num_ioctls = mach64_max_ioctl;
 	return drm_init(&driver);
 }
 
-static void __exit r128_exit(void)
+static void __exit mach64_exit(void)
 {
 	drm_exit(&driver);
 }
 
-module_init(r128_init);
-module_exit(r128_exit);
+module_init(mach64_init);
+module_exit(mach64_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
