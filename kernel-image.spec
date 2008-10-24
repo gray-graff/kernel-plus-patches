@@ -353,6 +353,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
+/lib/firmware/*
 
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
