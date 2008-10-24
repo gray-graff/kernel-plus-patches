@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.27-std-def-alt1
-# Fri Oct 24 11:21:48 2008
+# Fri Oct 24 13:00:19 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -3902,7 +3902,7 @@ CONFIG_HAVE_DYNAMIC_FTRACE=y
 # CONFIG_SCHED_TRACER is not set
 # CONFIG_CONTEXT_SWITCH_TRACER is not set
 # CONFIG_PROVIDE_OHCI1394_DMA_INIT is not set
-CONFIG_BUILD_DOCSRC=y
+# CONFIG_BUILD_DOCSRC is not set
 # CONFIG_SAMPLES is not set
 CONFIG_HAVE_ARCH_KGDB=y
 CONFIG_KGDB=y
