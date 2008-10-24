@@ -137,7 +137,7 @@ If possible, try to use glibc-kernheaders instead of this package.
 Summary: Headers and other files needed for building kernel modules
 Group: Development/Kernel 
 Requires: gcc%kgcc_version
-Requires: kernel-headers-alsa
+#Requires: kernel-headers-alsa
 
 %description -n kernel-headers-modules-%flavour
 This package contains header files, Makefiles and other parts of the
@@ -211,7 +211,7 @@ install -Dp -m644 arch/%base_arch/boot/bzImage \
 	%buildroot/boot/vmlinuz-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
-make modules_install INSTALL_MOD_PATH=%buildroot
+make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
@@ -234,7 +234,6 @@ popd
 
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
-install -d %buildroot%kbuild_dir/drivers/char/drm
 install -d %buildroot%kbuild_dir/drivers/md
 install -d %buildroot%kbuild_dir/drivers/usb/core
 install -d %buildroot%kbuild_dir/drivers/net/wireless
@@ -243,8 +242,6 @@ install -d %buildroot%kbuild_dir/kernel
 install -d %buildroot%kbuild_dir/lib
 cp -a drivers/scsi/{{scsi,scsi_typedefs}.h,scsi_module.c} \
 	%buildroot%kbuild_dir/drivers/scsi/
-cp -a drivers/char/drm/{drm,drm_os_linux,drmP}.h \
-	%buildroot%kbuild_dir/drivers/char/drm/
 cp -a drivers/md/dm*.h \
 	%buildroot%kbuild_dir/drivers/md/
 cp -a drivers/usb/core/*.h \
@@ -253,7 +250,7 @@ cp -a drivers/net/wireless/Kconfig \
 	%buildroot%kbuild_dir/drivers/net/wireless/
 cp -a lib/hexdump.c %buildroot%kbuild_dir/lib/
 cp -a kernel/workqueue.c %buildroot%kbuild_dir/kernel/
-cp -a net/mac80211/ieee80211_{i,key,rate}.h \
+cp -a net/mac80211/ieee80211_i.h \
 	%buildroot%kbuild_dir/net/mac80211/
 cp -a net/mac80211/sta_info.h \
 	%buildroot%kbuild_dir/net/mac80211/
