@@ -374,8 +374,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Fri Oct 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt1
-- 2.6.27.3
-
+- 2.6.27.4
+- Cramfs and ROMFS builded as module
 
 * Wed Sep 17 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt10
 - 2.6.25.18
