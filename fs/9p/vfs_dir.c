@@ -60,7 +60,7 @@ static inline int dt_type(struct p9_stat *mistat)
 
 /**
  * v9fs_dir_readdir - read a directory
- * @filep: opened file structure
+ * @filp: opened file structure
  * @dirent: directory structure ???
  * @filldir: function to populate directory structure ???
  *
@@ -119,6 +119,7 @@ int v9fs_dir_release(struct inode *inode, struct file *filp)
 
 const struct file_operations v9fs_dir_operations = {
 	.read = generic_read_dir,
+	.llseek = generic_file_llseek,
 	.readdir = v9fs_dir_readdir,
 	.open = v9fs_file_open,
 	.release = v9fs_dir_release,

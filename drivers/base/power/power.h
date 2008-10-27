@@ -1,10 +1,15 @@
+static inline void device_pm_init(struct device *dev)
+{
+	dev->power.status = DPM_ON;
+}
+
 #ifdef CONFIG_PM_SLEEP
 
 /*
  * main.c
  */
 
-extern struct list_head dpm_active;	/* The active device list */
+extern struct list_head dpm_list;	/* The active device list */
 
 static inline struct device *to_device(struct list_head *entry)
 {
@@ -13,28 +18,11 @@ static inline struct device *to_device(struct list_head *entry)
 
 extern void device_pm_add(struct device *);
 extern void device_pm_remove(struct device *);
-extern int pm_sleep_lock(void);
-extern void pm_sleep_unlock(void);
 
 #else /* CONFIG_PM_SLEEP */
 
-
-static inline void device_pm_add(struct device *dev)
-{
-}
-
-static inline void device_pm_remove(struct device *dev)
-{
-}
-
-static inline int pm_sleep_lock(void)
-{
-	return 0;
-}
-
-static inline void pm_sleep_unlock(void)
-{
-}
+static inline void device_pm_add(struct device *dev) {}
+static inline void device_pm_remove(struct device *dev) {}
 
 #endif
 

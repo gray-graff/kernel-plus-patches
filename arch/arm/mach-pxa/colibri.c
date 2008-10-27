@@ -21,15 +21,16 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <asm/mach-types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/sizes.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/flash.h>
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/colibri.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-gpio.h>
+#include <mach/colibri.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -97,7 +98,7 @@ static struct resource dm9000_resources[] = {
 	[2] = {
 		.start	= COLIBRI_ETH_IRQ,
 		.end	= COLIBRI_ETH_IRQ,
-		.flags	= IORESOURCE_IRQ,
+		.flags	= IORESOURCE_IRQ | IRQF_TRIGGER_RISING,
 	},
 };
 
@@ -118,7 +119,6 @@ static void __init colibri_init(void)
 	/* DM9000 LAN */
 	pxa_gpio_mode(GPIO78_nCS_2_MD);
 	pxa_gpio_mode(GPIO_DM9000 | GPIO_IN);
-	set_irq_type(COLIBRI_ETH_IRQ, IRQT_FALLING);
 
 	platform_add_devices(colibri_devices, ARRAY_SIZE(colibri_devices));
 }

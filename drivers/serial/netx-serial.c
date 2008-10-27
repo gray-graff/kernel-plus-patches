@@ -35,8 +35,8 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/hardware.h>
-#include <asm/arch/netx-regs.h>
+#include <mach/hardware.h>
+#include <mach/netx-regs.h>
 
 /* We've been assigned a range on the "Low-density serial ports" major */
 #define SERIAL_NX_MAJOR	204
@@ -203,7 +203,7 @@ static void netx_txint(struct uart_port *port)
 static void netx_rxint(struct uart_port *port)
 {
 	unsigned char rx, flg, status;
-	struct tty_struct *tty = port->info->tty;
+	struct tty_struct *tty = port->info->port.tty;
 
 	while (!(readl(port->membase + UART_FR) & FR_RXFE)) {
 		rx = readl(port->membase + UART_DR);
@@ -287,6 +287,7 @@ static void netx_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
 	unsigned int val;
 
+	/* FIXME: Locking needed ? */
 	if (mctrl & TIOCM_RTS) {
 		val = readl(port->membase + UART_RTS_CR);
 		writel(val | RTS_CR_RTS, port->membase + UART_RTS_CR);

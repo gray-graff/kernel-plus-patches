@@ -11,10 +11,13 @@
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 
 #include "internals.h"
 
 #ifdef CONFIG_SMP
+
+cpumask_t irq_default_affinity = CPU_MASK_ALL;
 
 /**
  *	synchronize_irq - wait for pending IRQ handlers (on other CPUs)
@@ -94,6 +97,27 @@ int irq_set_affinity(unsigned int irq, cpumask_t cpumask)
 	return 0;
 }
 
+#ifndef CONFIG_AUTO_IRQ_AFFINITY
+/*
+ * Generic version of the affinity autoselector.
+ */
+int irq_select_affinity(unsigned int irq)
+{
+	cpumask_t mask;
+
+	if (!irq_can_set_affinity(irq))
+		return 0;
+
+	cpus_and(mask, cpu_online_map, irq_default_affinity);
+
+	irq_desc[irq].affinity = mask;
+	irq_desc[irq].chip->set_affinity(irq, mask);
+
+	set_balance_irq_affinity(irq, mask);
+	return 0;
+}
+#endif
+
 #endif
 
 /**
@@ -149,6 +173,25 @@ void disable_irq(unsigned int irq)
 }
 EXPORT_SYMBOL(disable_irq);
 
+static void __enable_irq(struct irq_desc *desc, unsigned int irq)
+{
+	switch (desc->depth) {
+	case 0:
+		WARN(1, KERN_WARNING "Unbalanced enable for IRQ %d\n", irq);
+		break;
+	case 1: {
+		unsigned int status = desc->status & ~IRQ_DISABLED;
+
+		/* Prevent probing on this irq: */
+		desc->status = status | IRQ_NOPROBE;
+		check_irq_resend(desc, irq);
+		/* fall-through */
+	}
+	default:
+		desc->depth--;
+	}
+}
+
 /**
  *	enable_irq - enable handling of an irq
  *	@irq: Interrupt to enable
@@ -168,25 +211,21 @@ void enable_irq(unsigned int irq)
 		return;
 
 	spin_lock_irqsave(&desc->lock, flags);
-	switch (desc->depth) {
-	case 0:
-		printk(KERN_WARNING "Unbalanced enable for IRQ %d\n", irq);
-		WARN_ON(1);
-		break;
-	case 1: {
-		unsigned int status = desc->status & ~IRQ_DISABLED;
-
-		/* Prevent probing on this irq: */
-		desc->status = status | IRQ_NOPROBE;
-		check_irq_resend(desc, irq);
-		/* fall-through */
-	}
-	default:
-		desc->depth--;
-	}
+	__enable_irq(desc, irq);
 	spin_unlock_irqrestore(&desc->lock, flags);
 }
 EXPORT_SYMBOL(enable_irq);
+
+int set_irq_wake_real(unsigned int irq, unsigned int on)
+{
+	struct irq_desc *desc = irq_desc + irq;
+	int ret = -ENXIO;
+
+	if (desc->chip->set_wake)
+		ret = desc->chip->set_wake(irq, on);
+
+	return ret;
+}
 
 /**
  *	set_irq_wake - control irq power management wakeup
@@ -204,30 +243,32 @@ int set_irq_wake(unsigned int irq, unsigned int on)
 {
 	struct irq_desc *desc = irq_desc + irq;
 	unsigned long flags;
-	int ret = -ENXIO;
-	int (*set_wake)(unsigned, unsigned) = desc->chip->set_wake;
+	int ret = 0;
 
 	/* wakeup-capable irqs can be shared between drivers that
 	 * don't need to have the same sleep mode behaviors.
 	 */
 	spin_lock_irqsave(&desc->lock, flags);
 	if (on) {
-		if (desc->wake_depth++ == 0)
-			desc->status |= IRQ_WAKEUP;
-		else
-			set_wake = NULL;
+		if (desc->wake_depth++ == 0) {
+			ret = set_irq_wake_real(irq, on);
+			if (ret)
+				desc->wake_depth = 0;
+			else
+				desc->status |= IRQ_WAKEUP;
+		}
 	} else {
 		if (desc->wake_depth == 0) {
-			printk(KERN_WARNING "Unbalanced IRQ %d "
-					"wake disable\n", irq);
-			WARN_ON(1);
-		} else if (--desc->wake_depth == 0)
-			desc->status &= ~IRQ_WAKEUP;
-		else
-			set_wake = NULL;
+			WARN(1, "Unbalanced IRQ %d wake disable\n", irq);
+		} else if (--desc->wake_depth == 0) {
+			ret = set_irq_wake_real(irq, on);
+			if (ret)
+				desc->wake_depth = 1;
+			else
+				desc->status &= ~IRQ_WAKEUP;
+		}
 	}
-	if (set_wake)
-		ret = desc->chip->set_wake(irq, on);
+
 	spin_unlock_irqrestore(&desc->lock, flags);
 	return ret;
 }
@@ -264,6 +305,31 @@ void compat_irq_chip_set_default_handler(struct irq_desc *desc)
 		desc->handle_irq = NULL;
 }
 
+static int __irq_set_trigger(struct irq_chip *chip, unsigned int irq,
+		unsigned long flags)
+{
+	int ret;
+
+	if (!chip || !chip->set_type) {
+		/*
+		 * IRQF_TRIGGER_* but the PIC does not support multiple
+		 * flow-types?
+		 */
+		pr_warning("No set_type function for IRQ %d (%s)\n", irq,
+				chip ? (chip->name ? : "unknown") : "unknown");
+		return 0;
+	}
+
+	ret = chip->set_type(irq, flags & IRQF_TRIGGER_MASK);
+
+	if (ret)
+		pr_err("setting trigger mode %d for irq %u failed (%pF)\n",
+				(int)(flags & IRQF_TRIGGER_MASK),
+				irq, chip->set_type);
+
+	return ret;
+}
+
 /*
  * Internal function to register an irqaction - typically used to
  * allocate special interrupts that are part of the architecture.
@@ -275,6 +341,7 @@ int setup_irq(unsigned int irq, struct irqaction *new)
 	const char *old_name = NULL;
 	unsigned long flags;
 	int shared = 0;
+	int ret;
 
 	if (irq >= NR_IRQS)
 		return -EINVAL;
@@ -332,39 +399,26 @@ int setup_irq(unsigned int irq, struct irqaction *new)
 		shared = 1;
 	}
 
-	*p = new;
-
-	/* Exclude IRQ from balancing */
-	if (new->flags & IRQF_NOBALANCING)
-		desc->status |= IRQ_NO_BALANCING;
-
 	if (!shared) {
 		irq_chip_set_defaults(desc->chip);
 
+		/* Setup the type (level, edge polarity) if configured: */
+		if (new->flags & IRQF_TRIGGER_MASK) {
+			ret = __irq_set_trigger(desc->chip, irq, new->flags);
+
+			if (ret) {
+				spin_unlock_irqrestore(&desc->lock, flags);
+				return ret;
+			}
+		} else
+			compat_irq_chip_set_default_handler(desc);
 #if defined(CONFIG_IRQ_PER_CPU)
 		if (new->flags & IRQF_PERCPU)
 			desc->status |= IRQ_PER_CPU;
 #endif
 
-		/* Setup the type (level, edge polarity) if configured: */
-		if (new->flags & IRQF_TRIGGER_MASK) {
-			if (desc->chip && desc->chip->set_type)
-				desc->chip->set_type(irq,
-						new->flags & IRQF_TRIGGER_MASK);
-			else
-				/*
-				 * IRQF_TRIGGER_* but the PIC does not support
-				 * multiple flow-types?
-				 */
-				printk(KERN_WARNING "No IRQF_TRIGGER set_type "
-				       "function for IRQ %d (%s)\n", irq,
-				       desc->chip ? desc->chip->name :
-				       "unknown");
-		} else
-			compat_irq_chip_set_default_handler(desc);
-
 		desc->status &= ~(IRQ_AUTODETECT | IRQ_WAITING |
-				  IRQ_INPROGRESS);
+				  IRQ_INPROGRESS | IRQ_SPURIOUS_DISABLED);
 
 		if (!(desc->status & IRQ_NOAUTOEN)) {
 			desc->depth = 0;
@@ -376,10 +430,30 @@ int setup_irq(unsigned int irq, struct irqaction *new)
 		} else
 			/* Undo nested disables: */
 			desc->depth = 1;
+
+		/* Set default affinity mask once everything is setup */
+		irq_select_affinity(irq);
 	}
+
+	*p = new;
+
+	/* Exclude IRQ from balancing */
+	if (new->flags & IRQF_NOBALANCING)
+		desc->status |= IRQ_NO_BALANCING;
+
 	/* Reset broken irq detection when installing new handler */
 	desc->irq_count = 0;
 	desc->irqs_unhandled = 0;
+
+	/*
+	 * Check whether we disabled the irq via the spurious handler
+	 * before. Reenable it and give it another chance.
+	 */
+	if (shared && (desc->status & IRQ_SPURIOUS_DISABLED)) {
+		desc->status &= ~IRQ_SPURIOUS_DISABLED;
+		__enable_irq(desc, irq);
+	}
+
 	spin_unlock_irqrestore(&desc->lock, flags);
 
 	new->irq = irq;
@@ -554,8 +628,6 @@ int request_irq(unsigned int irq, irq_handler_t handler,
 	action->name = devname;
 	action->next = NULL;
 	action->dev_id = dev_id;
-
-	select_smp_affinity(irq);
 
 #ifdef CONFIG_DEBUG_SHIRQ
 	if (irqflags & IRQF_SHARED) {

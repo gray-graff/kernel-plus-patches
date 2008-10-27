@@ -179,7 +179,7 @@ module_param(qlen, uint, S_IRUGO|S_IWUSR);
 
 #define ERROR(dev, fmt, args...) \
 	xprintk(dev, KERN_ERR, fmt, ## args)
-#define WARN(dev, fmt, args...) \
+#define WARNING(dev, fmt, args...) \
 	xprintk(dev, KERN_WARNING, fmt, ## args)
 #define INFO(dev, fmt, args...) \
 	xprintk(dev, KERN_INFO, fmt, ## args)
@@ -390,9 +390,12 @@ static void rx_complete(struct usb_ep *ep, struct usb_request *req)
 
 	/* normal completion */
 	case 0:
-		list_add_tail(&req->list, &dev->rx_buffers);
-		wake_up_interruptible(&dev->rx_wait);
-		DBG(dev, "G_Printer : rx length %d\n", req->actual);
+		if (req->actual > 0) {
+			list_add_tail(&req->list, &dev->rx_buffers);
+			DBG(dev, "G_Printer : rx length %d\n", req->actual);
+		} else {
+			list_add(&req->list, &dev->rx_reqs);
+		}
 		break;
 
 	/* software-driven interface shutdown */
@@ -417,6 +420,8 @@ static void rx_complete(struct usb_ep *ep, struct usb_request *req)
 		list_add(&req->list, &dev->rx_reqs);
 		break;
 	}
+
+	wake_up_interruptible(&dev->rx_wait);
 	spin_unlock_irqrestore(&dev->lock, flags);
 }
 
@@ -457,6 +462,7 @@ printer_open(struct inode *inode, struct file *fd)
 	unsigned long		flags;
 	int			ret = -EBUSY;
 
+	lock_kernel();
 	dev = container_of(inode->i_cdev, struct printer_dev, printer_cdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -472,7 +478,7 @@ printer_open(struct inode *inode, struct file *fd)
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	DBG(dev, "printer_open returned %x\n", ret);
-
+	unlock_kernel();
 	return ret;
 }
 
@@ -492,6 +498,39 @@ printer_close(struct inode *inode, struct file *fd)
 	DBG(dev, "printer_close\n");
 
 	return 0;
+}
+
+/* This function must be called with interrupts turned off. */
+static void
+setup_rx_reqs(struct printer_dev *dev)
+{
+	struct usb_request              *req;
+
+	while (likely(!list_empty(&dev->rx_reqs))) {
+		int error;
+
+		req = container_of(dev->rx_reqs.next,
+				struct usb_request, list);
+		list_del_init(&req->list);
+
+		/* The USB Host sends us whatever amount of data it wants to
+		 * so we always set the length field to the full USB_BUFSIZE.
+		 * If the amount of data is more than the read() caller asked
+		 * for it will be stored in the request buffer until it is
+		 * asked for by read().
+		 */
+		req->length = USB_BUFSIZE;
+		req->complete = rx_complete;
+
+		error = usb_ep_queue(dev->out_ep, req, GFP_ATOMIC);
+		if (error) {
+			DBG(dev, "rx submit --> %d\n", error);
+			list_add(&req->list, &dev->rx_reqs);
+			break;
+		} else {
+			list_add(&req->list, &dev->rx_reqs_active);
+		}
+	}
 }
 
 static ssize_t
@@ -522,31 +561,7 @@ printer_read(struct file *fd, char __user *buf, size_t len, loff_t *ptr)
 	 */
 	dev->reset_printer = 0;
 
-	while (likely(!list_empty(&dev->rx_reqs))) {
-		int error;
-
-		req = container_of(dev->rx_reqs.next,
-				struct usb_request, list);
-		list_del_init(&req->list);
-
-		/* The USB Host sends us whatever amount of data it wants to
-		 * so we always set the length field to the full USB_BUFSIZE.
-		 * If the amount of data is more than the read() caller asked
-		 * for it will be stored in the request buffer until it is
-		 * asked for by read().
-		 */
-		req->length = USB_BUFSIZE;
-		req->complete = rx_complete;
-
-		error = usb_ep_queue(dev->out_ep, req, GFP_ATOMIC);
-		if (error) {
-			DBG(dev, "rx submit --> %d\n", error);
-			list_add(&req->list, &dev->rx_reqs);
-			break;
-		} else {
-			list_add(&req->list, &dev->rx_reqs_active);
-		}
-	}
+	setup_rx_reqs(dev);
 
 	bytes_copied = 0;
 	current_rx_req = dev->current_rx_req;
@@ -615,9 +630,9 @@ printer_read(struct file *fd, char __user *buf, size_t len, loff_t *ptr)
 
 		spin_lock_irqsave(&dev->lock, flags);
 
-		/* We've disconnected or reset free the req and buffer */
+		/* We've disconnected or reset so return. */
 		if (dev->reset_printer) {
-			printer_req_free(dev->out_ep, current_rx_req);
+			list_add(&current_rx_req->list, &dev->rx_reqs);
 			spin_unlock_irqrestore(&dev->lock, flags);
 			spin_unlock(&dev->lock_printer_io);
 			return -EAGAIN;
@@ -735,7 +750,7 @@ printer_write(struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 
 		/* We've disconnected or reset so free the req and buffer */
 		if (dev->reset_printer) {
-			printer_req_free(dev->in_ep, req);
+			list_add(&req->list, &dev->tx_reqs);
 			spin_unlock_irqrestore(&dev->lock, flags);
 			spin_unlock(&dev->lock_printer_io);
 			return -EAGAIN;
@@ -791,6 +806,12 @@ printer_poll(struct file *fd, poll_table *wait)
 	unsigned long		flags;
 	int			status = 0;
 
+	spin_lock(&dev->lock_printer_io);
+	spin_lock_irqsave(&dev->lock, flags);
+	setup_rx_reqs(dev);
+	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock(&dev->lock_printer_io);
+
 	poll_wait(fd, &dev->rx_wait, wait);
 	poll_wait(fd, &dev->tx_wait, wait);
 
@@ -798,7 +819,8 @@ printer_poll(struct file *fd, poll_table *wait)
 	if (likely(!list_empty(&dev->tx_reqs)))
 		status |= POLLOUT | POLLWRNORM;
 
-	if (likely(!list_empty(&dev->rx_buffers)))
+	if (likely(dev->current_rx_bytes) ||
+			likely(!list_empty(&dev->rx_buffers)))
 		status |= POLLIN | POLLRDNORM;
 
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -806,9 +828,8 @@ printer_poll(struct file *fd, poll_table *wait)
 	return status;
 }
 
-static int
-printer_ioctl(struct inode *inode, struct file *fd, unsigned int code,
-		unsigned long arg)
+static long
+printer_ioctl(struct file *fd, unsigned int code, unsigned long arg)
 {
 	struct printer_dev	*dev = fd->private_data;
 	unsigned long		flags;
@@ -847,7 +868,7 @@ static struct file_operations printer_io_operations = {
 	.write =	printer_write,
 	.fsync =	printer_fsync,
 	.poll =		printer_poll,
-	.ioctl =	printer_ioctl,
+	.unlocked_ioctl = printer_ioctl,
 	.release =	printer_close
 };
 
@@ -894,7 +915,7 @@ static void printer_reset_interface(struct printer_dev *dev)
 	if (dev->interface < 0)
 		return;
 
-	DBG(dev, "%s\n", __FUNCTION__);
+	DBG(dev, "%s\n", __func__);
 
 	if (dev->in)
 		usb_ep_disable(dev->in_ep);
@@ -1084,6 +1105,7 @@ static void printer_soft_reset(struct printer_dev *dev)
 	if (usb_ep_enable(dev->out_ep, dev->out))
 		DBG(dev, "Failed to enable USB out_ep\n");
 
+	wake_up_interruptible(&dev->rx_wait);
 	wake_up_interruptible(&dev->tx_wait);
 	wake_up_interruptible(&dev->tx_flush_wait);
 }
@@ -1262,7 +1284,7 @@ printer_disconnect(struct usb_gadget *gadget)
 	struct printer_dev	*dev = get_gadget_data(gadget);
 	unsigned long		flags;
 
-	DBG(dev, "%s\n", __FUNCTION__);
+	DBG(dev, "%s\n", __func__);
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -1278,7 +1300,7 @@ printer_unbind(struct usb_gadget *gadget)
 	struct usb_request	*req;
 
 
-	DBG(dev, "%s\n", __FUNCTION__);
+	DBG(dev, "%s\n", __func__);
 
 	/* Remove sysfs files */
 	device_destroy(usb_gadget_class, g_printer_devno);
@@ -1338,8 +1360,8 @@ printer_bind(struct usb_gadget *gadget)
 
 
 	/* Setup the sysfs files for the printer gadget. */
-	dev->pdev = device_create(usb_gadget_class, NULL, g_printer_devno,
-			"g_printer");
+	dev->pdev = device_create_drvdata(usb_gadget_class, NULL,
+					  g_printer_devno, NULL, "g_printer");
 	if (IS_ERR(dev->pdev)) {
 		ERROR(dev, "Failed to create device: g_printer\n");
 		goto fail;

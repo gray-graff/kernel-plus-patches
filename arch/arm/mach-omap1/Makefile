@@ -3,9 +3,12 @@
 #
 
 # Common support
-obj-y := io.o id.o clock.o irq.o mux.o serial.o devices.o
+obj-y := io.o id.o sram.o clock.o irq.o mux.o serial.o devices.o
 
-obj-$(CONFIG_OMAP_MPU_TIMER)		+= time.o
+obj-$(CONFIG_OMAP_MCBSP) += mcbsp.o
+
+obj-$(CONFIG_OMAP_MPU_TIMER)	+= time.o
+obj-$(CONFIG_OMAP_32K_TIMER)	+= timer32k.o
 
 # Power Management
 obj-$(CONFIG_PM) += pm.o sleep.o

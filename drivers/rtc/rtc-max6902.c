@@ -20,8 +20,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/version.h>
-
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/init.h>
@@ -140,7 +138,7 @@ static int max6902_get_datetime(struct device *dev, struct rtc_time *dt)
 	dt->tm_year -= 1900;
 
 #ifdef MAX6902_DEBUG
-	printk("\n%s : Read RTC values\n",__FUNCTION__);
+	printk("\n%s : Read RTC values\n",__func__);
 	printk("tm_hour: %i\n",dt->tm_hour);
 	printk("tm_min : %i\n",dt->tm_min);
 	printk("tm_sec : %i\n",dt->tm_sec);
@@ -158,7 +156,7 @@ static int max6902_set_datetime(struct device *dev, struct rtc_time *dt)
 	dt->tm_year = dt->tm_year+1900;
 
 #ifdef MAX6902_DEBUG
-	printk("\n%s : Setting RTC values\n",__FUNCTION__);
+	printk("\n%s : Setting RTC values\n",__func__);
 	printk("tm_sec : %i\n",dt->tm_sec);
 	printk("tm_min : %i\n",dt->tm_min);
 	printk("tm_hour: %i\n",dt->tm_hour);

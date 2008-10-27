@@ -12,11 +12,22 @@
 #include <asm/errno.h>
 
 #if defined(CONFIG_PM_SLEEP) && defined(CONFIG_VT) && defined(CONFIG_VT_CONSOLE)
+extern void pm_set_vt_switch(int);
 extern int pm_prepare_console(void);
 extern void pm_restore_console(void);
 #else
-static inline int pm_prepare_console(void) { return 0; }
-static inline void pm_restore_console(void) {}
+static inline void pm_set_vt_switch(int do_switch)
+{
+}
+
+static inline int pm_prepare_console(void)
+{
+	return 0;
+}
+
+static inline void pm_restore_console(void)
+{
+}
 #endif
 
 typedef int __bitwise suspend_state_t;
@@ -75,6 +86,11 @@ typedef int __bitwise suspend_state_t;
  *	that implement @begin(), but platforms implementing @begin() should
  *	also provide a @end() which cleans up transitions aborted before
  *	@enter().
+ *
+ * @recover: Recover the platform from a suspend failure.
+ *	Called by the PM core if the suspending of devices fails.
+ *	This callback is optional and should only be implemented by platforms
+ *	which require special recovery actions in that situation.
  */
 struct platform_suspend_ops {
 	int (*valid)(suspend_state_t state);
@@ -83,6 +99,7 @@ struct platform_suspend_ops {
 	int (*enter)(suspend_state_t state);
 	void (*finish)(void);
 	void (*end)(void);
+	void (*recover)(void);
 };
 
 #ifdef CONFIG_SUSPEND
@@ -138,7 +155,7 @@ extern void mark_free_pages(struct zone *zone);
  * The methods in this structure allow a platform to carry out special
  * operations required by it during a hibernation transition.
  *
- * All the methods below must be implemented.
+ * All the methods below, except for @recover(), must be implemented.
  *
  * @begin: Tell the platform driver that we're starting hibernation.
  *	Called right after shrinking memory and before freezing devices.
@@ -178,6 +195,11 @@ extern void mark_free_pages(struct zone *zone);
  * @restore_cleanup: Clean up after a failing image restoration.
  *	Called right after the nonboot CPUs have been enabled and before
  *	thawing devices (runs with IRQs on).
+ *
+ * @recover: Recover the platform from a failure to suspend devices.
+ *	Called by the PM core if the suspending of devices during hibernation
+ *	fails.  This callback is optional and should only be implemented by
+ *	platforms which require special recovery actions in that situation.
  */
 struct platform_hibernation_ops {
 	int (*begin)(void);
@@ -189,16 +211,17 @@ struct platform_hibernation_ops {
 	void (*leave)(void);
 	int (*pre_restore)(void);
 	void (*restore_cleanup)(void);
+	void (*recover)(void);
 };
 
 #ifdef CONFIG_HIBERNATION
 /* kernel/power/snapshot.c */
 extern void __register_nosave_region(unsigned long b, unsigned long e, int km);
-static inline void register_nosave_region(unsigned long b, unsigned long e)
+static inline void __init register_nosave_region(unsigned long b, unsigned long e)
 {
 	__register_nosave_region(b, e, 0);
 }
-static inline void register_nosave_region_late(unsigned long b, unsigned long e)
+static inline void __init register_nosave_region_late(unsigned long b, unsigned long e)
 {
 	__register_nosave_region(b, e, 1);
 }
@@ -254,5 +277,7 @@ static inline void register_nosave_region_late(unsigned long b, unsigned long e)
 {
 }
 #endif
+
+extern struct mutex pm_mutex;
 
 #endif /* _LINUX_SUSPEND_H */

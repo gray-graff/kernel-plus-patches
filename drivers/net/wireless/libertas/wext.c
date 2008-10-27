@@ -16,8 +16,8 @@
 #include "decl.h"
 #include "defs.h"
 #include "dev.h"
-#include "join.h"
 #include "wext.h"
+#include "scan.h"
 #include "assoc.h"
 #include "cmd.h"
 
@@ -579,6 +579,9 @@ static int lbs_get_range(struct net_device *dev, struct iw_request_info *info,
 	       range->num_bitrates);
 
 	range->num_frequency = 0;
+
+	range->scan_capa = IW_SCAN_CAPA_ESSID;
+
 	if (priv->enable11d &&
 	    (priv->connect_status == LBS_CONNECTED ||
 	    priv->mesh_connect_status == LBS_CONNECTED)) {
@@ -602,7 +605,7 @@ static int lbs_get_range(struct net_device *dev, struct iw_request_info *info,
 			lbs_deb_wext("chan_no %d\n", chan_no);
 			range->freq[range->num_frequency].i = (long)chan_no;
 			range->freq[range->num_frequency].m =
-			    (long)lbs_chan_2_freq(chan_no, band) * 100000;
+			    (long)lbs_chan_2_freq(chan_no) * 100000;
 			range->freq[range->num_frequency].e = 1;
 			range->num_frequency++;
 		}
@@ -653,13 +656,10 @@ static int lbs_get_range(struct net_device *dev, struct iw_request_info *info,
 	range->num_encoding_sizes = 2;
 	range->max_encoding_tokens = 4;
 
-	range->min_pmp = 1000000;
-	range->max_pmp = 120000000;
-	range->min_pmt = 1000;
-	range->max_pmt = 1000000;
-	range->pmp_flags = IW_POWER_PERIOD;
-	range->pmt_flags = IW_POWER_TIMEOUT;
-	range->pm_capa = IW_POWER_PERIOD | IW_POWER_TIMEOUT | IW_POWER_ALL_R;
+	/*
+	 * Right now we support only "iwconfig ethX power on|off"
+	 */
+	range->pm_capa = IW_POWER_ON;
 
 	/*
 	 * Minimum version we recommend
@@ -781,21 +781,14 @@ static int lbs_get_power(struct net_device *dev, struct iw_request_info *info,
 			  struct iw_param *vwrq, char *extra)
 {
 	struct lbs_private *priv = dev->priv;
-	int mode;
 
 	lbs_deb_enter(LBS_DEB_WEXT);
 
-	mode = priv->psmode;
-
-	if ((vwrq->disabled = (mode == LBS802_11POWERMODECAM))
-	    || priv->connect_status == LBS_DISCONNECTED)
-	{
-		goto out;
-	}
-
 	vwrq->value = 0;
+	vwrq->flags = 0;
+	vwrq->disabled = priv->psmode == LBS802_11POWERMODECAM
+		|| priv->connect_status == LBS_DISCONNECTED;
 
-out:
 	lbs_deb_leave(LBS_DEB_WEXT);
 	return 0;
 }
@@ -817,6 +810,7 @@ static struct iw_statistics *lbs_get_wireless_stats(struct net_device *dev)
 	int stats_valid = 0;
 	u8 rssi;
 	u32 tx_retries;
+	struct cmd_ds_802_11_get_log log;
 
 	lbs_deb_enter(LBS_DEB_WEXT);
 
@@ -860,7 +854,11 @@ static struct iw_statistics *lbs_get_wireless_stats(struct net_device *dev)
 	/* Quality by TX errors */
 	priv->wstats.discard.retries = priv->stats.tx_errors;
 
-	tx_retries = le32_to_cpu(priv->logmsg.retry);
+	memset(&log, 0, sizeof(log));
+	log.hdr.size = cpu_to_le16(sizeof(log));
+	lbs_cmd_with_response(priv, CMD_802_11_GET_LOG, &log);
+
+	tx_retries = le32_to_cpu(log.retry);
 
 	if (tx_retries > 75)
 		tx_qual = (90 - tx_retries) * POOR / 15;
@@ -876,10 +874,9 @@ static struct iw_statistics *lbs_get_wireless_stats(struct net_device *dev)
 		    (PERFECT - VERY_GOOD) / 50 + VERY_GOOD;
 	quality = min(quality, tx_qual);
 
-	priv->wstats.discard.code = le32_to_cpu(priv->logmsg.wepundecryptable);
-	priv->wstats.discard.fragment = le32_to_cpu(priv->logmsg.rxfrag);
+	priv->wstats.discard.code = le32_to_cpu(log.wepundecryptable);
 	priv->wstats.discard.retries = tx_retries;
-	priv->wstats.discard.misc = le32_to_cpu(priv->logmsg.ackfailure);
+	priv->wstats.discard.misc = le32_to_cpu(log.ackfailure);
 
 	/* Calculate quality */
 	priv->wstats.qual.qual = min_t(u8, quality, 100);
@@ -888,8 +885,6 @@ static struct iw_statistics *lbs_get_wireless_stats(struct net_device *dev)
 
 	/* update stats asynchronously for future calls */
 	lbs_prepare_and_send_command(priv, CMD_802_11_RSSI, 0,
-					0, 0, NULL);
-	lbs_prepare_and_send_command(priv, CMD_802_11_GET_LOG, 0,
 					0, 0, NULL);
 out:
 	if (!stats_valid) {
@@ -1007,7 +1002,7 @@ static int lbs_mesh_set_freq(struct net_device *dev,
 		else if (priv->mode == IW_MODE_ADHOC)
 			lbs_stop_adhoc_network(priv);
 	}
-	lbs_mesh_config(priv, 1, fwrq->m);
+	lbs_mesh_config(priv, CMD_ACT_MESH_CONFIG_START, fwrq->m);
 	lbs_update_channel(priv);
 	ret = 0;
 
@@ -1026,29 +1021,38 @@ static int lbs_set_rate(struct net_device *dev, struct iw_request_info *info,
 
 	lbs_deb_enter(LBS_DEB_WEXT);
 	lbs_deb_wext("vwrq->value %d\n", vwrq->value);
+	lbs_deb_wext("vwrq->fixed %d\n", vwrq->fixed);
+
+	if (vwrq->fixed && vwrq->value == -1)
+		goto out;
 
 	/* Auto rate? */
-	if (vwrq->value == -1) {
-		priv->auto_rate = 1;
+	priv->enablehwauto = !vwrq->fixed;
+
+	if (vwrq->value == -1)
 		priv->cur_rate = 0;
-	} else {
+	else {
 		if (vwrq->value % 100000)
 			goto out;
 
+		new_rate = vwrq->value / 500000;
+		priv->cur_rate = new_rate;
+		/* the rest is only needed for lbs_set_data_rate() */
 		memset(rates, 0, sizeof(rates));
 		copy_active_data_rates(priv, rates);
-		new_rate = vwrq->value / 500000;
 		if (!memchr(rates, new_rate, sizeof(rates))) {
 			lbs_pr_alert("fixed data rate 0x%X out of range\n",
 				new_rate);
 			goto out;
 		}
-
-		priv->cur_rate = new_rate;
-		priv->auto_rate = 0;
 	}
 
-	ret = lbs_set_data_rate(priv, new_rate);
+	/* Try the newer command first (Firmware Spec 5.1 and above) */
+	ret = lbs_cmd_802_11_rate_adapt_rateset(priv, CMD_ACT_SET);
+
+	/* Fallback to older version */
+	if (ret)
+		ret = lbs_set_data_rate(priv, new_rate);
 
 out:
 	lbs_deb_leave_args(LBS_DEB_WEXT, "ret %d", ret);
@@ -1065,7 +1069,7 @@ static int lbs_get_rate(struct net_device *dev, struct iw_request_info *info,
 	if (priv->connect_status == LBS_CONNECTED) {
 		vwrq->value = priv->cur_rate * 500000;
 
-		if (priv->auto_rate)
+		if (priv->enablehwauto)
 			vwrq->fixed = 0;
 		else
 			vwrq->fixed = 1;
@@ -2016,7 +2020,8 @@ static int lbs_mesh_set_essid(struct net_device *dev,
 		priv->mesh_ssid_len = dwrq->length;
 	}
 
-	lbs_mesh_config(priv, 1, priv->curbssparams.channel);
+	lbs_mesh_config(priv, CMD_ACT_MESH_CONFIG_START,
+			priv->curbssparams.channel);
  out:
 	lbs_deb_leave_args(LBS_DEB_WEXT, "ret %d", ret);
 	return ret;
@@ -2064,23 +2069,6 @@ static int lbs_set_wap(struct net_device *dev, struct iw_request_info *info,
 
 	return ret;
 }
-
-void lbs_get_fwversion(struct lbs_private *priv, char *fwversion, int maxlen)
-{
-	char fwver[32];
-
-	mutex_lock(&priv->lock);
-
-	sprintf(fwver, "%u.%u.%u.p%u",
-		priv->fwrelease >> 24 & 0xff,
-		priv->fwrelease >> 16 & 0xff,
-		priv->fwrelease >>  8 & 0xff,
-		priv->fwrelease       & 0xff);
-
-	mutex_unlock(&priv->lock);
-	snprintf(fwversion, maxlen, fwver);
-}
-
 
 /*
  * iwconfig settable callbacks

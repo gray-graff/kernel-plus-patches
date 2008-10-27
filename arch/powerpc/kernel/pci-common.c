@@ -598,6 +598,7 @@ void __devinit pci_process_bridge_OF_ranges(struct pci_controller *hose,
 			res->start = pci_addr;
 			break;
 		case 2:		/* PCI Memory space */
+		case 3:		/* PCI 64 bits Memory space */
 			printk(KERN_INFO
 			       " MEM 0x%016llx..0x%016llx -> 0x%016llx %s\n",
 			       cpu_addr, cpu_addr + size - 1, pci_addr,
@@ -649,11 +650,18 @@ void __devinit pci_process_bridge_OF_ranges(struct pci_controller *hose,
 		}
 	}
 
-	/* Out of paranoia, let's put the ISA hole last if any */
-	if (isa_hole >= 0 && memno > 0 && isa_hole != (memno-1)) {
-		struct resource tmp = hose->mem_resources[isa_hole];
-		hose->mem_resources[isa_hole] = hose->mem_resources[memno-1];
-		hose->mem_resources[memno-1] = tmp;
+	/* If there's an ISA hole and the pci_mem_offset is -not- matching
+	 * the ISA hole offset, then we need to remove the ISA hole from
+	 * the resource list for that brige
+	 */
+	if (isa_hole >= 0 && hose->pci_mem_offset != isa_mb) {
+		unsigned int next = isa_hole + 1;
+		printk(KERN_INFO " Removing ISA hole at 0x%016llx\n", isa_mb);
+		if (next < memno)
+			memmove(&hose->mem_resources[isa_hole],
+				&hose->mem_resources[next],
+				sizeof(struct resource) * (memno - next));
+		hose->mem_resources[--memno].flags = 0;
 	}
 }
 
@@ -1161,41 +1169,9 @@ EXPORT_SYMBOL_GPL(pcibios_claim_one_bus);
 
 int pcibios_enable_device(struct pci_dev *dev, int mask)
 {
-	u16 cmd, old_cmd;
-	int idx;
-	struct resource *r;
-
 	if (ppc_md.pcibios_enable_device_hook)
 		if (ppc_md.pcibios_enable_device_hook(dev))
 			return -EINVAL;
 
-	pci_read_config_word(dev, PCI_COMMAND, &cmd);
-	old_cmd = cmd;
-	for (idx = 0; idx < PCI_NUM_RESOURCES; idx++) {
-		/* Only set up the requested stuff */
-		if (!(mask & (1 << idx)))
-			continue;
-		r = &dev->resource[idx];
-		if (!(r->flags & (IORESOURCE_IO | IORESOURCE_MEM)))
-			continue;
-		if ((idx == PCI_ROM_RESOURCE) &&
-				(!(r->flags & IORESOURCE_ROM_ENABLE)))
-			continue;
-		if (r->parent == NULL) {
-			printk(KERN_ERR "PCI: Device %s not available because"
-			       " of resource collisions\n", pci_name(dev));
-			return -EINVAL;
-		}
-		if (r->flags & IORESOURCE_IO)
-			cmd |= PCI_COMMAND_IO;
-		if (r->flags & IORESOURCE_MEM)
-			cmd |= PCI_COMMAND_MEMORY;
-	}
-	if (cmd != old_cmd) {
-		printk("PCI: Enabling device %s (%04x -> %04x)\n",
-		       pci_name(dev), old_cmd, cmd);
-		pci_write_config_word(dev, PCI_COMMAND, cmd);
-	}
-	return 0;
+	return pci_enable_resources(dev, mask);
 }
-

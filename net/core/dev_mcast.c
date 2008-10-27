@@ -72,7 +72,7 @@ int dev_mc_delete(struct net_device *dev, void *addr, int alen, int glbl)
 {
 	int err;
 
-	netif_tx_lock_bh(dev);
+	netif_addr_lock_bh(dev);
 	err = __dev_addr_delete(&dev->mc_list, &dev->mc_count,
 				addr, alen, glbl);
 	if (!err) {
@@ -83,7 +83,7 @@ int dev_mc_delete(struct net_device *dev, void *addr, int alen, int glbl)
 
 		__dev_set_rx_mode(dev);
 	}
-	netif_tx_unlock_bh(dev);
+	netif_addr_unlock_bh(dev);
 	return err;
 }
 
@@ -95,11 +95,11 @@ int dev_mc_add(struct net_device *dev, void *addr, int alen, int glbl)
 {
 	int err;
 
-	netif_tx_lock_bh(dev);
+	netif_addr_lock_bh(dev);
 	err = __dev_addr_add(&dev->mc_list, &dev->mc_count, addr, alen, glbl);
 	if (!err)
 		__dev_set_rx_mode(dev);
-	netif_tx_unlock_bh(dev);
+	netif_addr_unlock_bh(dev);
 	return err;
 }
 
@@ -119,12 +119,12 @@ int dev_mc_sync(struct net_device *to, struct net_device *from)
 {
 	int err = 0;
 
-	netif_tx_lock_bh(to);
+	netif_addr_lock_bh(to);
 	err = __dev_addr_sync(&to->mc_list, &to->mc_count,
 			      &from->mc_list, &from->mc_count);
 	if (!err)
 		__dev_set_rx_mode(to);
-	netif_tx_unlock_bh(to);
+	netif_addr_unlock_bh(to);
 
 	return err;
 }
@@ -143,53 +143,28 @@ EXPORT_SYMBOL(dev_mc_sync);
  */
 void dev_mc_unsync(struct net_device *to, struct net_device *from)
 {
-	netif_tx_lock_bh(from);
-	netif_tx_lock_bh(to);
+	netif_addr_lock_bh(from);
+	netif_addr_lock(to);
 
 	__dev_addr_unsync(&to->mc_list, &to->mc_count,
 			  &from->mc_list, &from->mc_count);
 	__dev_set_rx_mode(to);
 
-	netif_tx_unlock_bh(to);
-	netif_tx_unlock_bh(from);
+	netif_addr_unlock(to);
+	netif_addr_unlock_bh(from);
 }
 EXPORT_SYMBOL(dev_mc_unsync);
 
 #ifdef CONFIG_PROC_FS
-static void *dev_mc_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(dev_base_lock)
-{
-	struct net *net = seq_file_net(seq);
-	struct net_device *dev;
-	loff_t off = 0;
-
-	read_lock(&dev_base_lock);
-	for_each_netdev(net, dev) {
-		if (off++ == *pos)
-			return dev;
-	}
-	return NULL;
-}
-
-static void *dev_mc_seq_next(struct seq_file *seq, void *v, loff_t *pos)
-{
-	++*pos;
-	return next_net_device((struct net_device *)v);
-}
-
-static void dev_mc_seq_stop(struct seq_file *seq, void *v)
-	__releases(dev_base_lock)
-{
-	read_unlock(&dev_base_lock);
-}
-
-
 static int dev_mc_seq_show(struct seq_file *seq, void *v)
 {
 	struct dev_addr_list *m;
 	struct net_device *dev = v;
 
-	netif_tx_lock_bh(dev);
+	if (v == SEQ_START_TOKEN)
+		return 0;
+
+	netif_addr_lock_bh(dev);
 	for (m = dev->mc_list; m; m = m->next) {
 		int i;
 
@@ -201,14 +176,14 @@ static int dev_mc_seq_show(struct seq_file *seq, void *v)
 
 		seq_putc(seq, '\n');
 	}
-	netif_tx_unlock_bh(dev);
+	netif_addr_unlock_bh(dev);
 	return 0;
 }
 
 static const struct seq_operations dev_mc_seq_ops = {
-	.start = dev_mc_seq_start,
-	.next  = dev_mc_seq_next,
-	.stop  = dev_mc_seq_stop,
+	.start = dev_seq_start,
+	.next  = dev_seq_next,
+	.stop  = dev_seq_stop,
 	.show  = dev_mc_seq_show,
 };
 

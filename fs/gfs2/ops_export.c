@@ -134,7 +134,7 @@ static struct dentry *gfs2_get_parent(struct dentry *child)
 	struct dentry *dentry;
 
 	gfs2_str2qstr(&dotdot, "..");
-	inode = gfs2_lookupi(child->d_inode, &dotdot, 1, NULL);
+	inode = gfs2_lookupi(child->d_inode, &dotdot, 1);
 
 	if (!inode)
 		return ERR_PTR(-ENOENT);
@@ -204,8 +204,6 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb,
 	inode = gfs2_inode_lookup(sb, DT_UNKNOWN,
 					inum->no_addr,
 					0, 0);
-	if (!inode)
-		goto fail;
 	if (IS_ERR(inode)) {
 		error = PTR_ERR(inode);
 		goto fail;

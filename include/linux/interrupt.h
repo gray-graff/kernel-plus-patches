@@ -102,6 +102,30 @@ extern void disable_irq_nosync(unsigned int irq);
 extern void disable_irq(unsigned int irq);
 extern void enable_irq(unsigned int irq);
 
+#if defined(CONFIG_SMP) && defined(CONFIG_GENERIC_HARDIRQS)
+
+extern cpumask_t irq_default_affinity;
+
+extern int irq_set_affinity(unsigned int irq, cpumask_t cpumask);
+extern int irq_can_set_affinity(unsigned int irq);
+extern int irq_select_affinity(unsigned int irq);
+
+#else /* CONFIG_SMP */
+
+static inline int irq_set_affinity(unsigned int irq, cpumask_t cpumask)
+{
+	return -EINVAL;
+}
+
+static inline int irq_can_set_affinity(unsigned int irq)
+{
+	return 0;
+}
+
+static inline int irq_select_affinity(unsigned int irq)  { return 0; }
+
+#endif /* CONFIG_SMP && CONFIG_GENERIC_HARDIRQS */
+
 #ifdef CONFIG_GENERIC_HARDIRQS
 /*
  * Special lockdep variants of irq disabling/enabling.
@@ -199,35 +223,6 @@ static inline int disable_irq_wake(unsigned int irq)
 #define or_softirq_pending(x)  (local_softirq_pending() |= (x))
 #endif
 
-/*
- * Temporary defines for UP kernels, until all code gets fixed.
- */
-#ifndef CONFIG_SMP
-static inline void __deprecated cli(void)
-{
-	local_irq_disable();
-}
-static inline void __deprecated sti(void)
-{
-	local_irq_enable();
-}
-static inline void __deprecated save_flags(unsigned long *x)
-{
-	local_save_flags(*x);
-}
-#define save_flags(x) save_flags(&x)
-static inline void __deprecated restore_flags(unsigned long x)
-{
-	local_irq_restore(x);
-}
-
-static inline void __deprecated save_and_cli(unsigned long *x)
-{
-	local_irq_save(*x);
-}
-#define save_and_cli(x)	save_and_cli(&x)
-#endif /* CONFIG_SMP */
-
 /* Some architectures might implement lazy enabling/disabling of
  * interrupts. In some cases, such as stop_machine, we might want
  * to ensure that after a local_irq_disable(), interrupts have
@@ -266,11 +261,11 @@ enum
 struct softirq_action
 {
 	void	(*action)(struct softirq_action *);
-	void	*data;
 };
 
 asmlinkage void do_softirq(void);
-extern void open_softirq(int nr, void (*action)(struct softirq_action*), void *data);
+asmlinkage void __do_softirq(void);
+extern void open_softirq(int nr, void (*action)(struct softirq_action *));
 extern void softirq_init(void);
 #define __raise_softirq_irqoff(nr) do { or_softirq_pending(1UL << (nr)); } while (0)
 extern void raise_softirq_irqoff(unsigned int nr);

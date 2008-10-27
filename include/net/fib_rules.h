@@ -62,7 +62,7 @@ struct fib_rules_ops
 
 	/* Called after modifications to the rules set, must flush
 	 * the route cache if one exists. */
-	void			(*flush_cache)(void);
+	void			(*flush_cache)(struct fib_rules_ops *ops);
 
 	int			nlgroup;
 	const struct nla_policy	*policy;
@@ -87,6 +87,7 @@ static inline void fib_rule_get(struct fib_rule *rule)
 static inline void fib_rule_put_rcu(struct rcu_head *head)
 {
 	struct fib_rule *rule = container_of(head, struct fib_rule, rcu);
+	release_net(rule->fr_net);
 	kfree(rule);
 }
 

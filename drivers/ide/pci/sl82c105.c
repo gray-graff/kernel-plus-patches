@@ -23,6 +23,8 @@
 
 #include <asm/io.h>
 
+#define DRV_NAME "sl82c105"
+
 #undef DEBUG
 
 #ifdef DEBUG
@@ -47,10 +49,11 @@
  */
 static unsigned int get_pio_timings(ide_drive_t *drive, u8 pio)
 {
+	struct ide_timing *t = ide_timing_find_mode(XFER_PIO_0 + pio);
 	unsigned int cmd_on, cmd_off;
 	u8 iordy = 0;
 
-	cmd_on  = (ide_pio_timings[pio].active_time + 29) / 30;
+	cmd_on  = (t->active + 29) / 30;
 	cmd_off = (ide_pio_cycle_time(drive, pio) - 30 * cmd_on + 29) / 30;
 
 	if (cmd_on == 0)
@@ -156,9 +159,9 @@ static void sl82c105_dma_lost_irq(ide_drive_t *drive)
 	 * Was DMA enabled?  If so, disable it - we're resetting the
 	 * host.  The IDE layer will be handling the drive for us.
 	 */
-	dma_cmd = inb(hwif->dma_command);
+	dma_cmd = inb(hwif->dma_base + ATA_DMA_CMD);
 	if (dma_cmd & 1) {
-		outb(dma_cmd & ~1, hwif->dma_command);
+		outb(dma_cmd & ~1, hwif->dma_base + ATA_DMA_CMD);
 		printk("sl82c105: DMA was enabled\n");
 	}
 
@@ -179,7 +182,7 @@ static void sl82c105_dma_start(ide_drive_t *drive)
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	int reg 		= 0x44 + drive->dn * 4;
 
-	DBG(("%s(drive:%s)\n", __FUNCTION__, drive->name));
+	DBG(("%s(drive:%s)\n", __func__, drive->name));
 
 	pci_write_config_word(dev, reg, drive->drive_data >> 16);
 
@@ -203,7 +206,7 @@ static int sl82c105_dma_end(ide_drive_t *drive)
 	int reg 		= 0x44 + drive->dn * 4;
 	int ret;
 
-	DBG(("%s(drive:%s)\n", __FUNCTION__, drive->name));
+	DBG(("%s(drive:%s)\n", __func__, drive->name));
 
 	ret = __ide_dma_end(drive);
 
@@ -232,7 +235,7 @@ static void sl82c105_resetproc(ide_drive_t *drive)
  * Return the revision of the Winbond bridge
  * which this function is part of.
  */
-static unsigned int sl82c105_bridge_revision(struct pci_dev *dev)
+static u8 sl82c105_bridge_revision(struct pci_dev *dev)
 {
 	struct pci_dev *bridge;
 
@@ -269,7 +272,7 @@ static unsigned int sl82c105_bridge_revision(struct pci_dev *dev)
  * channel 0 here at least, but channel 1 has to be enabled by
  * firmware or arch code. We still set both to 16 bits mode.
  */
-static unsigned int __devinit init_chipset_sl82c105(struct pci_dev *dev, const char *msg)
+static unsigned int __devinit init_chipset_sl82c105(struct pci_dev *dev)
 {
 	u32 val;
 
@@ -282,60 +285,59 @@ static unsigned int __devinit init_chipset_sl82c105(struct pci_dev *dev, const c
 	return dev->irq;
 }
 
-/*
- * Initialise IDE channel
- */
-static void __devinit init_hwif_sl82c105(ide_hwif_t *hwif)
+static const struct ide_port_ops sl82c105_port_ops = {
+	.set_pio_mode		= sl82c105_set_pio_mode,
+	.set_dma_mode		= sl82c105_set_dma_mode,
+	.resetproc		= sl82c105_resetproc,
+};
+
+static const struct ide_dma_ops sl82c105_dma_ops = {
+	.dma_host_set		= ide_dma_host_set,
+	.dma_setup		= ide_dma_setup,
+	.dma_exec_cmd		= ide_dma_exec_cmd,
+	.dma_start		= sl82c105_dma_start,
+	.dma_end		= sl82c105_dma_end,
+	.dma_test_irq		= ide_dma_test_irq,
+	.dma_lost_irq		= sl82c105_dma_lost_irq,
+	.dma_timeout		= sl82c105_dma_timeout,
+};
+
+static const struct ide_port_info sl82c105_chipset __devinitdata = {
+	.name		= DRV_NAME,
+	.init_chipset	= init_chipset_sl82c105,
+	.enablebits	= {{0x40,0x01,0x01}, {0x40,0x10,0x10}},
+	.port_ops	= &sl82c105_port_ops,
+	.dma_ops	= &sl82c105_dma_ops,
+	.host_flags	= IDE_HFLAG_IO_32BIT |
+			  IDE_HFLAG_UNMASK_IRQS |
+/* FIXME: check for Compatibility mode in generic IDE PCI code */
+#if defined(CONFIG_LOPEC) || defined(CONFIG_SANDPOINT)
+			  IDE_HFLAG_FORCE_LEGACY_IRQS |
+#endif
+			  IDE_HFLAG_SERIALIZE_DMA |
+			  IDE_HFLAG_NO_AUTODMA,
+	.pio_mask	= ATA_PIO5,
+	.mwdma_mask	= ATA_MWDMA2,
+};
+
+static int __devinit sl82c105_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	struct pci_dev *dev = to_pci_dev(hwif->dev);
-	unsigned int rev;
+	struct ide_port_info d = sl82c105_chipset;
+	u8 rev = sl82c105_bridge_revision(dev);
 
-	DBG(("init_hwif_sl82c105(hwif: ide%d)\n", hwif->index));
-
-	hwif->set_pio_mode	= &sl82c105_set_pio_mode;
-	hwif->set_dma_mode	= &sl82c105_set_dma_mode;
-	hwif->resetproc 	= &sl82c105_resetproc;
-
-	if (!hwif->dma_base)
-		return;
-
-	rev = sl82c105_bridge_revision(dev);
 	if (rev <= 5) {
 		/*
 		 * Never ever EVER under any circumstances enable
 		 * DMA when the bridge is this old.
 		 */
-		printk("    %s: Winbond W83C553 bridge revision %d, "
-		       "BM-DMA disabled\n", hwif->name, rev);
-		return;
+		printk(KERN_INFO DRV_NAME ": Winbond W83C553 bridge "
+				 "revision %d, BM-DMA disabled\n", rev);
+		d.dma_ops = NULL;
+		d.mwdma_mask = 0;
+		d.host_flags &= ~IDE_HFLAG_SERIALIZE_DMA;
 	}
 
-	hwif->mwdma_mask = ATA_MWDMA2;
-
-	hwif->dma_lost_irq		= &sl82c105_dma_lost_irq;
-	hwif->dma_start			= &sl82c105_dma_start;
-	hwif->ide_dma_end		= &sl82c105_dma_end;
-	hwif->dma_timeout		= &sl82c105_dma_timeout;
-
-	if (hwif->mate)
-		hwif->serialized = hwif->mate->serialized = 1;
-}
-
-static const struct ide_port_info sl82c105_chipset __devinitdata = {
-	.name		= "W82C105",
-	.init_chipset	= init_chipset_sl82c105,
-	.init_hwif	= init_hwif_sl82c105,
-	.enablebits	= {{0x40,0x01,0x01}, {0x40,0x10,0x10}},
-	.host_flags	= IDE_HFLAG_IO_32BIT |
-			  IDE_HFLAG_UNMASK_IRQS |
-			  IDE_HFLAG_NO_AUTODMA |
-			  IDE_HFLAG_BOOTABLE,
-	.pio_mask	= ATA_PIO5,
-};
-
-static int __devinit sl82c105_init_one(struct pci_dev *dev, const struct pci_device_id *id)
-{
-	return ide_setup_pci_device(dev, &sl82c105_chipset);
+	return ide_pci_init_one(dev, &d, NULL);
 }
 
 static const struct pci_device_id sl82c105_pci_tbl[] = {
@@ -348,6 +350,7 @@ static struct pci_driver driver = {
 	.name		= "W82C105_IDE",
 	.id_table	= sl82c105_pci_tbl,
 	.probe		= sl82c105_init_one,
+	.remove		= ide_pci_remove,
 };
 
 static int __init sl82c105_ide_init(void)
@@ -355,7 +358,13 @@ static int __init sl82c105_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit sl82c105_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(sl82c105_ide_init);
+module_exit(sl82c105_ide_exit);
 
 MODULE_DESCRIPTION("PCI driver module for W82C105 IDE");
 MODULE_LICENSE("GPL");

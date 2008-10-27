@@ -35,6 +35,7 @@
 #include <linux/lockd/bind.h>
 #include <linux/sunrpc/msg_prot.h>
 #include <linux/sunrpc/gss_api.h>
+#include <net/ipv6.h>
 
 #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
 
@@ -1022,7 +1023,7 @@ exp_export(struct nfsctl_export *nxp)
 	/* Look up the dentry */
 	err = path_lookup(nxp->ex_path, 0, &nd);
 	if (err)
-		goto out_unlock;
+		goto out_put_clp;
 	err = -EINVAL;
 
 	exp = exp_get_by_name(clp, nd.path.mnt, nd.path.dentry, NULL);
@@ -1089,9 +1090,9 @@ finish:
 		exp_put(exp);
 	if (fsid_key && !IS_ERR(fsid_key))
 		cache_put(&fsid_key->h, &svc_expkey_cache);
-	if (clp)
-		auth_domain_put(clp);
 	path_put(&nd.path);
+out_put_clp:
+	auth_domain_put(clp);
 out_unlock:
 	exp_writeunlock();
 out:
@@ -1548,6 +1549,7 @@ exp_addclient(struct nfsctl_client *ncp)
 {
 	struct auth_domain	*dom;
 	int			i, err;
+	struct in6_addr addr6;
 
 	/* First, consistency check. */
 	err = -EINVAL;
@@ -1566,9 +1568,10 @@ exp_addclient(struct nfsctl_client *ncp)
 		goto out_unlock;
 
 	/* Insert client into hashtable. */
-	for (i = 0; i < ncp->cl_naddr; i++)
-		auth_unix_add_addr(ncp->cl_addrlist[i], dom);
-
+	for (i = 0; i < ncp->cl_naddr; i++) {
+		ipv6_addr_set_v4mapped(ncp->cl_addrlist[i].s_addr, &addr6);
+		auth_unix_add_addr(&addr6, dom);
+	}
 	auth_unix_forget_old(dom);
 	auth_domain_put(dom);
 

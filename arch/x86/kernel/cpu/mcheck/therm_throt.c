@@ -1,5 +1,4 @@
 /*
- * linux/arch/i386/kernel/cpu/mcheck/therm_throt.c
  *
  * Thermal throttle event support code (such as syslog messaging and rate
  * limiting) that was factored out from x86_64 (mce_intel.c) and i386 (p4.c).
@@ -36,6 +35,7 @@ atomic_t therm_throt_en = ATOMIC_INIT(0);
 
 #define define_therm_throt_sysdev_show_func(name)                            \
 static ssize_t therm_throt_sysdev_show_##name(struct sys_device *dev,        \
+					struct sysdev_attribute *attr,	     \
                                               char *buf)                     \
 {                                                                            \
 	unsigned int cpu = dev->id;                                          \

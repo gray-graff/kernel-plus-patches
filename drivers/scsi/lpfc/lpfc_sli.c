@@ -219,7 +219,7 @@ lpfc_sli_iocb_cmd_type(uint8_t iocb_cmnd)
 	case CMD_IOCB_LOGENTRY_CN:
 	case CMD_IOCB_LOGENTRY_ASYNC_CN:
 		printk("%s - Unhandled SLI-3 Command x%x\n",
-				__FUNCTION__, iocb_cmnd);
+				__func__, iocb_cmnd);
 		type = LPFC_UNKNOWN_IOCB;
 		break;
 	default:
@@ -324,9 +324,7 @@ lpfc_sli_next_iocb_slot (struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
 			phba->work_ha |= HA_ERATT;
 			phba->work_hs = HS_FFER3;
 
-			/* hbalock should already be held */
-			if (phba->work_wait)
-				lpfc_worker_wake_up(phba);
+			lpfc_worker_wake_up(phba);
 
 			return NULL;
 		}
@@ -1309,9 +1307,7 @@ lpfc_sli_rsp_pointers_error(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
 	phba->work_ha |= HA_ERATT;
 	phba->work_hs = HS_FFER3;
 
-	/* hbalock should already be held */
-	if (phba->work_wait)
-		lpfc_worker_wake_up(phba);
+	lpfc_worker_wake_up(phba);
 
 	return;
 }
@@ -1719,7 +1715,7 @@ lpfc_sli_handle_slow_ring_event(struct lpfc_hba *phba,
 		rspiocbp = __lpfc_sli_get_iocbq(phba);
 		if (rspiocbp == NULL) {
 			printk(KERN_ERR "%s: out of buffers! Failing "
-			       "completion.\n", __FUNCTION__);
+			       "completion.\n", __func__);
 			break;
 		}
 
@@ -2611,12 +2607,9 @@ lpfc_mbox_timeout(unsigned long ptr)
 		phba->pport->work_port_events |= WORKER_MBOX_TMO;
 	spin_unlock_irqrestore(&phba->pport->work_port_lock, iflag);
 
-	if (!tmo_posted) {
-		spin_lock_irqsave(&phba->hbalock, iflag);
-		if (phba->work_wait)
-			lpfc_worker_wake_up(phba);
-		spin_unlock_irqrestore(&phba->hbalock, iflag);
-	}
+	if (!tmo_posted)
+		lpfc_worker_wake_up(phba);
+	return;
 }
 
 void
@@ -2648,7 +2641,6 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
 	spin_unlock_irq(&phba->pport->work_port_lock);
 	spin_lock_irq(&phba->hbalock);
 	phba->link_state = LPFC_LINK_UNKNOWN;
-	phba->pport->fc_flag |= FC_ESTABLISH_LINK;
 	psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
 	spin_unlock_irq(&phba->hbalock);
 
@@ -2669,8 +2661,7 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
 	lpfc_offline_prep(phba);
 	lpfc_offline(phba);
 	lpfc_sli_brdrestart(phba);
-	if (lpfc_online(phba) == 0)		/* Initialize the HBA */
-		mod_timer(&phba->fc_estabtmo, jiffies + HZ * 60);
+	lpfc_online(phba);
 	lpfc_unblock_mgmt_io(phba);
 	return;
 }
@@ -2687,27 +2678,40 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 	unsigned long drvr_flag = 0;
 	volatile uint32_t word0, ldata;
 	void __iomem *to_slim;
+	int processing_queue = 0;
+
+	spin_lock_irqsave(&phba->hbalock, drvr_flag);
+	if (!pmbox) {
+		/* processing mbox queue from intr_handler */
+		processing_queue = 1;
+		phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
+		pmbox = lpfc_mbox_get(phba);
+		if (!pmbox) {
+			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+			return MBX_SUCCESS;
+		}
+	}
 
 	if (pmbox->mbox_cmpl && pmbox->mbox_cmpl != lpfc_sli_def_mbox_cmpl &&
 		pmbox->mbox_cmpl != lpfc_sli_wake_mbox_wait) {
 		if(!pmbox->vport) {
+			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 			lpfc_printf_log(phba, KERN_ERR,
 					LOG_MBOX | LOG_VPORT,
 					"1806 Mbox x%x failed. No vport\n",
 					pmbox->mb.mbxCommand);
 			dump_stack();
-			return MBX_NOT_FINISHED;
+			goto out_not_finished;
 		}
 	}
 
-
 	/* If the PCI channel is in offline state, do not post mbox. */
-	if (unlikely(pci_channel_offline(phba->pcidev)))
-		return MBX_NOT_FINISHED;
+	if (unlikely(pci_channel_offline(phba->pcidev))) {
+		spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+		goto out_not_finished;
+	}
 
-	spin_lock_irqsave(&phba->hbalock, drvr_flag);
 	psli = &phba->sli;
-
 
 	mb = &pmbox->mb;
 	status = MBX_SUCCESS;
@@ -2717,14 +2721,14 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 
 		/* Mbox command <mbxCommand> cannot issue */
 		LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
-		return MBX_NOT_FINISHED;
+		goto out_not_finished;
 	}
 
 	if (mb->mbxCommand != MBX_KILL_BOARD && flag & MBX_NOWAIT &&
 	    !(readl(phba->HCregaddr) & HC_MBINT_ENA)) {
 		spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 		LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
-		return MBX_NOT_FINISHED;
+		goto out_not_finished;
 	}
 
 	if (psli->sli_flag & LPFC_SLI_MBOX_ACTIVE) {
@@ -2738,14 +2742,14 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 
 			/* Mbox command <mbxCommand> cannot issue */
 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
-			return MBX_NOT_FINISHED;
+			goto out_not_finished;
 		}
 
 		if (!(psli->sli_flag & LPFC_SLI2_ACTIVE)) {
 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 			/* Mbox command <mbxCommand> cannot issue */
 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
-			return MBX_NOT_FINISHED;
+			goto out_not_finished;
 		}
 
 		/* Another mailbox command is still being processed, queue this
@@ -2792,7 +2796,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 			/* Mbox command <mbxCommand> cannot issue */
 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
-			return MBX_NOT_FINISHED;
+			goto out_not_finished;
 		}
 		/* timeout active mbox command */
 		mod_timer(&psli->mbox_tmo, (jiffies +
@@ -2900,7 +2904,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 				psli->sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
 				spin_unlock_irqrestore(&phba->hbalock,
 						       drvr_flag);
-				return MBX_NOT_FINISHED;
+				goto out_not_finished;
 			}
 
 			/* Check if we took a mbox interrupt while we were
@@ -2967,6 +2971,13 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
 
 	spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 	return status;
+
+out_not_finished:
+	if (processing_queue) {
+		pmbox->mb.mbxStatus = MBX_NOT_FINISHED;
+		lpfc_mbox_cmpl_put(phba, pmbox);
+	}
+	return MBX_NOT_FINISHED;
 }
 
 /*
@@ -3356,8 +3367,12 @@ lpfc_sli_host_down(struct lpfc_vport *vport)
 	for (i = 0; i < psli->num_rings; i++) {
 		pring = &psli->ring[i];
 		prev_pring_flag = pring->flag;
-		if (pring->ringno == LPFC_ELS_RING) /* Only slow rings */
+		/* Only slow rings */
+		if (pring->ringno == LPFC_ELS_RING) {
 			pring->flag |= LPFC_DEFERRED_RING_EVENT;
+			/* Set the lpfc data pending flag */
+			set_bit(LPFC_DATA_READY, &phba->data_flags);
+		}
 		/*
 		 * Error everything on the txq since these iocbs have not been
 		 * given to the FW yet.
@@ -3416,8 +3431,12 @@ lpfc_sli_hba_down(struct lpfc_hba *phba)
 	spin_lock_irqsave(&phba->hbalock, flags);
 	for (i = 0; i < psli->num_rings; i++) {
 		pring = &psli->ring[i];
-		if (pring->ringno == LPFC_ELS_RING) /* Only slow rings */
+		/* Only slow rings */
+		if (pring->ringno == LPFC_ELS_RING) {
 			pring->flag |= LPFC_DEFERRED_RING_EVENT;
+			/* Set the lpfc data pending flag */
+			set_bit(LPFC_DATA_READY, &phba->data_flags);
+		}
 
 		/*
 		 * Error everything on the txq since these iocbs have not been
@@ -3463,26 +3482,21 @@ lpfc_sli_hba_down(struct lpfc_hba *phba)
 	phba->pport->work_port_events &= ~WORKER_MBOX_TMO;
 	spin_unlock(&phba->pport->work_port_lock);
 
+	/* Return any pending or completed mbox cmds */
+	list_splice_init(&phba->sli.mboxq, &completions);
 	if (psli->mbox_active) {
 		list_add_tail(&psli->mbox_active->list, &completions);
 		psli->mbox_active = NULL;
 		psli->sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
 	}
-
-	/* Return any pending or completed mbox cmds */
-	list_splice_init(&phba->sli.mboxq, &completions);
 	list_splice_init(&phba->sli.mboxq_cmpl, &completions);
-	INIT_LIST_HEAD(&psli->mboxq);
-	INIT_LIST_HEAD(&psli->mboxq_cmpl);
-
 	spin_unlock_irqrestore(&phba->hbalock, flags);
 
 	while (!list_empty(&completions)) {
 		list_remove_head(&completions, pmb, LPFC_MBOXQ_t, list);
 		pmb->mb.mbxStatus = MBX_NOT_FINISHED;
-		if (pmb->mbox_cmpl) {
+		if (pmb->mbox_cmpl)
 			pmb->mbox_cmpl(phba,pmb);
-		}
 	}
 	return 1;
 }
@@ -3613,6 +3627,15 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 				irsp->ulpStatus, irsp->un.ulpWord[4]);
 
 		/*
+		 *  If the iocb is not found in Firmware queue the iocb
+		 *  might have completed already. Do not free it again.
+		 */
+		if (irsp->ulpStatus == IOSTAT_LOCAL_REJECT) {
+			spin_unlock_irq(&phba->hbalock);
+			lpfc_sli_release_iocbq(phba, cmdiocb);
+			return;
+		}
+		/*
 		 * make sure we have the right iocbq before taking it
 		 * off the txcmplq and try to call completion routine.
 		 */
@@ -3740,7 +3763,6 @@ lpfc_sli_validate_fcp_iocb(struct lpfc_iocbq *iocbq, struct lpfc_vport *vport,
 			   lpfc_ctx_cmd ctx_cmd)
 {
 	struct lpfc_scsi_buf *lpfc_cmd;
-	struct scsi_cmnd *cmnd;
 	int rc = 1;
 
 	if (!(iocbq->iocb_flag &  LPFC_IO_FCP))
@@ -3750,19 +3772,20 @@ lpfc_sli_validate_fcp_iocb(struct lpfc_iocbq *iocbq, struct lpfc_vport *vport,
 		return rc;
 
 	lpfc_cmd = container_of(iocbq, struct lpfc_scsi_buf, cur_iocbq);
-	cmnd = lpfc_cmd->pCmd;
 
-	if (cmnd == NULL)
+	if (lpfc_cmd->pCmd == NULL)
 		return rc;
 
 	switch (ctx_cmd) {
 	case LPFC_CTX_LUN:
-		if ((cmnd->device->id == tgt_id) &&
-		    (cmnd->device->lun == lun_id))
+		if ((lpfc_cmd->rdata->pnode) &&
+		    (lpfc_cmd->rdata->pnode->nlp_sid == tgt_id) &&
+		    (scsilun_to_int(&lpfc_cmd->fcp_cmnd->fcp_lun) == lun_id))
 			rc = 0;
 		break;
 	case LPFC_CTX_TGT:
-		if (cmnd->device->id == tgt_id)
+		if ((lpfc_cmd->rdata->pnode) &&
+		    (lpfc_cmd->rdata->pnode->nlp_sid == tgt_id))
 			rc = 0;
 		break;
 	case LPFC_CTX_HOST:
@@ -3770,7 +3793,7 @@ lpfc_sli_validate_fcp_iocb(struct lpfc_iocbq *iocbq, struct lpfc_vport *vport,
 		break;
 	default:
 		printk(KERN_ERR "%s: Unknown context cmd type, value %d\n",
-			__FUNCTION__, ctx_cmd);
+			__func__, ctx_cmd);
 		break;
 	}
 
@@ -3972,6 +3995,7 @@ lpfc_sli_issue_mbox_wait(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq,
 	if (pmboxq->context1)
 		return MBX_NOT_FINISHED;
 
+	pmboxq->mbox_flag &= ~LPFC_MBX_WAKE;
 	/* setup wake call as IOCB callback */
 	pmboxq->mbox_cmpl = lpfc_sli_wake_mbox_wait;
 	/* setup context field to pass wait_queue pointer to wake function  */
@@ -4137,7 +4161,7 @@ lpfc_intr_handler(int irq, void *dev_id)
 						"pwork:x%x hawork:x%x wait:x%x",
 						phba->work_ha, work_ha_copy,
 						(uint32_t)((unsigned long)
-						phba->work_wait));
+						&phba->work_waitq));
 
 					control &=
 					    ~(HC_R0INT_ENA << LPFC_ELS_RING);
@@ -4150,7 +4174,7 @@ lpfc_intr_handler(int irq, void *dev_id)
 						"x%x hawork:x%x wait:x%x",
 						phba->work_ha, work_ha_copy,
 						(uint32_t)((unsigned long)
-						phba->work_wait));
+						&phba->work_waitq));
 				}
 				spin_unlock(&phba->hbalock);
 			}
@@ -4174,6 +4198,7 @@ lpfc_intr_handler(int irq, void *dev_id)
 			phba->pport->stopped = 1;
 		}
 
+		spin_lock(&phba->hbalock);
 		if ((work_ha_copy & HA_MBATT) &&
 		    (phba->sli.mbox_active)) {
 			pmb = phba->sli.mbox_active;
@@ -4184,6 +4209,7 @@ lpfc_intr_handler(int irq, void *dev_id)
 			/* First check out the status word */
 			lpfc_sli_pcimem_bcopy(mbox, pmbox, sizeof(uint32_t));
 			if (pmbox->mbxOwner != OWN_HOST) {
+				spin_unlock(&phba->hbalock);
 				/*
 				 * Stray Mailbox Interrupt, mbxCommand <cmd>
 				 * mbxStatus <status>
@@ -4199,10 +4225,10 @@ lpfc_intr_handler(int irq, void *dev_id)
 				/* clear mailbox attention bit */
 				work_ha_copy &= ~HA_MBATT;
 			} else {
+				phba->sli.mbox_active = NULL;
+				spin_unlock(&phba->hbalock);
 				phba->last_completion_time = jiffies;
 				del_timer(&phba->sli.mbox_tmo);
-
-				phba->sli.mbox_active = NULL;
 				if (pmb->mbox_cmpl) {
 					lpfc_sli_pcimem_bcopy(mbox, pmbox,
 							MAILBOX_CMD_SIZE);
@@ -4237,10 +4263,15 @@ lpfc_intr_handler(int irq, void *dev_id)
 						pmb->context1 = mp;
 						pmb->context2 = ndlp;
 						pmb->vport = vport;
-						spin_lock(&phba->hbalock);
-						phba->sli.sli_flag &=
-							~LPFC_SLI_MBOX_ACTIVE;
-						spin_unlock(&phba->hbalock);
+						rc = lpfc_sli_issue_mbox(phba,
+								pmb,
+								MBX_NOWAIT);
+						if (rc != MBX_BUSY)
+							lpfc_printf_log(phba,
+							KERN_ERR,
+							LOG_MBOX | LOG_SLI,
+							"0306 rc should have"
+							"been MBX_BUSY");
 						goto send_current_mbox;
 					}
 				}
@@ -4250,32 +4281,26 @@ lpfc_intr_handler(int irq, void *dev_id)
 				spin_unlock(&phba->pport->work_port_lock);
 				lpfc_mbox_cmpl_put(phba, pmb);
 			}
-		}
+		} else
+			spin_unlock(&phba->hbalock);
 		if ((work_ha_copy & HA_MBATT) &&
 		    (phba->sli.mbox_active == NULL)) {
-send_next_mbox:
-			spin_lock(&phba->hbalock);
-			phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
-			pmb = lpfc_mbox_get(phba);
-			spin_unlock(&phba->hbalock);
 send_current_mbox:
 			/* Process next mailbox command if there is one */
-			if (pmb != NULL) {
-				rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
-				if (rc == MBX_NOT_FINISHED) {
-					pmb->mb.mbxStatus = MBX_NOT_FINISHED;
-					lpfc_mbox_cmpl_put(phba, pmb);
-					goto send_next_mbox;
-				}
-			}
-
+			do {
+				rc = lpfc_sli_issue_mbox(phba, NULL,
+							 MBX_NOWAIT);
+			} while (rc == MBX_NOT_FINISHED);
+			if (rc != MBX_SUCCESS)
+				lpfc_printf_log(phba, KERN_ERR, LOG_MBOX |
+						LOG_SLI, "0349 rc should be "
+						"MBX_SUCCESS");
 		}
 
 		spin_lock(&phba->hbalock);
 		phba->work_ha |= work_ha_copy;
-		if (phba->work_wait)
-			lpfc_worker_wake_up(phba);
 		spin_unlock(&phba->hbalock);
+		lpfc_worker_wake_up(phba);
 	}
 
 	ha_copy &= ~(phba->work_ha_mask);

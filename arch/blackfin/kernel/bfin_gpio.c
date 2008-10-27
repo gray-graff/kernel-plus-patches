@@ -95,14 +95,14 @@ enum {
 	AWA_data_clear = SYSCR,
 	AWA_data_set = SYSCR,
 	AWA_toggle = SYSCR,
-	AWA_maska = UART_SCR,
-	AWA_maska_clear = UART_SCR,
-	AWA_maska_set = UART_SCR,
-	AWA_maska_toggle = UART_SCR,
-	AWA_maskb = UART_GCTL,
-	AWA_maskb_clear = UART_GCTL,
-	AWA_maskb_set = UART_GCTL,
-	AWA_maskb_toggle = UART_GCTL,
+	AWA_maska = BFIN_UART_SCR,
+	AWA_maska_clear = BFIN_UART_SCR,
+	AWA_maska_set = BFIN_UART_SCR,
+	AWA_maska_toggle = BFIN_UART_SCR,
+	AWA_maskb = BFIN_UART_GCTL,
+	AWA_maskb_clear = BFIN_UART_GCTL,
+	AWA_maskb_set = BFIN_UART_GCTL,
+	AWA_maskb_toggle = BFIN_UART_GCTL,
 	AWA_dir = SPORT1_STAT,
 	AWA_polar = SPORT1_STAT,
 	AWA_edge = SPORT1_STAT,
@@ -186,7 +186,10 @@ static struct str_ident {
 	char name[RESOURCE_LABEL_SIZE];
 } str_ident[MAX_RESOURCES];
 
-#if defined(CONFIG_PM) && !defined(CONFIG_BF54x)
+#if defined(CONFIG_PM)
+#if defined(CONFIG_BF54x)
+static struct gpio_port_s gpio_bank_saved[gpio_bank(MAX_BLACKFIN_GPIOS)];
+#else
 static unsigned short wakeup_map[gpio_bank(MAX_BLACKFIN_GPIOS)];
 static unsigned char wakeup_flags_map[MAX_BLACKFIN_GPIOS];
 static struct gpio_port_s gpio_bank_saved[gpio_bank(MAX_BLACKFIN_GPIOS)];
@@ -206,7 +209,7 @@ static unsigned int sic_iwr_irqs[gpio_bank(MAX_BLACKFIN_GPIOS)] = {IRQ_PORTF_INT
 #ifdef BF561_FAMILY
 static unsigned int sic_iwr_irqs[gpio_bank(MAX_BLACKFIN_GPIOS)] = {IRQ_PROG0_INTB, IRQ_PROG1_INTB, IRQ_PROG2_INTB};
 #endif
-
+#endif
 #endif /* CONFIG_PM */
 
 #if defined(BF548_FAMILY)
@@ -348,11 +351,10 @@ static void portmux_setup(unsigned short per, unsigned short function)
 			offset = port_mux_lut[y].offset;
 			muxreg = bfin_read_PORT_MUX();
 
-			if (offset != 1) {
+			if (offset != 1)
 				muxreg &= ~(1 << offset);
-			} else {
+			else
 				muxreg &= ~(3 << 1);
-			}
 
 			muxreg |= (function << offset);
 			bfin_write_PORT_MUX(muxreg);
@@ -396,39 +398,11 @@ inline void portmux_setup(unsigned short portno, unsigned short function)
 # define portmux_setup(...)  do { } while (0)
 #endif
 
-#ifndef BF548_FAMILY
-static void default_gpio(unsigned gpio)
-{
-	unsigned short bank, bitmask;
-	unsigned long flags;
-
-	bank = gpio_bank(gpio);
-	bitmask = gpio_bit(gpio);
-
-	local_irq_save(flags);
-
-	gpio_bankb[bank]->maska_clear = bitmask;
-	gpio_bankb[bank]->maskb_clear = bitmask;
-	SSYNC();
-	gpio_bankb[bank]->inen &= ~bitmask;
-	gpio_bankb[bank]->dir &= ~bitmask;
-	gpio_bankb[bank]->polar &= ~bitmask;
-	gpio_bankb[bank]->both &= ~bitmask;
-	gpio_bankb[bank]->edge &= ~bitmask;
-	AWA_DUMMY_READ(edge);
-	local_irq_restore(flags);
-}
-#else
-# define default_gpio(...)  do { } while (0)
-#endif
-
 static int __init bfin_gpio_init(void)
 {
-
 	printk(KERN_INFO "Blackfin GPIO Controller\n");
 
 	return 0;
-
 }
 arch_initcall(bfin_gpio_init);
 
@@ -696,7 +670,7 @@ static int bfin_gpio_wakeup_type(unsigned gpio, unsigned char type)
 	return 0;
 }
 
-u32 bfin_pm_setup(void)
+u32 bfin_pm_standby_setup(void)
 {
 	u16 bank, mask, i, gpio;
 
@@ -708,7 +682,7 @@ u32 bfin_pm_setup(void)
 		gpio_bankb[bank]->maskb = 0;
 
 		if (mask) {
-#ifdef BF537_FAMILY
+#if defined(BF527_FAMILY) || defined(BF537_FAMILY)
 			gpio_bank_saved[bank].fer   = *port_fer[bank];
 #endif
 			gpio_bank_saved[bank].inen  = gpio_bankb[bank]->inen;
@@ -744,7 +718,7 @@ u32 bfin_pm_setup(void)
 	return 0;
 }
 
-void bfin_pm_restore(void)
+void bfin_pm_standby_restore(void)
 {
 	u16 bank, mask, i;
 
@@ -753,7 +727,7 @@ void bfin_pm_restore(void)
 		bank = gpio_bank(i);
 
 		if (mask) {
-#ifdef BF537_FAMILY
+#if defined(BF527_FAMILY) || defined(BF537_FAMILY)
 			*port_fer[bank]   	= gpio_bank_saved[bank].fer;
 #endif
 			gpio_bankb[bank]->inen  = gpio_bank_saved[bank].inen;
@@ -772,8 +746,111 @@ void bfin_pm_restore(void)
 	AWA_DUMMY_READ(maskb);
 }
 
+void bfin_gpio_pm_hibernate_suspend(void)
+{
+	int i, bank;
+
+	for (i = 0; i < MAX_BLACKFIN_GPIOS; i += GPIO_BANKSIZE) {
+		bank = gpio_bank(i);
+
+#if defined(BF527_FAMILY) || defined(BF537_FAMILY)
+			gpio_bank_saved[bank].fer   = *port_fer[bank];
+#ifdef BF527_FAMILY
+			gpio_bank_saved[bank].mux   = *port_mux[bank];
+#else
+			if (bank == 0)
+				gpio_bank_saved[bank].mux   = bfin_read_PORT_MUX();
+#endif
+#endif
+			gpio_bank_saved[bank].data  = gpio_bankb[bank]->data;
+			gpio_bank_saved[bank].inen  = gpio_bankb[bank]->inen;
+			gpio_bank_saved[bank].polar = gpio_bankb[bank]->polar;
+			gpio_bank_saved[bank].dir   = gpio_bankb[bank]->dir;
+			gpio_bank_saved[bank].edge  = gpio_bankb[bank]->edge;
+			gpio_bank_saved[bank].both  = gpio_bankb[bank]->both;
+			gpio_bank_saved[bank].maska  = gpio_bankb[bank]->maska;
+	}
+
+	AWA_DUMMY_READ(maska);
+}
+
+void bfin_gpio_pm_hibernate_restore(void)
+{
+	int i, bank;
+
+	for (i = 0; i < MAX_BLACKFIN_GPIOS; i += GPIO_BANKSIZE) {
+			bank = gpio_bank(i);
+
+#if defined(BF527_FAMILY) || defined(BF537_FAMILY)
+#ifdef BF527_FAMILY
+			*port_mux[bank] = gpio_bank_saved[bank].mux;
+#else
+			if (bank == 0)
+				bfin_write_PORT_MUX(gpio_bank_saved[bank].mux);
+#endif
+			*port_fer[bank]   	= gpio_bank_saved[bank].fer;
+#endif
+			gpio_bankb[bank]->inen  = gpio_bank_saved[bank].inen;
+			gpio_bankb[bank]->dir   = gpio_bank_saved[bank].dir;
+			gpio_bankb[bank]->polar = gpio_bank_saved[bank].polar;
+			gpio_bankb[bank]->edge  = gpio_bank_saved[bank].edge;
+			gpio_bankb[bank]->both  = gpio_bank_saved[bank].both;
+
+			gpio_bankb[bank]->data_set = gpio_bank_saved[bank].data
+							| gpio_bank_saved[bank].dir;
+
+			gpio_bankb[bank]->maska = gpio_bank_saved[bank].maska;
+	}
+	AWA_DUMMY_READ(maska);
+}
+
+
 #endif
 #else /* BF548_FAMILY */
+#ifdef CONFIG_PM
+
+u32 bfin_pm_standby_setup(void)
+{
+	return 0;
+}
+
+void bfin_pm_standby_restore(void)
+{
+
+}
+
+void bfin_gpio_pm_hibernate_suspend(void)
+{
+	int i, bank;
+
+	for (i = 0; i < MAX_BLACKFIN_GPIOS; i += GPIO_BANKSIZE) {
+		bank = gpio_bank(i);
+
+			gpio_bank_saved[bank].fer  = gpio_array[bank]->port_fer;
+			gpio_bank_saved[bank].mux  = gpio_array[bank]->port_mux;
+			gpio_bank_saved[bank].data  = gpio_array[bank]->port_data;
+			gpio_bank_saved[bank].data  = gpio_array[bank]->port_data;
+			gpio_bank_saved[bank].inen  = gpio_array[bank]->port_inen;
+			gpio_bank_saved[bank].dir   = gpio_array[bank]->port_dir_set;
+	}
+}
+
+void bfin_gpio_pm_hibernate_restore(void)
+{
+	int i, bank;
+
+	for (i = 0; i < MAX_BLACKFIN_GPIOS; i += GPIO_BANKSIZE) {
+			bank = gpio_bank(i);
+
+			gpio_array[bank]->port_mux  = gpio_bank_saved[bank].mux;
+			gpio_array[bank]->port_fer  = gpio_bank_saved[bank].fer;
+			gpio_array[bank]->port_inen  = gpio_bank_saved[bank].inen;
+			gpio_array[bank]->port_dir_set   = gpio_bank_saved[bank].dir;
+			gpio_array[bank]->port_set = gpio_bank_saved[bank].data
+							| gpio_bank_saved[bank].dir;
+	}
+}
+#endif
 
 unsigned short get_gpio_dir(unsigned gpio)
 {
@@ -821,10 +898,10 @@ int peripheral_request(unsigned short per, const char *label)
 	local_irq_save(flags);
 
 	if (unlikely(reserved_gpio_map[gpio_bank(ident)] & gpio_bit(ident))) {
+		dump_stack();
 		printk(KERN_ERR
 		    "%s: Peripheral %d is already reserved as GPIO by %s !\n",
-		       __FUNCTION__, ident, get_label(ident));
-		dump_stack();
+		       __func__, ident, get_label(ident));
 		local_irq_restore(flags);
 		return -EBUSY;
 	}
@@ -833,31 +910,31 @@ int peripheral_request(unsigned short per, const char *label)
 
 		u16 funct = get_portmux(ident);
 
-	/*
-	 * Pin functions like AMC address strobes my
-	 * be requested and used by several drivers
-	 */
+		/*
+		 * Pin functions like AMC address strobes my
+		 * be requested and used by several drivers
+		 */
 
 		if (!((per & P_MAYSHARE) && (funct == P_FUNCT2MUX(per)))) {
 
-		/*
-		 * Allow that the identical pin function can
-		 * be requested from the same driver twice
-		 */
+			/*
+			 * Allow that the identical pin function can
+			 * be requested from the same driver twice
+			 */
 
-		if (cmp_label(ident, label) == 0)
-			goto anyway;
+			if (cmp_label(ident, label) == 0)
+				goto anyway;
 
+			dump_stack();
 			printk(KERN_ERR
 			       "%s: Peripheral %d function %d is already reserved by %s !\n",
-			       __FUNCTION__, ident, P_FUNCT2MUX(per), get_label(ident));
-			dump_stack();
+			       __func__, ident, P_FUNCT2MUX(per), get_label(ident));
 			local_irq_restore(flags);
 			return -EBUSY;
 		}
 	}
 
-anyway:
+ anyway:
 	reserved_peri_map[gpio_bank(ident)] |= gpio_bit(ident);
 
 	portmux_setup(ident, P_FUNCT2MUX(per));
@@ -890,47 +967,47 @@ int peripheral_request(unsigned short per, const char *label)
 
 	if (!check_gpio(ident)) {
 
-	if (unlikely(reserved_gpio_map[gpio_bank(ident)] & gpio_bit(ident))) {
-		printk(KERN_ERR
-		       "%s: Peripheral %d is already reserved as GPIO by %s !\n",
-		       __FUNCTION__, ident, get_label(ident));
-		dump_stack();
-		local_irq_restore(flags);
-		return -EBUSY;
-	}
-
-	}
-
-	if (unlikely(reserved_peri_map[gpio_bank(ident)] & gpio_bit(ident))) {
-
-	/*
-	 * Pin functions like AMC address strobes my
-	 * be requested and used by several drivers
-	 */
-
-	if (!(per & P_MAYSHARE)) {
-
-	/*
-	 * Allow that the identical pin function can
-	 * be requested from the same driver twice
-	 */
-
-		if (cmp_label(ident, label) == 0)
-			goto anyway;
-
-			printk(KERN_ERR
-			       "%s: Peripheral %d function %d is already"
-			       " reserved by %s !\n",
-			       __FUNCTION__, ident, P_FUNCT2MUX(per),
-				get_label(ident));
+		if (unlikely(reserved_gpio_map[gpio_bank(ident)] & gpio_bit(ident))) {
 			dump_stack();
+			printk(KERN_ERR
+			       "%s: Peripheral %d is already reserved as GPIO by %s !\n",
+			       __func__, ident, get_label(ident));
 			local_irq_restore(flags);
 			return -EBUSY;
 		}
 
 	}
 
-anyway:
+	if (unlikely(reserved_peri_map[gpio_bank(ident)] & gpio_bit(ident))) {
+
+		/*
+		 * Pin functions like AMC address strobes my
+		 * be requested and used by several drivers
+		 */
+
+		if (!(per & P_MAYSHARE)) {
+
+			/*
+			 * Allow that the identical pin function can
+			 * be requested from the same driver twice
+			 */
+
+			if (cmp_label(ident, label) == 0)
+				goto anyway;
+
+			dump_stack();
+			printk(KERN_ERR
+			       "%s: Peripheral %d function %d is already"
+			       " reserved by %s !\n",
+			       __func__, ident, P_FUNCT2MUX(per),
+				get_label(ident));
+			local_irq_restore(flags);
+			return -EBUSY;
+		}
+
+	}
+
+ anyway:
 	portmux_setup(per, P_FUNCT2MUX(per));
 
 	port_setup(ident, PERIPHERAL_USAGE);
@@ -944,7 +1021,7 @@ anyway:
 EXPORT_SYMBOL(peripheral_request);
 #endif
 
-int peripheral_request_list(unsigned short per[], const char *label)
+int peripheral_request_list(const unsigned short per[], const char *label)
 {
 	u16 cnt;
 	int ret;
@@ -954,10 +1031,10 @@ int peripheral_request_list(unsigned short per[], const char *label)
 		ret = peripheral_request(per[cnt], label);
 
 		if (ret < 0) {
-			for ( ; cnt > 0; cnt--) {
+			for ( ; cnt > 0; cnt--)
 				peripheral_free(per[cnt - 1]);
-			}
-		return ret;
+
+			return ret;
 		}
 	}
 
@@ -981,15 +1058,13 @@ void peripheral_free(unsigned short per)
 
 	local_irq_save(flags);
 
-	if (unlikely(!(reserved_peri_map[gpio_bank(ident)]
-			 & gpio_bit(ident)))) {
+	if (unlikely(!(reserved_peri_map[gpio_bank(ident)] & gpio_bit(ident)))) {
 		local_irq_restore(flags);
 		return;
 	}
 
-	if (!(per & P_MAYSHARE)) {
+	if (!(per & P_MAYSHARE))
 		port_setup(ident, GPIO_USAGE);
-	}
 
 	reserved_peri_map[gpio_bank(ident)] &= ~gpio_bit(ident);
 
@@ -999,14 +1074,11 @@ void peripheral_free(unsigned short per)
 }
 EXPORT_SYMBOL(peripheral_free);
 
-void peripheral_free_list(unsigned short per[])
+void peripheral_free_list(const unsigned short per[])
 {
 	u16 cnt;
-
-	for (cnt = 0; per[cnt] != 0; cnt++) {
+	for (cnt = 0; per[cnt] != 0; cnt++)
 		peripheral_free(per[cnt]);
-	}
-
 }
 EXPORT_SYMBOL(peripheral_free_list);
 
@@ -1046,17 +1118,17 @@ int gpio_request(unsigned gpio, const char *label)
 	}
 
 	if (unlikely(reserved_gpio_map[gpio_bank(gpio)] & gpio_bit(gpio))) {
+		dump_stack();
 		printk(KERN_ERR "bfin-gpio: GPIO %d is already reserved by %s !\n",
 			 gpio, get_label(gpio));
-		dump_stack();
 		local_irq_restore(flags);
 		return -EBUSY;
 	}
 	if (unlikely(reserved_peri_map[gpio_bank(gpio)] & gpio_bit(gpio))) {
+		dump_stack();
 		printk(KERN_ERR
 		       "bfin-gpio: GPIO %d is already reserved as Peripheral by %s !\n",
 		       gpio, get_label(gpio));
-		dump_stack();
 		local_irq_restore(flags);
 		return -EBUSY;
 	}
@@ -1082,13 +1154,11 @@ void gpio_free(unsigned gpio)
 	local_irq_save(flags);
 
 	if (unlikely(!(reserved_gpio_map[gpio_bank(gpio)] & gpio_bit(gpio)))) {
-		gpio_error(gpio);
 		dump_stack();
+		gpio_error(gpio);
 		local_irq_restore(flags);
 		return;
 	}
-
-	default_gpio(gpio);
 
 	reserved_gpio_map[gpio_bank(gpio)] &= ~gpio_bit(gpio);
 
@@ -1152,7 +1222,38 @@ int gpio_get_value(unsigned gpio)
 }
 EXPORT_SYMBOL(gpio_get_value);
 
+void bfin_gpio_irq_prepare(unsigned gpio)
+{
+	unsigned long flags;
+
+	port_setup(gpio, GPIO_USAGE);
+
+	local_irq_save(flags);
+	gpio_array[gpio_bank(gpio)]->port_dir_clear = gpio_bit(gpio);
+	gpio_array[gpio_bank(gpio)]->port_inen |= gpio_bit(gpio);
+	local_irq_restore(flags);
+}
+
 #else
+
+int gpio_get_value(unsigned gpio)
+{
+	unsigned long flags;
+	int ret;
+
+	if (unlikely(get_gpio_edge(gpio))) {
+		local_irq_save(flags);
+		set_gpio_edge(gpio, 0);
+		ret = get_gpio_data(gpio);
+		set_gpio_edge(gpio, 1);
+		local_irq_restore(flags);
+
+		return ret;
+	} else
+		return get_gpio_data(gpio);
+}
+EXPORT_SYMBOL(gpio_get_value);
+
 
 int gpio_direction_input(unsigned gpio)
 {
@@ -1216,6 +1317,11 @@ void bfin_gpio_reset_spi0_ssel1(void)
 	gpio_bankb[gpio_bank(gpio)]->data_set = gpio_bit(gpio);
 	AWA_DUMMY_READ(data_set);
 	udelay(1);
+}
+
+void bfin_gpio_irq_prepare(unsigned gpio)
+{
+	port_setup(gpio, GPIO_USAGE);
 }
 
 #endif /*BF548_FAMILY */

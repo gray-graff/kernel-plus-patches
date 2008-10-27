@@ -35,6 +35,7 @@ u16 _bfin_swrst;
 EXPORT_SYMBOL(_bfin_swrst);
 
 unsigned long memory_start, memory_end, physical_mem_end;
+unsigned long _rambase, _ramstart, _ramend;
 unsigned long reserved_mem_dcache_on;
 unsigned long reserved_mem_icache_on;
 EXPORT_SYMBOL(memory_start);
@@ -51,6 +52,7 @@ EXPORT_SYMBOL(mtd_size);
 #endif
 
 char __initdata command_line[COMMAND_LINE_SIZE];
+unsigned int __initdata *__retx;
 
 /* boot memmap, for parsing "memmap=" */
 #define BFIN_MEMMAP_MAX		128 /* number of entries in bfin_memmap */
@@ -103,10 +105,11 @@ void __init bf53x_relocate_l1_mem(void)
 	unsigned long l1_code_length;
 	unsigned long l1_data_a_length;
 	unsigned long l1_data_b_length;
+	unsigned long l2_length;
 
 	l1_code_length = _etext_l1 - _stext_l1;
 	if (l1_code_length > L1_CODE_LENGTH)
-		l1_code_length = L1_CODE_LENGTH;
+		panic("L1 Instruction SRAM Overflow\n");
 	/* cannot complain as printk is not available as yet.
 	 * But we can continue booting and complain later!
 	 */
@@ -116,19 +119,27 @@ void __init bf53x_relocate_l1_mem(void)
 
 	l1_data_a_length = _ebss_l1 - _sdata_l1;
 	if (l1_data_a_length > L1_DATA_A_LENGTH)
-		l1_data_a_length = L1_DATA_A_LENGTH;
+		panic("L1 Data SRAM Bank A Overflow\n");
 
 	/* Copy _sdata_l1 to _ebss_l1 to L1 data bank A SRAM */
 	dma_memcpy(_sdata_l1, _l1_lma_start + l1_code_length, l1_data_a_length);
 
 	l1_data_b_length = _ebss_b_l1 - _sdata_b_l1;
 	if (l1_data_b_length > L1_DATA_B_LENGTH)
-		l1_data_b_length = L1_DATA_B_LENGTH;
+		panic("L1 Data SRAM Bank B Overflow\n");
 
 	/* Copy _sdata_b_l1 to _ebss_b_l1 to L1 data bank B SRAM */
 	dma_memcpy(_sdata_b_l1, _l1_lma_start + l1_code_length +
 			l1_data_a_length, l1_data_b_length);
 
+	if (L2_LENGTH != 0) {
+		l2_length = _ebss_l2 - _stext_l2;
+		if (l2_length > L2_LENGTH)
+			panic("L2 SRAM Overflow\n");
+
+		/* Copy _stext_l2 to _edata_l2 to L2 SRAM */
+		dma_memcpy(_stext_l2, _l2_lma_start, l2_length);
+	}
 }
 
 /* add_memory_region to memmap */
@@ -547,11 +558,38 @@ static __init void  memory_setup(void)
 		);
 }
 
+/*
+ * Find the lowest, highest page frame number we have available
+ */
+void __init find_min_max_pfn(void)
+{
+	int i;
+
+	max_pfn = 0;
+	min_low_pfn = memory_end;
+
+	for (i = 0; i < bfin_memmap.nr_map; i++) {
+		unsigned long start, end;
+		/* RAM? */
+		if (bfin_memmap.map[i].type != BFIN_MEMMAP_RAM)
+			continue;
+		start = PFN_UP(bfin_memmap.map[i].addr);
+		end = PFN_DOWN(bfin_memmap.map[i].addr +
+				bfin_memmap.map[i].size);
+		if (start >= end)
+			continue;
+		if (end > max_pfn)
+			max_pfn = end;
+		if (start < min_low_pfn)
+			min_low_pfn = start;
+	}
+}
+
 static __init void setup_bootmem_allocator(void)
 {
 	int bootmap_size;
 	int i;
-	unsigned long min_pfn, max_pfn;
+	unsigned long start_pfn, end_pfn;
 	unsigned long curr_pfn, last_pfn, size;
 
 	/* mark memory between memory_start and memory_end usable */
@@ -561,8 +599,19 @@ static __init void setup_bootmem_allocator(void)
 	sanitize_memmap(bfin_memmap.map, &bfin_memmap.nr_map);
 	print_memory_map("boot memmap");
 
-	min_pfn = PAGE_OFFSET >> PAGE_SHIFT;
-	max_pfn = memory_end >> PAGE_SHIFT;
+	/* intialize globals in linux/bootmem.h */
+	find_min_max_pfn();
+	/* pfn of the last usable page frame */
+	if (max_pfn > memory_end >> PAGE_SHIFT)
+		max_pfn = memory_end >> PAGE_SHIFT;
+	/* pfn of last page frame directly mapped by kernel */
+	max_low_pfn = max_pfn;
+	/* pfn of the first usable page frame after kernel image*/
+	if (min_low_pfn < memory_start >> PAGE_SHIFT)
+		min_low_pfn = memory_start >> PAGE_SHIFT;
+
+	start_pfn = PAGE_OFFSET >> PAGE_SHIFT;
+	end_pfn = memory_end >> PAGE_SHIFT;
 
 	/*
 	 * give all the memory to the bootmap allocator,  tell it to put the
@@ -570,7 +619,7 @@ static __init void setup_bootmem_allocator(void)
 	 */
 	bootmap_size = init_bootmem_node(NODE_DATA(0),
 			memory_start >> PAGE_SHIFT,	/* map goes here */
-			min_pfn, max_pfn);
+			start_pfn, end_pfn);
 
 	/* register the memmap regions with the bootmem allocator */
 	for (i = 0; i < bfin_memmap.nr_map; i++) {
@@ -583,7 +632,7 @@ static __init void setup_bootmem_allocator(void)
 		 * We are rounding up the start address of usable memory:
 		 */
 		curr_pfn = PFN_UP(bfin_memmap.map[i].addr);
-		if (curr_pfn >= max_pfn)
+		if (curr_pfn >= end_pfn)
 			continue;
 		/*
 		 * ... and at the end of the usable range downwards:
@@ -591,8 +640,8 @@ static __init void setup_bootmem_allocator(void)
 		last_pfn = PFN_DOWN(bfin_memmap.map[i].addr +
 					 bfin_memmap.map[i].size);
 
-		if (last_pfn > max_pfn)
-			last_pfn = max_pfn;
+		if (last_pfn > end_pfn)
+			last_pfn = end_pfn;
 
 		/*
 		 * .. finally, did all the rounding and playing
@@ -611,9 +660,57 @@ static __init void setup_bootmem_allocator(void)
 		BOOTMEM_DEFAULT);
 }
 
+#define EBSZ_TO_MEG(ebsz) \
+({ \
+	int meg = 0; \
+	switch (ebsz & 0xf) { \
+		case 0x1: meg =  16; break; \
+		case 0x3: meg =  32; break; \
+		case 0x5: meg =  64; break; \
+		case 0x7: meg = 128; break; \
+		case 0x9: meg = 256; break; \
+		case 0xb: meg = 512; break; \
+	} \
+	meg; \
+})
+static inline int __init get_mem_size(void)
+{
+#if defined(EBIU_SDBCTL)
+# if defined(BF561_FAMILY)
+	int ret = 0;
+	u32 sdbctl = bfin_read_EBIU_SDBCTL();
+	ret += EBSZ_TO_MEG(sdbctl >>  0);
+	ret += EBSZ_TO_MEG(sdbctl >>  8);
+	ret += EBSZ_TO_MEG(sdbctl >> 16);
+	ret += EBSZ_TO_MEG(sdbctl >> 24);
+	return ret;
+# else
+	return EBSZ_TO_MEG(bfin_read_EBIU_SDBCTL());
+# endif
+#elif defined(EBIU_DDRCTL1)
+	u32 ddrctl = bfin_read_EBIU_DDRCTL1();
+	int ret = 0;
+	switch (ddrctl & 0xc0000) {
+		case DEVSZ_64:  ret = 64 / 8;
+		case DEVSZ_128: ret = 128 / 8;
+		case DEVSZ_256: ret = 256 / 8;
+		case DEVSZ_512: ret = 512 / 8;
+	}
+	switch (ddrctl & 0x30000) {
+		case DEVWD_4:  ret *= 2;
+		case DEVWD_8:  ret *= 2;
+		case DEVWD_16: break;
+	}
+	if ((ddrctl & 0xc000) == 0x4000)
+		ret *= 2;
+	return ret;
+#endif
+	BUG();
+}
+
 void __init setup_arch(char **cmdline_p)
 {
-	unsigned long l1_length, sclk, cclk;
+	unsigned long sclk, cclk;
 
 #ifdef CONFIG_DUMMY_CONSOLE
 	conswitchp = &dummy_con;
@@ -631,7 +728,7 @@ void __init setup_arch(char **cmdline_p)
 
 	/* setup memory defaults from the user config */
 	physical_mem_end = 0;
-	_ramend = CONFIG_MEM_SIZE * 1024 * 1024;
+	_ramend = get_mem_size() * 1024 * 1024;
 
 	memset(&bfin_memmap, 0, sizeof(bfin_memmap));
 
@@ -641,6 +738,16 @@ void __init setup_arch(char **cmdline_p)
 		physical_mem_end = _ramend;
 
 	memory_setup();
+
+	/* Initialize Async memory banks */
+	bfin_write_EBIU_AMBCTL0(AMBCTL0VAL);
+	bfin_write_EBIU_AMBCTL1(AMBCTL1VAL);
+	bfin_write_EBIU_AMGCTL(AMGCTLVAL);
+#ifdef CONFIG_EBIU_MBSCTLVAL
+	bfin_write_EBIU_MBSCTL(CONFIG_EBIU_MBSCTLVAL);
+	bfin_write_EBIU_MODE(CONFIG_EBIU_MODEVAL);
+	bfin_write_EBIU_FCTL(CONFIG_EBIU_FCTLVAL);
+#endif
 
 	cclk = get_cclk();
 	sclk = get_sclk();
@@ -675,8 +782,15 @@ void __init setup_arch(char **cmdline_p)
 
 	_bfin_swrst = bfin_read_SWRST();
 
+	/* If we double fault, reset the system - otherwise we hang forever */
+	bfin_write_SWRST(DOUBLE_FAULT);
+
 	if (_bfin_swrst & RESET_DOUBLE)
-		printk(KERN_INFO "Recovering from Double Fault event\n");
+		/*
+		 * don't decode the address, since you don't know if this
+		 * kernel's symbol map is the same as the crashing kernel
+		 */
+		printk(KERN_INFO "Recovering from Double Fault event at %pF\n", __retx);
 	else if (_bfin_swrst & RESET_WDOG)
 		printk(KERN_INFO "Recovering from Watchdog event\n");
 	else if (_bfin_swrst & RESET_SOFTWARE)
@@ -711,15 +825,6 @@ void __init setup_arch(char **cmdline_p)
 	setup_bootmem_allocator();
 
 	paging_init();
-
-	/* check the size of the l1 area */
-	l1_length = _etext_l1 - _stext_l1;
-	if (l1_length > L1_CODE_LENGTH)
-		panic("L1 code memory overflow\n");
-
-	l1_length = _ebss_l1 - _sdata_l1;
-	if (l1_length > L1_DATA_A_LENGTH)
-		panic("L1 data memory overflow\n");
 
 	/* Copy atomic sequences to their fixed location, and sanity check that
 	   these locations are the ones that we advertise to userspace.  */
@@ -763,38 +868,55 @@ static int __init topology_init(void)
 
 subsys_initcall(topology_init);
 
+/* Get the voltage input multiplier */
+static u_long cached_vco_pll_ctl, cached_vco;
 static u_long get_vco(void)
 {
 	u_long msel;
-	u_long vco;
 
-	msel = (bfin_read_PLL_CTL() >> 9) & 0x3F;
+	u_long pll_ctl = bfin_read_PLL_CTL();
+	if (pll_ctl == cached_vco_pll_ctl)
+		return cached_vco;
+	else
+		cached_vco_pll_ctl = pll_ctl;
+
+	msel = (pll_ctl >> 9) & 0x3F;
 	if (0 == msel)
 		msel = 64;
 
-	vco = CONFIG_CLKIN_HZ;
-	vco >>= (1 & bfin_read_PLL_CTL());	/* DF bit */
-	vco = msel * vco;
-	return vco;
+	cached_vco = CONFIG_CLKIN_HZ;
+	cached_vco >>= (1 & pll_ctl);	/* DF bit */
+	cached_vco *= msel;
+	return cached_vco;
 }
 
 /* Get the Core clock */
+static u_long cached_cclk_pll_div, cached_cclk;
 u_long get_cclk(void)
 {
 	u_long csel, ssel;
+
 	if (bfin_read_PLL_STAT() & 0x1)
 		return CONFIG_CLKIN_HZ;
 
 	ssel = bfin_read_PLL_DIV();
+	if (ssel == cached_cclk_pll_div)
+		return cached_cclk;
+	else
+		cached_cclk_pll_div = ssel;
+
 	csel = ((ssel >> 4) & 0x03);
 	ssel &= 0xf;
 	if (ssel && ssel < (1 << csel))	/* SCLK > CCLK */
-		return get_vco() / ssel;
-	return get_vco() >> csel;
+		cached_cclk = get_vco() / ssel;
+	else
+		cached_cclk = get_vco() >> csel;
+	return cached_cclk;
 }
 EXPORT_SYMBOL(get_cclk);
 
 /* Get the System clock */
+static u_long cached_sclk_pll_div, cached_sclk;
 u_long get_sclk(void)
 {
 	u_long ssel;
@@ -802,13 +924,20 @@ u_long get_sclk(void)
 	if (bfin_read_PLL_STAT() & 0x1)
 		return CONFIG_CLKIN_HZ;
 
-	ssel = (bfin_read_PLL_DIV() & 0xf);
+	ssel = bfin_read_PLL_DIV();
+	if (ssel == cached_sclk_pll_div)
+		return cached_sclk;
+	else
+		cached_sclk_pll_div = ssel;
+
+	ssel &= 0xf;
 	if (0 == ssel) {
 		printk(KERN_WARNING "Invalid System Clock\n");
 		ssel = 1;
 	}
 
-	return get_vco() / ssel;
+	cached_sclk = get_vco() / ssel;
+	return cached_sclk;
 }
 EXPORT_SYMBOL(get_sclk);
 
@@ -837,7 +966,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	uint32_t revid;
 
 	u_long cclk = 0, sclk = 0;
-	u_int dcache_size = 0, dsup_banks = 0;
+	u_int icache_size = BFIN_ICACHESIZE / 1024, dcache_size = 0, dsup_banks = 0;
 
 	cpu = CPU;
 	mmu = "none";
@@ -859,12 +988,17 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_printf(m, "processor\t: %d\n"
 		"vendor_id\t: %s\n"
 		"cpu family\t: 0x%x\n"
-		"model name\t: ADSP-%s %lu(MHz CCLK) %lu(MHz SCLK)\n"
+		"model name\t: ADSP-%s %lu(MHz CCLK) %lu(MHz SCLK) (%s)\n"
 		"stepping\t: %d\n",
 		0,
 		vendor,
 		(bfin_read_CHIPID() & CHIPID_FAMILY),
 		cpu, cclk/1000000, sclk/1000000,
+#ifdef CONFIG_MPU
+		"mpu on",
+#else
+		"mpu off",
+#endif
 		revid);
 
 	seq_printf(m, "cpu MHz\t\t: %lu.%03lu/%lu.%03lu\n",
@@ -901,12 +1035,15 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	}
 
 	/* Is it turned on? */
-	if (!((bfin_read_DMEM_CONTROL()) & (ENDCPLB | DMC_ENABLE)))
+	if ((bfin_read_DMEM_CONTROL() & (ENDCPLB | DMC_ENABLE)) != (ENDCPLB | DMC_ENABLE))
 		dcache_size = 0;
+
+	if ((bfin_read_IMEM_CONTROL() & (IMC | ENICPLB)) == (IMC | ENICPLB))
+		icache_size = 0;
 
 	seq_printf(m, "cache size\t: %d KB(L1 icache) "
 		"%d KB(L1 dcache-%s) %d KB(L2 cache)\n",
-		BFIN_ICACHESIZE / 1024, dcache_size,
+		icache_size, dcache_size,
 #if defined CONFIG_BFIN_WB
 		"wb"
 #elif defined CONFIG_BFIN_WT
@@ -916,14 +1053,18 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	seq_printf(m, "%s\n", cache);
 
-	seq_printf(m, "icache setup\t: %d Sub-banks/%d Ways, %d Lines/Way\n",
-		   BFIN_ISUBBANKS, BFIN_IWAYS, BFIN_ILINES);
+	if (icache_size)
+		seq_printf(m, "icache setup\t: %d Sub-banks/%d Ways, %d Lines/Way\n",
+			   BFIN_ISUBBANKS, BFIN_IWAYS, BFIN_ILINES);
+	else
+		seq_printf(m, "icache setup\t: off\n");
+
 	seq_printf(m,
 		   "dcache setup\t: %d Super-banks/%d Sub-banks/%d Ways, %d Lines/Way\n",
 		   dsup_banks, BFIN_DSUBBANKS, BFIN_DWAYS,
 		   BFIN_DLINES);
 #ifdef CONFIG_BFIN_ICACHE_LOCK
-	switch (read_iloc()) {
+	switch ((bfin_read_IMEM_CONTROL() >> 3) & WAYALL_L) {
 	case WAY0_L:
 		seq_printf(m, "Way0 Locked-Down\n");
 		break;
@@ -973,7 +1114,6 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 		seq_printf(m, "No Ways are locked\n");
 	}
 #endif
-
 	seq_printf(m, "board name\t: %s\n", bfin_board_name);
 	seq_printf(m, "board memory\t: %ld kB (0x%p -> 0x%p)\n",
 		 physical_mem_end >> 10, (void *)0, (void *)physical_mem_end);

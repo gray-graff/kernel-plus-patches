@@ -21,7 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <asm/arch/npe.h>
+#include <mach/npe.h>
 
 #define DEBUG_MSG			0
 #define DEBUG_FW			0
@@ -448,7 +448,9 @@ int npe_send_message(struct npe *npe, const void *msg, const char *what)
 		return -ETIMEDOUT;
 	}
 
+#if DEBUG_MSG > 1
 	debug_msg(npe, "Sending a message took %i cycles\n", cycles);
+#endif
 	return 0;
 }
 
@@ -484,7 +486,9 @@ int npe_recv_message(struct npe *npe, void *msg, const char *what)
 		return -ETIMEDOUT;
 	}
 
+#if DEBUG_MSG > 1
 	debug_msg(npe, "Receiving a message took %i cycles\n", cycles);
+#endif
 	return 0;
 }
 

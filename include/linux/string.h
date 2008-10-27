@@ -109,5 +109,10 @@ extern void *kmemdup(const void *src, size_t len, gfp_t gfp);
 extern char **argv_split(gfp_t gfp, const char *str, int *argcp);
 extern void argv_free(char **argv);
 
+extern bool sysfs_streq(const char *s1, const char *s2);
+
+extern ssize_t memory_read_from_buffer(void *to, size_t count, loff_t *ppos,
+			const void *from, size_t available);
+
 #endif
 #endif /* _LINUX_STRING_H_ */

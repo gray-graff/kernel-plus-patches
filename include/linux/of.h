@@ -62,6 +62,7 @@ extern struct property *of_find_property(const struct device_node *np,
 					 int *lenp);
 extern int of_device_is_compatible(const struct device_node *device,
 				   const char *);
+extern int of_device_is_available(const struct device_node *device);
 extern const void *of_get_property(const struct device_node *node,
 				const char *name,
 				int *lenp);
@@ -69,5 +70,6 @@ extern int of_n_addr_cells(struct device_node *np);
 extern int of_n_size_cells(struct device_node *np);
 extern const struct of_device_id *of_match_node(
 	const struct of_device_id *matches, const struct device_node *node);
+extern int of_modalias_node(struct device_node *node, char *modalias, int len);
 
 #endif /* _LINUX_OF_H */

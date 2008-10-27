@@ -15,6 +15,7 @@
 #include <linux/poll.h>
 #include <linux/compat.h>
 #include <linux/mm.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -527,14 +528,17 @@ static int mon_bin_open(struct inode *inode, struct file *file)
 	size_t size;
 	int rc;
 
+	lock_kernel();
 	mutex_lock(&mon_lock);
 	if ((mbus = mon_bus_lookup(iminor(inode))) == NULL) {
 		mutex_unlock(&mon_lock);
+		unlock_kernel();
 		return -ENODEV;
 	}
 	if (mbus != &mon_bus0 && mbus->u_bus == NULL) {
 		printk(KERN_ERR TAG ": consistency error on open\n");
 		mutex_unlock(&mon_lock);
+		unlock_kernel();
 		return -ENODEV;
 	}
 
@@ -568,6 +572,7 @@ static int mon_bin_open(struct inode *inode, struct file *file)
 
 	file->private_data = rp;
 	mutex_unlock(&mon_lock);
+	unlock_kernel();
 	return 0;
 
 err_allocbuff:
@@ -576,6 +581,7 @@ err_allocvec:
 	kfree(rp);
 err_alloc:
 	mutex_unlock(&mon_lock);
+	unlock_kernel();
 	return rc;
 }
 
@@ -1026,8 +1032,6 @@ mon_bin_poll(struct file *file, struct poll_table_struct *wait)
 	return mask;
 }
 
-#if 0
-
 /*
  * open and close: just keep track of how many times the device is
  * mapped, to use the proper memory allocation function.
@@ -1063,13 +1067,13 @@ static int mon_bin_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	return 0;
 }
 
-struct vm_operations_struct mon_bin_vm_ops = {
+static struct vm_operations_struct mon_bin_vm_ops = {
 	.open =     mon_bin_vma_open,
 	.close =    mon_bin_vma_close,
 	.fault =    mon_bin_vma_fault,
 };
 
-int mon_bin_mmap(struct file *filp, struct vm_area_struct *vma)
+static int mon_bin_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	/* don't do anything here: "fault" will set up page table entries */
 	vma->vm_ops = &mon_bin_vm_ops;
@@ -1078,8 +1082,6 @@ int mon_bin_mmap(struct file *filp, struct vm_area_struct *vma)
 	mon_bin_vma_open(vma);
 	return 0;
 }
-
-#endif  /*  0  */
 
 static const struct file_operations mon_fops_binary = {
 	.owner =	THIS_MODULE,
@@ -1090,6 +1092,7 @@ static const struct file_operations mon_fops_binary = {
 	.poll =		mon_bin_poll,
 	.ioctl =	mon_bin_ioctl,
 	.release =	mon_bin_release,
+	.mmap =		mon_bin_mmap,
 };
 
 static int mon_bin_wait_event(struct file *file, struct mon_reader_bin *rp)
@@ -1159,8 +1162,9 @@ int mon_bin_add(struct mon_bus *mbus, const struct usb_bus *ubus)
 	if (minor >= MON_BIN_MAX_MINOR)
 		return 0;
 
-	dev = device_create(mon_bin_class, ubus? ubus->controller: NULL,
-			MKDEV(MAJOR(mon_bin_dev0), minor), "usbmon%d", minor);
+	dev = device_create_drvdata(mon_bin_class, ubus? ubus->controller: NULL,
+				    MKDEV(MAJOR(mon_bin_dev0), minor), NULL,
+				    "usbmon%d", minor);
 	if (IS_ERR(dev))
 		return 0;
 

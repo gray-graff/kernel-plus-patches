@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2003 - 2007 Intel Corporation. All rights reserved.
+ * Copyright(c) 2003 - 2008 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -36,13 +36,25 @@
 #include <linux/kernel.h>
 #include <net/ieee80211_radiotap.h>
 
+/*used for rfkill*/
+#include <linux/rfkill.h>
+#include <linux/input.h>
+
 /* Hardware specific file defines the PCI IDs table for that hardware module */
 extern struct pci_device_id iwl3945_hw_card_ids[];
 
 #define DRV_NAME	"iwl3945"
-#include "iwl-3945-hw.h"
+#include "iwl-csr.h"
 #include "iwl-prph.h"
+#include "iwl-3945-hw.h"
 #include "iwl-3945-debug.h"
+#include "iwl-3945-led.h"
+
+/* Change firmware file name, using "-" and incrementing number,
+ *   *only* when uCode interface or architecture changes so that it
+ *   is not compatible with earlier drivers.
+ * This number will also appear in << 8 position of 1st dword of uCode file */
+#define IWL3945_UCODE_API "-1"
 
 /* Default noise level to report when noise measurement is not available.
  *   This may be because we're:
@@ -109,11 +121,13 @@ struct iwl3945_queue {
 				* space less than this */
 } __attribute__ ((packed));
 
+int iwl3945_queue_space(const struct iwl3945_queue *q);
+int iwl3945_x2_queue_used(const struct iwl3945_queue *q, int i);
+
 #define MAX_NUM_OF_TBS          (20)
 
 /* One for each TFD */
 struct iwl3945_tx_info {
-	struct ieee80211_tx_status status;
 	struct sk_buff *skb[MAX_NUM_OF_TBS];
 };
 
@@ -195,7 +209,7 @@ struct iwl3945_channel_info {
 
 	u8 group_index;	  /* 0-4, maps channel to group1/2/3/4/5 */
 	u8 band_index;	  /* 0-4, maps channel to band1/2/3/4/5 */
-	u8 phymode;	  /* MODE_IEEE80211{A,B,G} */
+	enum ieee80211_band band;
 
 	/* Radio/DSP gain settings for each "normal" data Tx rate.
 	 * These include, in addition to RF and DSP gain, a few fields for
@@ -269,8 +283,8 @@ struct iwl3945_frame {
 
 #define SEQ_TO_QUEUE(x)  ((x >> 8) & 0xbf)
 #define QUEUE_TO_SEQ(x)  ((x & 0xbf) << 8)
-#define SEQ_TO_INDEX(x) (x & 0xff)
-#define INDEX_TO_SEQ(x) (x & 0xff)
+#define SEQ_TO_INDEX(x) ((u8)(x & 0xff))
+#define INDEX_TO_SEQ(x) ((u8)(x & 0xff))
 #define SEQ_HUGE_FRAME  (0x4000)
 #define SEQ_RX_FRAME    __constant_cpu_to_le16(0x8000)
 #define SEQ_TO_SN(seq) (((seq) & IEEE80211_SCTL_SEQ) >> 4)
@@ -390,23 +404,24 @@ struct iwl3945_rx_queue {
 #define MIN_B_CHANNELS  1
 
 #define STATUS_HCMD_ACTIVE	0	/* host command in progress */
-#define STATUS_INT_ENABLED	1
-#define STATUS_RF_KILL_HW	2
-#define STATUS_RF_KILL_SW	3
-#define STATUS_INIT		4
-#define STATUS_ALIVE		5
-#define STATUS_READY		6
-#define STATUS_TEMPERATURE	7
-#define STATUS_GEO_CONFIGURED	8
-#define STATUS_EXIT_PENDING	9
-#define STATUS_IN_SUSPEND	10
-#define STATUS_STATISTICS	11
-#define STATUS_SCANNING		12
-#define STATUS_SCAN_ABORTING	13
-#define STATUS_SCAN_HW		14
-#define STATUS_POWER_PMI	15
-#define STATUS_FW_ERROR		16
-#define STATUS_CONF_PENDING	17
+#define STATUS_HCMD_SYNC_ACTIVE	1	/* sync host command in progress */
+#define STATUS_INT_ENABLED	2
+#define STATUS_RF_KILL_HW	3
+#define STATUS_RF_KILL_SW	4
+#define STATUS_INIT		5
+#define STATUS_ALIVE		6
+#define STATUS_READY		7
+#define STATUS_TEMPERATURE	8
+#define STATUS_GEO_CONFIGURED	9
+#define STATUS_EXIT_PENDING	10
+#define STATUS_IN_SUSPEND	11
+#define STATUS_STATISTICS	12
+#define STATUS_SCANNING		13
+#define STATUS_SCAN_ABORTING	14
+#define STATUS_SCAN_HW		15
+#define STATUS_POWER_PMI	16
+#define STATUS_FW_ERROR		17
+#define STATUS_CONF_PENDING	18
 
 #define MAX_TID_COUNT        9
 
@@ -430,8 +445,6 @@ union iwl3945_ht_rate_supp {
 		u8 mimo_rate;
 	};
 };
-
-#ifdef CONFIG_IWL3945_QOS
 
 union iwl3945_qos_capabity {
 	struct {
@@ -460,7 +473,6 @@ struct iwl3945_qos_info {
 	union iwl3945_qos_capabity qos_cap;
 	struct iwl3945_qosparam_cmd def_qos_parm;
 };
-#endif /*CONFIG_IWL3945_QOS */
 
 #define STA_PS_STATUS_WAKE             0
 #define STA_PS_STATUS_SLEEP            1
@@ -498,8 +510,6 @@ struct iwl3945_ucode {
 	u8 data[0];		/* data in same order as "size" elements */
 };
 
-#define IWL_IBSS_MAC_HASH_SIZE 32
-
 struct iwl3945_ibss_seq {
 	u8 mac[ETH_ALEN];
 	u16 seq_num;
@@ -511,8 +521,8 @@ struct iwl3945_ibss_seq {
 /**
  * struct iwl3945_driver_hw_info
  * @max_txq_num: Max # Tx queues supported
- * @ac_queue_count: # Tx queues for EDCA Access Categories (AC)
  * @tx_cmd_len: Size of Tx command (but not including frame itself)
+ * @tx_ant_num: Number of TX antennas
  * @max_rxq_size: Max # Rx frames in Rx queue (must be power-of-2)
  * @rx_buf_size:
  * @max_pkt_size:
@@ -524,8 +534,8 @@ struct iwl3945_ibss_seq {
  */
 struct iwl3945_driver_hw_info {
 	u16 max_txq_num;
-	u16 ac_queue_count;
 	u16 tx_cmd_len;
+	u16 tx_ant_num;
 	u16 max_rxq_size;
 	u32 rx_buf_size;
 	u32 max_pkt_size;
@@ -557,27 +567,8 @@ extern int iwl3945_send_add_station(struct iwl3945_priv *priv,
 				struct iwl3945_addsta_cmd *sta, u8 flags);
 extern u8 iwl3945_add_station(struct iwl3945_priv *priv, const u8 *bssid,
 			  int is_ap, u8 flags);
-extern int iwl3945_is_network_packet(struct iwl3945_priv *priv,
-				 struct ieee80211_hdr *header);
 extern int iwl3945_power_init_handle(struct iwl3945_priv *priv);
 extern int iwl3945_eeprom_init(struct iwl3945_priv *priv);
-#ifdef CONFIG_IWL3945_DEBUG
-extern void iwl3945_report_frame(struct iwl3945_priv *priv,
-			     struct iwl3945_rx_packet *pkt,
-			     struct ieee80211_hdr *header, int group100);
-#else
-static inline void iwl3945_report_frame(struct iwl3945_priv *priv,
-				    struct iwl3945_rx_packet *pkt,
-				    struct ieee80211_hdr *header,
-				    int group100) {}
-#endif
-extern void iwl3945_handle_data_packet_monitor(struct iwl3945_priv *priv,
-					   struct iwl3945_rx_mem_buffer *rxb,
-					   void *data, short len,
-					   struct ieee80211_rx_status *stats,
-					   u16 phy_flags);
-extern int iwl3945_is_duplicate_packet(struct iwl3945_priv *priv,
-				       struct ieee80211_hdr *header);
 extern int iwl3945_rx_queue_alloc(struct iwl3945_priv *priv);
 extern void iwl3945_rx_queue_reset(struct iwl3945_priv *priv,
 			       struct iwl3945_rx_queue *rxq);
@@ -646,7 +637,7 @@ extern unsigned int iwl3945_hw_get_beacon_cmd(struct iwl3945_priv *priv,
 extern int iwl3945_hw_get_rx_read(struct iwl3945_priv *priv);
 extern void iwl3945_hw_build_tx_cmd_rate(struct iwl3945_priv *priv,
 				     struct iwl3945_cmd *cmd,
-				     struct ieee80211_tx_control *ctrl,
+				     struct ieee80211_tx_info *info,
 				     struct ieee80211_hdr *hdr,
 				     int sta_id, int tx_id);
 extern int iwl3945_hw_reg_send_txpower(struct iwl3945_priv *priv);
@@ -688,25 +679,40 @@ enum {
 
 #endif
 
+#ifdef CONFIG_IWL3945_RFKILL
+struct iwl3945_priv;
+
+void iwl3945_rfkill_set_hw_state(struct iwl3945_priv *priv);
+void iwl3945_rfkill_unregister(struct iwl3945_priv *priv);
+int iwl3945_rfkill_init(struct iwl3945_priv *priv);
+#else
+static inline void iwl3945_rfkill_set_hw_state(struct iwl3945_priv *priv) {}
+static inline void iwl3945_rfkill_unregister(struct iwl3945_priv *priv) {}
+static inline int iwl3945_rfkill_init(struct iwl3945_priv *priv) { return 0; }
+#endif
+
+#define IWL_MAX_NUM_QUEUES IWL39_MAX_NUM_QUEUES
+
 struct iwl3945_priv {
 
 	/* ieee device used by generic ieee processing code */
 	struct ieee80211_hw *hw;
 	struct ieee80211_channel *ieee_channels;
 	struct ieee80211_rate *ieee_rates;
+	struct iwl_3945_cfg *cfg; /* device configuration */
 
 	/* temporary frame storage list */
 	struct list_head free_frames;
 	int frames_count;
 
-	u8 phymode;
+	enum ieee80211_band band;
 	int alloc_rxb_skb;
 	bool add_radiotap;
 
 	void (*rx_handlers[REPLY_MAX])(struct iwl3945_priv *priv,
 				       struct iwl3945_rx_mem_buffer *rxb);
 
-	const struct ieee80211_hw_mode *modes;
+	struct ieee80211_supported_band bands[IEEE80211_NUM_BANDS];
 
 #ifdef CONFIG_IWL3945_SPECTRUM_MEASUREMENT
 	/* spectrum measurement report caching */
@@ -740,7 +746,6 @@ struct iwl3945_priv {
 	u8 direct_ssid_len;
 	u8 direct_ssid[IW_ESSID_MAX_SIZE];
 	struct iwl3945_scan_cmd *scan;
-	u8 only_active_channel;
 
 	/* spinlock */
 	spinlock_t lock;	/* protect general shared data */
@@ -779,12 +784,19 @@ struct iwl3945_priv {
 	struct iwl3945_init_alive_resp card_alive_init;
 	struct iwl3945_alive_resp card_alive;
 
-#ifdef LED
-	/* LED related variables */
-	struct iwl3945_activity_blink activity;
-	unsigned long led_packets;
-	int led_state;
+#ifdef CONFIG_IWL3945_RFKILL
+	struct rfkill *rfkill;
 #endif
+
+#ifdef CONFIG_IWL3945_LEDS
+	struct iwl3945_led led[IWL_LED_TRG_MAX];
+	unsigned long last_blink_time;
+	u8 last_blink_rate;
+	u8 allow_blinking;
+	unsigned int rxtxpackets;
+	u64 led_tpt;
+#endif
+
 
 	u16 active_rate;
 	u16 active_rate_basic;
@@ -803,7 +815,6 @@ struct iwl3945_priv {
 	struct iwl3945_tx_queue txq[IWL_MAX_NUM_QUEUES];
 
 	unsigned long status;
-	u32 config;
 
 	int last_rx_rssi;	/* From Rx packet statisitics */
 	int last_rx_noise;	/* From beacon statistics */
@@ -830,29 +841,18 @@ struct iwl3945_priv {
 	struct iwl3945_station_entry stations[IWL_STATION_COUNT];
 
 	/* Indication if ieee80211_ops->open has been called */
-	int is_open;
+	u8 is_open;
 
 	u8 mac80211_registered;
-	int is_abg;
-
-	u32 notif_missed_beacons;
 
 	/* Rx'd packet timing information */
 	u32 last_beacon_time;
 	u64 last_tsf;
 
-	/* Duplicate packet detection */
-	u16 last_seq_num;
-	u16 last_frag_num;
-	unsigned long last_packet_time;
-
-	/* Hash table for finding stations in IBSS network */
-	struct list_head ibss_mac_hash[IWL_IBSS_MAC_HASH_SIZE];
-
 	/* eeprom */
 	struct iwl3945_eeprom eeprom;
 
-	int iw_mode;
+	enum ieee80211_if_types iw_mode;
 
 	struct sk_buff *ibss_beacon;
 
@@ -869,9 +869,7 @@ struct iwl3945_priv {
 	u16 assoc_capability;
 	u8 ps_mode;
 
-#ifdef CONFIG_IWL3945_QOS
 	struct iwl3945_qos_info qos_data;
-#endif /*CONFIG_IWL3945_QOS */
 
 	struct workqueue_struct *workqueue;
 
@@ -887,6 +885,7 @@ struct iwl3945_priv {
 	struct work_struct report_work;
 	struct work_struct request_scan;
 	struct work_struct beacon_update;
+	struct work_struct set_monitor;
 
 	struct tasklet_struct irq_tasklet;
 
@@ -925,11 +924,6 @@ static inline int is_channel_valid(const struct iwl3945_channel_info *ch_info)
 	return (ch_info->flags & EEPROM_CHANNEL_VALID) ? 1 : 0;
 }
 
-static inline int is_channel_narrow(const struct iwl3945_channel_info *ch_info)
-{
-	return (ch_info->flags & EEPROM_CHANNEL_NARROW) ? 1 : 0;
-}
-
 static inline int is_channel_radar(const struct iwl3945_channel_info *ch_info)
 {
 	return (ch_info->flags & EEPROM_CHANNEL_RADAR) ? 1 : 0;
@@ -937,13 +931,12 @@ static inline int is_channel_radar(const struct iwl3945_channel_info *ch_info)
 
 static inline u8 is_channel_a_band(const struct iwl3945_channel_info *ch_info)
 {
-	return ch_info->phymode == MODE_IEEE80211A;
+	return ch_info->band == IEEE80211_BAND_5GHZ;
 }
 
 static inline u8 is_channel_bg_band(const struct iwl3945_channel_info *ch_info)
 {
-	return ((ch_info->phymode == MODE_IEEE80211B) ||
-		(ch_info->phymode == MODE_IEEE80211G));
+	return ch_info->band == IEEE80211_BAND_2GHZ;
 }
 
 static inline int is_channel_passive(const struct iwl3945_channel_info *ch)
@@ -956,18 +949,8 @@ static inline int is_channel_ibss(const struct iwl3945_channel_info *ch)
 	return ((ch->flags & EEPROM_CHANNEL_IBSS)) ? 1 : 0;
 }
 
-static inline int iwl3945_rate_index_from_plcp(int plcp)
-{
-	int i;
-
-	for (i = 0; i < IWL_RATE_COUNT; i++)
-		if (iwl3945_rates[i].plcp == plcp)
-			return i;
-	return -1;
-}
-
 extern const struct iwl3945_channel_info *iwl3945_get_channel_info(
-	const struct iwl3945_priv *priv, int phymode, u16 channel);
+	const struct iwl3945_priv *priv, enum ieee80211_band band, u16 channel);
 
 /* Requires full declaration of iwl3945_priv before including */
 #include "iwl-3945-io.h"

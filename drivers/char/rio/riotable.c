@@ -29,9 +29,6 @@
 **
 ** -----------------------------------------------------------------------------
 */
-#ifdef SCCS_LABELS
-static char *_riotable_c_sccs_ = "@(#)riotable.c	1.2";
-#endif
 
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -42,7 +39,6 @@ static char *_riotable_c_sccs_ = "@(#)riotable.c	1.2";
 #include <asm/io.h>
 #include <asm/system.h>
 #include <asm/string.h>
-#include <asm/semaphore.h>
 #include <asm/uaccess.h>
 
 #include <linux/termios.h>

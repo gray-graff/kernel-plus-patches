@@ -13,30 +13,48 @@
 
 #include <linux/types.h>
 #include <linux/mm.h>
+#include <linux/mmu_notifier.h>
 
 #include <linux/kvm.h>
 #include <linux/kvm_para.h>
 #include <linux/kvm_types.h>
 
+#include <asm/pvclock-abi.h>
 #include <asm/desc.h>
+
+#define KVM_MAX_VCPUS 16
+#define KVM_MEMORY_SLOTS 32
+/* memory slots that does not exposed to userspace */
+#define KVM_PRIVATE_MEM_SLOTS 4
+
+#define KVM_PIO_PAGE_OFFSET 1
+#define KVM_COALESCED_MMIO_PAGE_OFFSET 2
 
 #define CR3_PAE_RESERVED_BITS ((X86_CR3_PWT | X86_CR3_PCD) - 1)
 #define CR3_NONPAE_RESERVED_BITS ((PAGE_SIZE-1) & ~(X86_CR3_PWT | X86_CR3_PCD))
-#define CR3_L_MODE_RESERVED_BITS (CR3_NONPAE_RESERVED_BITS|0xFFFFFF0000000000ULL)
+#define CR3_L_MODE_RESERVED_BITS (CR3_NONPAE_RESERVED_BITS |	\
+				  0xFFFFFF0000000000ULL)
 
-#define KVM_GUEST_CR0_MASK \
+#define KVM_GUEST_CR0_MASK				   \
 	(X86_CR0_PG | X86_CR0_PE | X86_CR0_WP | X86_CR0_NE \
 	 | X86_CR0_NW | X86_CR0_CD)
-#define KVM_VM_CR0_ALWAYS_ON \
+#define KVM_VM_CR0_ALWAYS_ON						\
 	(X86_CR0_PG | X86_CR0_PE | X86_CR0_WP | X86_CR0_NE | X86_CR0_TS \
 	 | X86_CR0_MP)
-#define KVM_GUEST_CR4_MASK \
+#define KVM_GUEST_CR4_MASK						\
 	(X86_CR4_VME | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_PGE | X86_CR4_VMXE)
 #define KVM_PMODE_VM_CR4_ALWAYS_ON (X86_CR4_PAE | X86_CR4_VMXE)
 #define KVM_RMODE_VM_CR4_ALWAYS_ON (X86_CR4_VME | X86_CR4_PAE | X86_CR4_VMXE)
 
 #define INVALID_PAGE (~(hpa_t)0)
 #define UNMAPPED_GVA (~(gpa_t)0)
+
+/* shadow tables are PAE even on non-PAE hosts */
+#define KVM_HPAGE_SHIFT 21
+#define KVM_HPAGE_SIZE (1UL << KVM_HPAGE_SHIFT)
+#define KVM_HPAGE_MASK (~(KVM_HPAGE_SIZE - 1))
+
+#define KVM_PAGES_PER_HPAGE (KVM_HPAGE_SIZE / PAGE_SIZE)
 
 #define DE_VECTOR 0
 #define UD_VECTOR 6
@@ -47,6 +65,7 @@
 #define SS_VECTOR 12
 #define GP_VECTOR 13
 #define PF_VECTOR 14
+#define MC_VECTOR 18
 
 #define SELECTOR_TI_MASK (1 << 2)
 #define SELECTOR_RPL_MASK 0x03
@@ -57,10 +76,12 @@
 
 #define KVM_PERMILLE_MMU_PAGES 20
 #define KVM_MIN_ALLOC_MMU_PAGES 64
-#define KVM_NUM_MMU_PAGES 1024
+#define KVM_MMU_HASH_SHIFT 10
+#define KVM_NUM_MMU_PAGES (1 << KVM_MMU_HASH_SHIFT)
 #define KVM_MIN_FREE_MMU_PAGES 5
 #define KVM_REFILL_PAGES 25
 #define KVM_MAX_CPUID_ENTRIES 40
+#define KVM_NR_VAR_MTRR 8
 
 extern spinlock_t kvm_lock;
 extern struct list_head vm_list;
@@ -91,12 +112,12 @@ enum {
 };
 
 enum {
-	VCPU_SREG_CS,
-	VCPU_SREG_DS,
 	VCPU_SREG_ES,
+	VCPU_SREG_CS,
+	VCPU_SREG_SS,
+	VCPU_SREG_DS,
 	VCPU_SREG_FS,
 	VCPU_SREG_GS,
-	VCPU_SREG_SS,
 	VCPU_SREG_TR,
 	VCPU_SREG_LDTR,
 };
@@ -104,6 +125,12 @@ enum {
 #include <asm/kvm_x86_emulate.h>
 
 #define KVM_NR_MEM_OBJS 40
+
+struct kvm_guest_debug {
+	int enabled;
+	unsigned long bp[4];
+	int singlestep;
+};
 
 /*
  * We don't want allocation failures within the mmu code, so we preallocate
@@ -133,12 +160,13 @@ struct kvm_pte_chain {
 union kvm_mmu_page_role {
 	unsigned word;
 	struct {
-		unsigned glevels : 4;
-		unsigned level : 4;
-		unsigned quadrant : 2;
-		unsigned pad_for_nice_hex_output : 6;
-		unsigned metaphysical : 1;
-		unsigned access : 3;
+		unsigned glevels:4;
+		unsigned level:4;
+		unsigned quadrant:2;
+		unsigned pad_for_nice_hex_output:6;
+		unsigned metaphysical:1;
+		unsigned access:3;
+		unsigned invalid:1;
 	};
 };
 
@@ -203,11 +231,6 @@ struct kvm_vcpu_arch {
 	u64 shadow_efer;
 	u64 apic_base;
 	struct kvm_lapic *apic;    /* kernel irqchip context */
-#define VCPU_MP_STATE_RUNNABLE          0
-#define VCPU_MP_STATE_UNINITIALIZED     1
-#define VCPU_MP_STATE_INIT_RECEIVED     2
-#define VCPU_MP_STATE_SIPI_RECEIVED     3
-#define VCPU_MP_STATE_HALTED            4
 	int mp_state;
 	int sipi_vector;
 	u64 ia32_misc_enable_msr;
@@ -223,10 +246,13 @@ struct kvm_vcpu_arch {
 	gfn_t last_pt_write_gfn;
 	int   last_pt_write_count;
 	u64  *last_pte_updated;
+	gfn_t last_pte_gfn;
 
 	struct {
-		gfn_t gfn;          /* presumed gfn during guest pte update */
-		struct page *page;  /* page corresponding to that gfn */
+		gfn_t gfn;	/* presumed gfn during guest pte update */
+		pfn_t pfn;	/* pfn corresponding to that gfn */
+		int largepage;
+		unsigned long mmu_seq;
 	} update_pte;
 
 	struct i387_fxsave_struct host_fx_image;
@@ -260,6 +286,16 @@ struct kvm_vcpu_arch {
 	/* emulate context */
 
 	struct x86_emulate_ctxt emulate_ctxt;
+
+	gpa_t time;
+	struct pvclock_vcpu_time_info hv_clock;
+	unsigned int hv_clock_tsc_khz;
+	unsigned int time_offset;
+	struct page *time_page;
+
+	bool nmi_pending;
+
+	u64 mtrr[0x100];
 };
 
 struct kvm_mem_alias {
@@ -282,10 +318,16 @@ struct kvm_arch{
 	struct list_head active_mmu_pages;
 	struct kvm_pic *vpic;
 	struct kvm_ioapic *vioapic;
+	struct kvm_pit *vpit;
 
 	int round_robin_prev_vcpu;
 	unsigned int tss_addr;
 	struct page *apic_access_page;
+
+	gpa_t wall_clock;
+
+	struct page *ept_identity_pagetable;
+	bool ept_identity_pagetable_done;
 };
 
 struct kvm_vm_stat {
@@ -297,6 +339,7 @@ struct kvm_vm_stat {
 	u32 mmu_recycled;
 	u32 mmu_cache_miss;
 	u32 remote_tlb_flush;
+	u32 lpages;
 };
 
 struct kvm_vcpu_stat {
@@ -310,6 +353,7 @@ struct kvm_vcpu_stat {
 	u32 mmio_exits;
 	u32 signal_exits;
 	u32 irq_window_exits;
+	u32 nmi_window_exits;
 	u32 halt_exits;
 	u32 halt_wakeup;
 	u32 request_irq_exits;
@@ -319,6 +363,7 @@ struct kvm_vcpu_stat {
 	u32 fpu_reload;
 	u32 insn_emulation;
 	u32 insn_emulation_fail;
+	u32 hypercalls;
 };
 
 struct descriptor_table {
@@ -344,7 +389,6 @@ struct kvm_x86_ops {
 	void (*prepare_guest_switch)(struct kvm_vcpu *vcpu);
 	void (*vcpu_load)(struct kvm_vcpu *vcpu, int cpu);
 	void (*vcpu_put)(struct kvm_vcpu *vcpu);
-	void (*vcpu_decache)(struct kvm_vcpu *vcpu);
 
 	int (*set_guest_debug)(struct kvm_vcpu *vcpu,
 			       struct kvm_debug_guest *dbg);
@@ -354,6 +398,7 @@ struct kvm_x86_ops {
 	u64 (*get_segment_base)(struct kvm_vcpu *vcpu, int seg);
 	void (*get_segment)(struct kvm_vcpu *vcpu,
 			    struct kvm_segment *var, int seg);
+	int (*get_cpl)(struct kvm_vcpu *vcpu);
 	void (*set_segment)(struct kvm_vcpu *vcpu,
 			    struct kvm_segment *var, int seg);
 	void (*get_cs_db_l_bits)(struct kvm_vcpu *vcpu, int *db, int *l);
@@ -391,6 +436,7 @@ struct kvm_x86_ops {
 				       struct kvm_run *run);
 
 	int (*set_tss_addr)(struct kvm *kvm, unsigned int addr);
+	int (*get_tdp_level)(void);
 };
 
 extern struct kvm_x86_ops *kvm_x86_ops;
@@ -402,12 +448,24 @@ void kvm_mmu_destroy(struct kvm_vcpu *vcpu);
 int kvm_mmu_create(struct kvm_vcpu *vcpu);
 int kvm_mmu_setup(struct kvm_vcpu *vcpu);
 void kvm_mmu_set_nonpresent_ptes(u64 trap_pte, u64 notrap_pte);
+void kvm_mmu_set_base_ptes(u64 base_pte);
+void kvm_mmu_set_mask_ptes(u64 user_mask, u64 accessed_mask,
+		u64 dirty_mask, u64 nx_mask, u64 x_mask);
 
 int kvm_mmu_reset_context(struct kvm_vcpu *vcpu);
 void kvm_mmu_slot_remove_write_access(struct kvm *kvm, int slot);
 void kvm_mmu_zap_all(struct kvm *kvm);
 unsigned int kvm_mmu_calculate_mmu_pages(struct kvm *kvm);
 void kvm_mmu_change_mmu_pages(struct kvm *kvm, unsigned int kvm_nr_mmu_pages);
+
+int load_pdptrs(struct kvm_vcpu *vcpu, unsigned long cr3);
+
+int emulator_write_phys(struct kvm_vcpu *vcpu, gpa_t gpa,
+			  const void *val, int bytes);
+int kvm_pv_mmu_op(struct kvm_vcpu *vcpu, unsigned long bytes,
+		  gpa_t addr, unsigned long *ret);
+
+extern bool tdp_enabled;
 
 enum emulation_result {
 	EMULATE_DONE,       /* no further processing */
@@ -428,6 +486,7 @@ void realmode_lmsw(struct kvm_vcpu *vcpu, unsigned long msw,
 unsigned long realmode_get_cr(struct kvm_vcpu *vcpu, int cr);
 void realmode_set_cr(struct kvm_vcpu *vcpu, int cr, unsigned long value,
 		     unsigned long *rflags);
+void kvm_enable_efer_bits(u64);
 int kvm_get_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *data);
 int kvm_set_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 data);
 
@@ -447,12 +506,18 @@ int emulator_get_dr(struct x86_emulate_ctxt *ctxt, int dr,
 int emulator_set_dr(struct x86_emulate_ctxt *ctxt, int dr,
 		    unsigned long value);
 
-void set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0);
-void set_cr3(struct kvm_vcpu *vcpu, unsigned long cr0);
-void set_cr4(struct kvm_vcpu *vcpu, unsigned long cr0);
-void set_cr8(struct kvm_vcpu *vcpu, unsigned long cr0);
-unsigned long get_cr8(struct kvm_vcpu *vcpu);
-void lmsw(struct kvm_vcpu *vcpu, unsigned long msw);
+void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
+int kvm_load_segment_descriptor(struct kvm_vcpu *vcpu, u16 selector,
+				int type_bits, int seg);
+
+int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int reason);
+
+void kvm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0);
+void kvm_set_cr3(struct kvm_vcpu *vcpu, unsigned long cr3);
+void kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4);
+void kvm_set_cr8(struct kvm_vcpu *vcpu, unsigned long cr8);
+unsigned long kvm_get_cr8(struct kvm_vcpu *vcpu);
+void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw);
 void kvm_get_cs_db_l_bits(struct kvm_vcpu *vcpu, int *db, int *l);
 
 int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata);
@@ -462,6 +527,8 @@ void kvm_queue_exception(struct kvm_vcpu *vcpu, unsigned nr);
 void kvm_queue_exception_e(struct kvm_vcpu *vcpu, unsigned nr, u32 error_code);
 void kvm_inject_page_fault(struct kvm_vcpu *vcpu, unsigned long cr2,
 			   u32 error_code);
+
+void kvm_inject_nmi(struct kvm_vcpu *vcpu);
 
 void fx_init(struct kvm_vcpu *vcpu);
 
@@ -490,6 +557,9 @@ int kvm_fix_hypercall(struct kvm_vcpu *vcpu);
 
 int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t gva, u32 error_code);
 
+void kvm_enable_tdp(void);
+void kvm_disable_tdp(void);
+
 int load_pdptrs(struct kvm_vcpu *vcpu, unsigned long cr3);
 int complete_pio(struct kvm_vcpu *vcpu);
 
@@ -500,55 +570,53 @@ static inline struct kvm_mmu_page *page_header(hpa_t shadow_page)
 	return (struct kvm_mmu_page *)page_private(page);
 }
 
-static inline u16 read_fs(void)
+static inline u16 kvm_read_fs(void)
 {
 	u16 seg;
 	asm("mov %%fs, %0" : "=g"(seg));
 	return seg;
 }
 
-static inline u16 read_gs(void)
+static inline u16 kvm_read_gs(void)
 {
 	u16 seg;
 	asm("mov %%gs, %0" : "=g"(seg));
 	return seg;
 }
 
-static inline u16 read_ldt(void)
+static inline u16 kvm_read_ldt(void)
 {
 	u16 ldt;
 	asm("sldt %0" : "=g"(ldt));
 	return ldt;
 }
 
-static inline void load_fs(u16 sel)
+static inline void kvm_load_fs(u16 sel)
 {
 	asm("mov %0, %%fs" : : "rm"(sel));
 }
 
-static inline void load_gs(u16 sel)
+static inline void kvm_load_gs(u16 sel)
 {
 	asm("mov %0, %%gs" : : "rm"(sel));
 }
 
-#ifndef load_ldt
-static inline void load_ldt(u16 sel)
+static inline void kvm_load_ldt(u16 sel)
 {
 	asm("lldt %0" : : "rm"(sel));
 }
-#endif
 
-static inline void get_idt(struct descriptor_table *table)
+static inline void kvm_get_idt(struct descriptor_table *table)
 {
 	asm("sidt %0" : "=m"(*table));
 }
 
-static inline void get_gdt(struct descriptor_table *table)
+static inline void kvm_get_gdt(struct descriptor_table *table)
 {
 	asm("sgdt %0" : "=m"(*table));
 }
 
-static inline unsigned long read_tr_base(void)
+static inline unsigned long kvm_read_tr_base(void)
 {
 	u16 tr;
 	asm("str %0" : "=g"(tr));
@@ -565,17 +633,17 @@ static inline unsigned long read_msr(unsigned long msr)
 }
 #endif
 
-static inline void fx_save(struct i387_fxsave_struct *image)
+static inline void kvm_fx_save(struct i387_fxsave_struct *image)
 {
 	asm("fxsave (%0)":: "r" (image));
 }
 
-static inline void fx_restore(struct i387_fxsave_struct *image)
+static inline void kvm_fx_restore(struct i387_fxsave_struct *image)
 {
 	asm("fxrstor (%0)":: "r" (image));
 }
 
-static inline void fpu_init(void)
+static inline void kvm_fx_finit(void)
 {
 	asm("finit");
 }
@@ -599,6 +667,8 @@ static inline void kvm_inject_gp(struct kvm_vcpu *vcpu, u32 error_code)
 #define ASM_VMX_VMWRITE_RSP_RDX   ".byte 0x0f, 0x79, 0xd4"
 #define ASM_VMX_VMXOFF            ".byte 0x0f, 0x01, 0xc4"
 #define ASM_VMX_VMXON_RAX         ".byte 0xf3, 0x0f, 0xc7, 0x30"
+#define ASM_VMX_INVEPT		  ".byte 0x66, 0x0f, 0x38, 0x80, 0x08"
+#define ASM_VMX_INVVPID		  ".byte 0x66, 0x0f, 0x38, 0x81, 0x08"
 
 #define MSR_IA32_TIME_STAMP_COUNTER		0x010
 
@@ -606,6 +676,63 @@ static inline void kvm_inject_gp(struct kvm_vcpu *vcpu, u32 error_code)
 #define TSS_BASE_SIZE 0x68
 #define TSS_IOPB_SIZE (65536 / 8)
 #define TSS_REDIRECTION_SIZE (256 / 8)
-#define RMODE_TSS_SIZE (TSS_BASE_SIZE + TSS_REDIRECTION_SIZE + TSS_IOPB_SIZE + 1)
+#define RMODE_TSS_SIZE							\
+	(TSS_BASE_SIZE + TSS_REDIRECTION_SIZE + TSS_IOPB_SIZE + 1)
+
+enum {
+	TASK_SWITCH_CALL = 0,
+	TASK_SWITCH_IRET = 1,
+	TASK_SWITCH_JMP = 2,
+	TASK_SWITCH_GATE = 3,
+};
+
+#define KVMTRACE_5D(evt, vcpu, d1, d2, d3, d4, d5, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 5, d1, d2, d3, d4, d5)
+#define KVMTRACE_4D(evt, vcpu, d1, d2, d3, d4, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 4, d1, d2, d3, d4, 0)
+#define KVMTRACE_3D(evt, vcpu, d1, d2, d3, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 3, d1, d2, d3, 0, 0)
+#define KVMTRACE_2D(evt, vcpu, d1, d2, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 2, d1, d2, 0, 0, 0)
+#define KVMTRACE_1D(evt, vcpu, d1, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 1, d1, 0, 0, 0, 0)
+#define KVMTRACE_0D(evt, vcpu, name) \
+	trace_mark(kvm_trace_##name, "%u %p %u %u %u %u %u %u", KVM_TRC_##evt, \
+						vcpu, 0, 0, 0, 0, 0, 0)
+
+#ifdef CONFIG_64BIT
+# define KVM_EX_ENTRY ".quad"
+# define KVM_EX_PUSH "pushq"
+#else
+# define KVM_EX_ENTRY ".long"
+# define KVM_EX_PUSH "pushl"
+#endif
+
+/*
+ * Hardware virtualization extension instructions may fault if a
+ * reboot turns off virtualization while processes are running.
+ * Trap the fault and ignore the instruction if that happens.
+ */
+asmlinkage void kvm_handle_fault_on_reboot(void);
+
+#define __kvm_handle_fault_on_reboot(insn) \
+	"666: " insn "\n\t" \
+	".pushsection .fixup, \"ax\" \n" \
+	"667: \n\t" \
+	KVM_EX_PUSH " $666b \n\t" \
+	"jmp kvm_handle_fault_on_reboot \n\t" \
+	".popsection \n\t" \
+	".pushsection __ex_table, \"a\" \n\t" \
+	KVM_EX_ENTRY " 666b, 667b \n\t" \
+	".popsection"
+
+#define KVM_ARCH_WANT_MMU_NOTIFIER
+int kvm_unmap_hva(struct kvm *kvm, unsigned long hva);
+int kvm_age_hva(struct kvm *kvm, unsigned long hva);
 
 #endif

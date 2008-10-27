@@ -9,8 +9,6 @@
  * ----------------------------------------------------------------------- */
 
 /*
- * arch/i386/boot/boot.h
- *
  * Header file for the real-mode kernel code
  */
 
@@ -26,9 +24,13 @@
 #include <linux/edd.h>
 #include <asm/boot.h>
 #include <asm/setup.h>
+#include "bitops.h"
+#include <asm/cpufeature.h>
 
 /* Useful macros */
 #define BUILD_BUG_ON(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
 extern struct setup_header hdr;
 extern struct boot_params boot_params;
@@ -244,6 +246,12 @@ int cmdline_find_option(const char *option, char *buffer, int bufsize);
 int cmdline_find_option_bool(const char *option);
 
 /* cpu.c, cpucheck.c */
+struct cpu_features {
+	int level;		/* Family, or 64 for x86-64 */
+	int model;
+	u32 flags[NCAPINTS];
+};
+extern struct cpu_features cpu;
 int check_cpu(int *cpu_level_ptr, int *req_level_ptr, u32 **err_flags_ptr);
 int validate_cpu(void);
 
@@ -285,6 +293,11 @@ int getchar_timeout(void);
 
 /* video.c */
 void set_video(void);
+
+/* video-mode.c */
+int set_mode(u16 mode);
+int mode_defined(u16 mode);
+void probe_cards(int unsafe);
 
 /* video-vesa.c */
 void vesa_store_edid(void);

@@ -78,6 +78,7 @@ void destroy_spu_context(struct kref *kref)
 {
 	struct spu_context *ctx;
 	ctx = container_of(kref, struct spu_context, kref);
+	spu_context_nospu_trace(destroy_spu_context__enter, ctx);
 	mutex_lock(&ctx->state_mutex);
 	spu_deactivate(ctx);
 	mutex_unlock(&ctx->state_mutex);
@@ -88,6 +89,7 @@ void destroy_spu_context(struct kref *kref)
 		kref_put(ctx->prof_priv_kref, ctx->prof_priv_release);
 	BUG_ON(!list_empty(&ctx->rq));
 	atomic_dec(&nr_spu_contexts);
+	kfree(ctx->switch_log);
 	kfree(ctx);
 }
 
@@ -128,17 +130,17 @@ void spu_unmap_mappings(struct spu_context *ctx)
 	if (ctx->local_store)
 		unmap_mapping_range(ctx->local_store, 0, LS_SIZE, 1);
 	if (ctx->mfc)
-		unmap_mapping_range(ctx->mfc, 0, 0x1000, 1);
+		unmap_mapping_range(ctx->mfc, 0, SPUFS_MFC_MAP_SIZE, 1);
 	if (ctx->cntl)
-		unmap_mapping_range(ctx->cntl, 0, 0x1000, 1);
+		unmap_mapping_range(ctx->cntl, 0, SPUFS_CNTL_MAP_SIZE, 1);
 	if (ctx->signal1)
-		unmap_mapping_range(ctx->signal1, 0, PAGE_SIZE, 1);
+		unmap_mapping_range(ctx->signal1, 0, SPUFS_SIGNAL_MAP_SIZE, 1);
 	if (ctx->signal2)
-		unmap_mapping_range(ctx->signal2, 0, PAGE_SIZE, 1);
+		unmap_mapping_range(ctx->signal2, 0, SPUFS_SIGNAL_MAP_SIZE, 1);
 	if (ctx->mss)
-		unmap_mapping_range(ctx->mss, 0, 0x1000, 1);
+		unmap_mapping_range(ctx->mss, 0, SPUFS_MSS_MAP_SIZE, 1);
 	if (ctx->psmap)
-		unmap_mapping_range(ctx->psmap, 0, 0x20000, 1);
+		unmap_mapping_range(ctx->psmap, 0, SPUFS_PS_MAP_SIZE, 1);
 	mutex_unlock(&ctx->mapping_lock);
 }
 
@@ -149,6 +151,8 @@ void spu_unmap_mappings(struct spu_context *ctx)
 int spu_acquire_saved(struct spu_context *ctx)
 {
 	int ret;
+
+	spu_context_nospu_trace(spu_acquire_saved__enter, ctx);
 
 	ret = spu_acquire(ctx);
 	if (ret)

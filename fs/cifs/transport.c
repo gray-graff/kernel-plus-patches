@@ -142,6 +142,24 @@ void DeleteOplockQEntry(struct oplock_q_entry *oplockEntry)
 	kmem_cache_free(cifs_oplock_cachep, oplockEntry);
 }
 
+
+void DeleteTconOplockQEntries(struct cifsTconInfo *tcon)
+{
+	struct oplock_q_entry *temp;
+
+	if (tcon == NULL)
+		return;
+
+	spin_lock(&GlobalMid_Lock);
+	list_for_each_entry(temp, &GlobalOplock_Q, qhead) {
+		if ((temp->tcon) && (temp->tcon == tcon)) {
+			list_del(&temp->qhead);
+			kmem_cache_free(cifs_oplock_cachep, temp);
+		}
+	}
+	spin_unlock(&GlobalMid_Lock);
+}
+
 int
 smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
 	 unsigned int smb_buf_length, struct sockaddr *sin)
@@ -247,6 +265,7 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
 	cFYI(1, ("Sending smb:  total_len %d", total_len));
 	dump_smb(smb_buffer, len);
 
+	i = 0;
 	while (total_len) {
 		rc = kernel_sendmsg(ssocket, &smb_msg, &iov[first_vec],
 				    n_vec - first_vec, total_len);

@@ -41,6 +41,7 @@
 #include <linux/sunrpc/svc.h>
 #include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/cache.h>
+#include <linux/file.h>
 #include <linux/mount.h>
 #include <linux/workqueue.h>
 #include <linux/smp_lock.h>
@@ -1172,6 +1173,24 @@ static inline int deny_valid(u32 x)
 	return x <= NFS4_SHARE_DENY_BOTH;
 }
 
+/*
+ * We store the NONE, READ, WRITE, and BOTH bits separately in the
+ * st_{access,deny}_bmap field of the stateid, in order to track not
+ * only what share bits are currently in force, but also what
+ * combinations of share bits previous opens have used.  This allows us
+ * to enforce the recommendation of rfc 3530 14.2.19 that the server
+ * return an error if the client attempt to downgrade to a combination
+ * of share bits not explicable by closing some of its previous opens.
+ *
+ * XXX: This enforcement is actually incomplete, since we don't keep
+ * track of access/deny bit combinations; so, e.g., we allow:
+ *
+ *	OPEN allow read, deny write
+ *	OPEN allow both, deny none
+ *	DOWNGRADE allow read, deny none
+ *
+ * which we should reject.
+ */
 static void
 set_access(unsigned int *access, unsigned long bmap) {
 	int i;
@@ -1239,7 +1258,7 @@ static inline void
 nfs4_file_downgrade(struct file *filp, unsigned int share_access)
 {
 	if (share_access & NFS4_SHARE_ACCESS_WRITE) {
-		put_write_access(filp->f_path.dentry->d_inode);
+		drop_file_write_access(filp);
 		filp->f_mode = (filp->f_mode | FMODE_READ) & ~FMODE_WRITE;
 	}
 }
@@ -1569,6 +1588,10 @@ nfs4_upgrade_open(struct svc_rqst *rqstp, struct svc_fh *cur_fh, struct nfs4_sta
 		int err = get_write_access(inode);
 		if (err)
 			return nfserrno(err);
+		err = mnt_want_write(cur_fh->fh_export->ex_path.mnt);
+		if (err)
+			return nfserrno(err);
+		file_take_write(filp);
 	}
 	status = nfsd4_truncate(rqstp, cur_fh, open);
 	if (status) {
@@ -1578,8 +1601,8 @@ nfs4_upgrade_open(struct svc_rqst *rqstp, struct svc_fh *cur_fh, struct nfs4_sta
 	}
 	/* remember the open */
 	filp->f_mode |= open->op_share_access;
-	set_bit(open->op_share_access, &stp->st_access_bmap);
-	set_bit(open->op_share_deny, &stp->st_deny_bmap);
+	__set_bit(open->op_share_access, &stp->st_access_bmap);
+	__set_bit(open->op_share_deny, &stp->st_deny_bmap);
 
 	return nfs_ok;
 }
@@ -1638,6 +1661,7 @@ nfs4_open_delegation(struct svc_fh *fh, struct nfsd4_open *open, struct nfs4_sta
 	locks_init_lock(&fl);
 	fl.fl_lmops = &nfsd_lease_mng_ops;
 	fl.fl_flags = FL_LEASE;
+	fl.fl_type = flag == NFS4_OPEN_DELEGATE_READ? F_RDLCK: F_WRLCK;
 	fl.fl_end = OFFSET_MAX;
 	fl.fl_owner =  (fl_owner_t)dp;
 	fl.fl_file = stp->st_vfs_file;
@@ -1646,8 +1670,7 @@ nfs4_open_delegation(struct svc_fh *fh, struct nfsd4_open *open, struct nfs4_sta
 	/* vfs_setlease checks to see if delegation should be handed out.
 	 * the lock_manager callbacks fl_mylease and fl_change are used
 	 */
-	if ((status = vfs_setlease(stp->st_vfs_file,
-		flag == NFS4_OPEN_DELEGATE_READ? F_RDLCK: F_WRLCK, &flp))) {
+	if ((status = vfs_setlease(stp->st_vfs_file, fl.fl_type, &flp))) {
 		dprintk("NFSD: setlease failed [%d], no delegation\n", status);
 		unhash_delegation(dp);
 		flag = NFS4_OPEN_DELEGATE_NONE;
@@ -1721,9 +1744,9 @@ nfsd4_process_open2(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nf
 		/* Stateid was not found, this is a new OPEN */
 		int flags = 0;
 		if (open->op_share_access & NFS4_SHARE_ACCESS_READ)
-			flags |= MAY_READ;
+			flags |= NFSD_MAY_READ;
 		if (open->op_share_access & NFS4_SHARE_ACCESS_WRITE)
-			flags |= MAY_WRITE;
+			flags |= NFSD_MAY_WRITE;
 		status = nfs4_new_open(rqstp, &stp, dp, current_fh, flags);
 		if (status)
 			goto out;
@@ -1761,10 +1784,6 @@ out:
 
 	return status;
 }
-
-static struct workqueue_struct *laundry_wq;
-static void laundromat_main(struct work_struct *);
-static DECLARE_DELAYED_WORK(laundromat_work, laundromat_main);
 
 __be32
 nfsd4_renew(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
@@ -1873,7 +1892,11 @@ nfs4_laundromat(void)
 	return clientid_val;
 }
 
-void
+static struct workqueue_struct *laundry_wq;
+static void laundromat_main(struct work_struct *);
+static DECLARE_DELAYED_WORK(laundromat_work, laundromat_main);
+
+static void
 laundromat_main(struct work_struct *not_used)
 {
 	time_t t;
@@ -1974,6 +1997,26 @@ io_during_grace_disallowed(struct inode *inode, int flags)
 		&& mandatory_lock(inode);
 }
 
+static int check_stateid_generation(stateid_t *in, stateid_t *ref)
+{
+	/* If the client sends us a stateid from the future, it's buggy: */
+	if (in->si_generation > ref->si_generation)
+		return nfserr_bad_stateid;
+	/*
+	 * The following, however, can happen.  For example, if the
+	 * client sends an open and some IO at the same time, the open
+	 * may bump si_generation while the IO is still in flight.
+	 * Thanks to hard links and renames, the client never knows what
+	 * file an open will affect.  So it could avoid that situation
+	 * only by serializing all opens and IO from the same open
+	 * owner.  To recover from the old_stateid error, the client
+	 * will just have to retry the IO:
+	 */
+	if (in->si_generation < ref->si_generation)
+		return nfserr_old_stateid;
+	return nfs_ok;
+}
+
 /*
 * Checks for stateid operations
 */
@@ -2022,12 +2065,8 @@ nfs4_preprocess_stateid_op(struct svc_fh *current_fh, stateid_t *stateid, int fl
 			goto out;
 		stidp = &stp->st_stateid;
 	}
-	if (stateid->si_generation > stidp->si_generation)
-		goto out;
-
-	/* OLD STATEID */
-	status = nfserr_old_stateid;
-	if (stateid->si_generation < stidp->si_generation)
+	status = check_stateid_generation(stateid, stidp);
+	if (status)
 		goto out;
 	if (stp) {
 		if ((status = nfs4_check_openmode(stp,flags)))
@@ -2035,7 +2074,7 @@ nfs4_preprocess_stateid_op(struct svc_fh *current_fh, stateid_t *stateid, int fl
 		renew_client(stp->st_stateowner->so_client);
 		if (filpp)
 			*filpp = stp->st_vfs_file;
-	} else if (dp) {
+	} else {
 		if ((status = nfs4_check_delegmode(dp, flags)))
 			goto out;
 		renew_client(dp->dl_client);
@@ -2064,6 +2103,7 @@ nfs4_preprocess_seqid_op(struct svc_fh *current_fh, u32 seqid, stateid_t *statei
 {
 	struct nfs4_stateid *stp;
 	struct nfs4_stateowner *sop;
+	__be32 status;
 
 	dprintk("NFSD: preprocess_seqid_op: seqid=%d " 
 			"stateid = (%08x/%08x/%08x/%08x)\n", seqid,
@@ -2126,7 +2166,7 @@ nfs4_preprocess_seqid_op(struct svc_fh *current_fh, u32 seqid, stateid_t *statei
                }
 	}
 
-	if ((flags & CHECK_FH) && nfs4_check_fh(current_fh, stp)) {
+	if (nfs4_check_fh(current_fh, stp)) {
 		dprintk("NFSD: preprocess_seqid_op: fh-stateid mismatch!\n");
 		return nfserr_bad_stateid;
 	}
@@ -2149,15 +2189,9 @@ nfs4_preprocess_seqid_op(struct svc_fh *current_fh, u32 seqid, stateid_t *statei
 				" confirmed yet!\n");
 		return nfserr_bad_stateid;
 	}
-	if (stateid->si_generation > stp->st_stateid.si_generation) {
-		dprintk("NFSD: preprocess_seqid_op: future stateid?!\n");
-		return nfserr_bad_stateid;
-	}
-
-	if (stateid->si_generation < stp->st_stateid.si_generation) {
-		dprintk("NFSD: preprocess_seqid_op: old stateid!\n");
-		return nfserr_old_stateid;
-	}
+	status = check_stateid_generation(stateid, &stp->st_stateid);
+	if (status)
+		return status;
 	renew_client(sop->so_client);
 	return nfs_ok;
 
@@ -2193,7 +2227,7 @@ nfsd4_open_confirm(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 
 	if ((status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 					oc->oc_seqid, &oc->oc_req_stateid,
-					CHECK_FH | CONFIRM | OPEN_STATE,
+					CONFIRM | OPEN_STATE,
 					&oc->oc_stateowner, &stp, NULL)))
 		goto out; 
 
@@ -2264,7 +2298,7 @@ nfsd4_open_downgrade(struct svc_rqst *rqstp,
 	if ((status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 					od->od_seqid,
 					&od->od_stateid, 
-					CHECK_FH | OPEN_STATE, 
+					OPEN_STATE,
 					&od->od_stateowner, &stp, NULL)))
 		goto out; 
 
@@ -2317,7 +2351,7 @@ nfsd4_close(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	if ((status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 					close->cl_seqid,
 					&close->cl_stateid, 
-					CHECK_FH | OPEN_STATE | CLOSE_STATE,
+					OPEN_STATE | CLOSE_STATE,
 					&close->cl_stateowner, &stp, NULL)))
 		goto out; 
 	status = nfs_ok;
@@ -2598,7 +2632,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		 return nfserr_inval;
 
 	if ((status = fh_verify(rqstp, &cstate->current_fh,
-				S_IFREG, MAY_LOCK))) {
+				S_IFREG, NFSD_MAY_LOCK))) {
 		dprintk("NFSD: nfsd4_lock: permission denied!\n");
 		return status;
 	}
@@ -2622,7 +2656,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 				        lock->lk_new_open_seqid,
 		                        &lock->lk_new_open_stateid,
-		                        CHECK_FH | OPEN_STATE,
+					OPEN_STATE,
 		                        &lock->lk_replay_owner, &open_stp,
 					lock);
 		if (status)
@@ -2649,7 +2683,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 				       lock->lk_old_lock_seqid, 
 				       &lock->lk_old_lock_stateid, 
-				       CHECK_FH | LOCK_STATE, 
+				       LOCK_STATE,
 				       &lock->lk_replay_owner, &lock_stp, lock);
 		if (status)
 			goto out;
@@ -2700,9 +2734,6 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	* Note: locks.c uses the BKL to protect the inode's lock list.
 	*/
 
-	/* XXX?: Just to divert the locks_release_private at the start of
-	 * locks_copy_lock: */
-	locks_init_lock(&conflock);
 	err = vfs_lock_file(filp, cmd, &file_lock, &conflock);
 	switch (-err) {
 	case 0: /* success! */
@@ -2846,7 +2877,7 @@ nfsd4_locku(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	if ((status = nfs4_preprocess_seqid_op(&cstate->current_fh,
 					locku->lu_seqid, 
 					&locku->lu_stateid, 
-					CHECK_FH | LOCK_STATE, 
+					LOCK_STATE,
 					&locku->lu_stateowner, &stp, NULL)))
 		goto out;
 
@@ -3240,12 +3271,14 @@ nfs4_state_shutdown(void)
 	nfs4_unlock_state();
 }
 
+/*
+ * user_recovery_dirname is protected by the nfsd_mutex since it's only
+ * accessed when nfsd is starting.
+ */
 static void
 nfs4_set_recdir(char *recdir)
 {
-	nfs4_lock_state();
 	strcpy(user_recovery_dirname, recdir);
-	nfs4_unlock_state();
 }
 
 /*
@@ -3269,6 +3302,12 @@ nfs4_reset_recoverydir(char *recdir)
 	return status;
 }
 
+char *
+nfs4_recoverydir(void)
+{
+	return user_recovery_dirname;
+}
+
 /*
  * Called when leasetime is changed.
  *
@@ -3277,11 +3316,12 @@ nfs4_reset_recoverydir(char *recdir)
  * we start to register any changes in lease time.  If the administrator
  * really wants to change the lease time *now*, they can go ahead and bring
  * nfsd down and then back up again after changing the lease time.
+ *
+ * user_lease_time is protected by nfsd_mutex since it's only really accessed
+ * when nfsd is starting
  */
 void
 nfs4_reset_lease(time_t leasetime)
 {
-	lock_kernel();
 	user_lease_time = leasetime;
-	unlock_kernel();
 }

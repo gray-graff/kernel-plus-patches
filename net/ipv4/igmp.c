@@ -8,8 +8,6 @@
  *	the older version didn't come out right using gcc 2.5.8, the newer one
  *	seems to fall out with gcc 2.6.2.
  *
- *	Version: $Id: igmp.c,v 1.47 2002/02/01 22:01:03 davem Exp $
- *
  *	Authors:
  *		Alan Cox <Alan.Cox@linux.org>
  *
@@ -130,12 +128,12 @@
  */
 
 #define IGMP_V1_SEEN(in_dev) \
-	(IPV4_DEVCONF_ALL(in_dev->dev->nd_net, FORCE_IGMP_VERSION) == 1 || \
+	(IPV4_DEVCONF_ALL(dev_net(in_dev->dev), FORCE_IGMP_VERSION) == 1 || \
 	 IN_DEV_CONF_GET((in_dev), FORCE_IGMP_VERSION) == 1 || \
 	 ((in_dev)->mr_v1_seen && \
 	  time_before(jiffies, (in_dev)->mr_v1_seen)))
 #define IGMP_V2_SEEN(in_dev) \
-	(IPV4_DEVCONF_ALL(in_dev->dev->nd_net, FORCE_IGMP_VERSION) == 2 || \
+	(IPV4_DEVCONF_ALL(dev_net(in_dev->dev), FORCE_IGMP_VERSION) == 2 || \
 	 IN_DEV_CONF_GET((in_dev), FORCE_IGMP_VERSION) == 2 || \
 	 ((in_dev)->mr_v2_seen && \
 	  time_before(jiffies, (in_dev)->mr_v2_seen)))
@@ -291,8 +289,9 @@ static struct sk_buff *igmpv3_newpack(struct net_device *dev, int size)
 	struct rtable *rt;
 	struct iphdr *pip;
 	struct igmpv3_report *pig;
+	struct net *net = dev_net(dev);
 
-	skb = alloc_skb(size + LL_RESERVED_SPACE(dev), GFP_ATOMIC);
+	skb = alloc_skb(size + LL_ALLOCATED_SPACE(dev), GFP_ATOMIC);
 	if (skb == NULL)
 		return NULL;
 
@@ -301,7 +300,7 @@ static struct sk_buff *igmpv3_newpack(struct net_device *dev, int size)
 				    .nl_u = { .ip4_u = {
 				    .daddr = IGMPV3_ALL_MCR } },
 				    .proto = IPPROTO_IGMP };
-		if (ip_route_output_key(&init_net, &rt, &fl)) {
+		if (ip_route_output_key(net, &rt, &fl)) {
 			kfree_skb(skb);
 			return NULL;
 		}
@@ -631,6 +630,7 @@ static int igmp_send_report(struct in_device *in_dev, struct ip_mc_list *pmc,
 	struct igmphdr *ih;
 	struct rtable *rt;
 	struct net_device *dev = in_dev->dev;
+	struct net *net = dev_net(dev);
 	__be32	group = pmc ? pmc->multiaddr : 0;
 	__be32	dst;
 
@@ -645,7 +645,7 @@ static int igmp_send_report(struct in_device *in_dev, struct ip_mc_list *pmc,
 		struct flowi fl = { .oif = dev->ifindex,
 				    .nl_u = { .ip4_u = { .daddr = dst } },
 				    .proto = IPPROTO_IGMP };
-		if (ip_route_output_key(&init_net, &rt, &fl))
+		if (ip_route_output_key(net, &rt, &fl))
 			return -1;
 	}
 	if (rt->rt_src == 0) {
@@ -653,7 +653,7 @@ static int igmp_send_report(struct in_device *in_dev, struct ip_mc_list *pmc,
 		return -1;
 	}
 
-	skb=alloc_skb(IGMP_SIZE+LL_RESERVED_SPACE(dev), GFP_ATOMIC);
+	skb=alloc_skb(IGMP_SIZE+LL_ALLOCATED_SPACE(dev), GFP_ATOMIC);
 	if (skb == NULL) {
 		ip_rt_put(rt);
 		return -1;
@@ -948,7 +948,7 @@ int igmp_rcv(struct sk_buff *skb)
 	case IGMPV2_HOST_MEMBERSHIP_REPORT:
 	case IGMPV3_HOST_MEMBERSHIP_REPORT:
 		/* Is it our report looped back? */
-		if (((struct rtable*)skb->dst)->fl.iif == 0)
+		if (skb->rtable->fl.iif == 0)
 			break;
 		/* don't rely on MC router hearing unicast reports */
 		if (skb->pkt_type == PACKET_MULTICAST ||
@@ -1379,7 +1379,7 @@ void ip_mc_destroy_dev(struct in_device *in_dev)
 	write_unlock_bh(&in_dev->mc_list_lock);
 }
 
-static struct in_device * ip_mc_find_dev(struct ip_mreqn *imr)
+static struct in_device *ip_mc_find_dev(struct net *net, struct ip_mreqn *imr)
 {
 	struct flowi fl = { .nl_u = { .ip4_u =
 				      { .daddr = imr->imr_multiaddr.s_addr } } };
@@ -1388,19 +1388,19 @@ static struct in_device * ip_mc_find_dev(struct ip_mreqn *imr)
 	struct in_device *idev = NULL;
 
 	if (imr->imr_ifindex) {
-		idev = inetdev_by_index(&init_net, imr->imr_ifindex);
+		idev = inetdev_by_index(net, imr->imr_ifindex);
 		if (idev)
 			__in_dev_put(idev);
 		return idev;
 	}
 	if (imr->imr_address.s_addr) {
-		dev = ip_dev_find(&init_net, imr->imr_address.s_addr);
+		dev = ip_dev_find(net, imr->imr_address.s_addr);
 		if (!dev)
 			return NULL;
 		dev_put(dev);
 	}
 
-	if (!dev && !ip_route_output_key(&init_net, &rt, &fl)) {
+	if (!dev && !ip_route_output_key(net, &rt, &fl)) {
 		dev = rt->u.dst.dev;
 		ip_rt_put(rt);
 	}
@@ -1738,6 +1738,7 @@ int ip_mc_join_group(struct sock *sk , struct ip_mreqn *imr)
 	struct ip_mc_socklist *iml=NULL, *i;
 	struct in_device *in_dev;
 	struct inet_sock *inet = inet_sk(sk);
+	struct net *net = sock_net(sk);
 	int ifindex;
 	int count = 0;
 
@@ -1746,7 +1747,7 @@ int ip_mc_join_group(struct sock *sk , struct ip_mreqn *imr)
 
 	rtnl_lock();
 
-	in_dev = ip_mc_find_dev(imr);
+	in_dev = ip_mc_find_dev(net, imr);
 
 	if (!in_dev) {
 		iml = NULL;
@@ -1808,12 +1809,13 @@ int ip_mc_leave_group(struct sock *sk, struct ip_mreqn *imr)
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_mc_socklist *iml, **imlp;
 	struct in_device *in_dev;
+	struct net *net = sock_net(sk);
 	__be32 group = imr->imr_multiaddr.s_addr;
 	u32 ifindex;
 	int ret = -EADDRNOTAVAIL;
 
 	rtnl_lock();
-	in_dev = ip_mc_find_dev(imr);
+	in_dev = ip_mc_find_dev(net, imr);
 	ifindex = imr->imr_ifindex;
 	for (imlp = &inet->mc_list; (iml = *imlp) != NULL; imlp = &iml->next) {
 		if (iml->multi.imr_multiaddr.s_addr != group)
@@ -1851,6 +1853,7 @@ int ip_mc_source(int add, int omode, struct sock *sk, struct
 	struct in_device *in_dev = NULL;
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_sf_socklist *psl;
+	struct net *net = sock_net(sk);
 	int leavegroup = 0;
 	int i, j, rv;
 
@@ -1862,7 +1865,7 @@ int ip_mc_source(int add, int omode, struct sock *sk, struct
 	imr.imr_multiaddr.s_addr = mreqs->imr_multiaddr;
 	imr.imr_address.s_addr = mreqs->imr_interface;
 	imr.imr_ifindex = ifindex;
-	in_dev = ip_mc_find_dev(&imr);
+	in_dev = ip_mc_find_dev(net, &imr);
 
 	if (!in_dev) {
 		err = -ENODEV;
@@ -1982,6 +1985,7 @@ int ip_mc_msfilter(struct sock *sk, struct ip_msfilter *msf, int ifindex)
 	struct in_device *in_dev;
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_sf_socklist *newpsl, *psl;
+	struct net *net = sock_net(sk);
 	int leavegroup = 0;
 
 	if (!ipv4_is_multicast(addr))
@@ -1995,7 +1999,7 @@ int ip_mc_msfilter(struct sock *sk, struct ip_msfilter *msf, int ifindex)
 	imr.imr_multiaddr.s_addr = msf->imsf_multiaddr;
 	imr.imr_address.s_addr = msf->imsf_interface;
 	imr.imr_ifindex = ifindex;
-	in_dev = ip_mc_find_dev(&imr);
+	in_dev = ip_mc_find_dev(net, &imr);
 
 	if (!in_dev) {
 		err = -ENODEV;
@@ -2066,6 +2070,7 @@ int ip_mc_msfget(struct sock *sk, struct ip_msfilter *msf,
 	struct in_device *in_dev;
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_sf_socklist *psl;
+	struct net *net = sock_net(sk);
 
 	if (!ipv4_is_multicast(addr))
 		return -EINVAL;
@@ -2075,7 +2080,7 @@ int ip_mc_msfget(struct sock *sk, struct ip_msfilter *msf,
 	imr.imr_multiaddr.s_addr = msf->imsf_multiaddr;
 	imr.imr_address.s_addr = msf->imsf_interface;
 	imr.imr_ifindex = 0;
-	in_dev = ip_mc_find_dev(&imr);
+	in_dev = ip_mc_find_dev(net, &imr);
 
 	if (!in_dev) {
 		err = -ENODEV;
@@ -2212,6 +2217,7 @@ void ip_mc_drop_socket(struct sock *sk)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_mc_socklist *iml;
+	struct net *net = sock_net(sk);
 
 	if (inet->mc_list == NULL)
 		return;
@@ -2221,7 +2227,7 @@ void ip_mc_drop_socket(struct sock *sk)
 		struct in_device *in_dev;
 		inet->mc_list = iml->next;
 
-		in_dev = inetdev_by_index(&init_net, iml->multi.imr_ifindex);
+		in_dev = inetdev_by_index(net, iml->multi.imr_ifindex);
 		(void) ip_mc_leave_src(sk, iml, in_dev);
 		if (in_dev != NULL) {
 			ip_mc_dec_group(in_dev, iml->multi.imr_multiaddr.s_addr);

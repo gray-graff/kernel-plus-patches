@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
  * Copyright (c) 2005 Sun Microsystems, Inc. All rights reserved.
- * Copyright (c) 2005 Mellanox Technologies. All rights reserved.
+ * Copyright (c) 2005, 2006, 2007, 2008 Mellanox Technologies. All rights reserved.
  * Copyright (c) 2006, 2007 Cisco Systems, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -76,7 +76,7 @@ static char mlx4_version[] __devinitdata =
 	DRV_VERSION " (" DRV_RELDATE ")\n";
 
 static struct mlx4_profile default_profile = {
-	.num_qp		= 1 << 16,
+	.num_qp		= 1 << 17,
 	.num_srq	= 1 << 16,
 	.rdmarc_per_qp	= 1 << 4,
 	.num_cq		= 1 << 16,
@@ -158,7 +158,10 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
 	dev->caps.max_msg_sz         = dev_cap->max_msg_sz;
 	dev->caps.page_size_cap	     = ~(u32) (dev_cap->min_page_sz - 1);
 	dev->caps.flags		     = dev_cap->flags;
+	dev->caps.bmme_flags	     = dev_cap->bmme_flags;
+	dev->caps.reserved_lkey	     = dev_cap->reserved_lkey;
 	dev->caps.stat_rate_support  = dev_cap->stat_rate_support;
+	dev->caps.max_gso_sz	     = dev_cap->max_gso_sz;
 
 	return 0;
 }
@@ -484,6 +487,7 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 	struct mlx4_priv	  *priv = mlx4_priv(dev);
 	struct mlx4_adapter	   adapter;
 	struct mlx4_dev_cap	   dev_cap;
+	struct mlx4_mod_stat_cfg   mlx4_cfg;
 	struct mlx4_profile	   profile;
 	struct mlx4_init_hca_param init_hca;
 	u64 icm_size;
@@ -500,6 +504,12 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
 		mlx4_err(dev, "Failed to start FW, aborting.\n");
 		return err;
 	}
+
+	mlx4_cfg.log_pg_sz_m = 1;
+	mlx4_cfg.log_pg_sz = 0;
+	err = mlx4_MOD_STAT_CFG(dev, &mlx4_cfg);
+	if (err)
+		mlx4_warn(dev, "Failed to override log_pg_sz parameter\n");
 
 	err = mlx4_dev_cap(dev, &dev_cap);
 	if (err) {
@@ -735,8 +745,7 @@ static int __mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/*
-	 * Check for BARs.  We expect 0: 1MB, 2: 8MB, 4: DDR (may not
-	 * be present)
+	 * Check for BARs.  We expect 0: 1MB
 	 */
 	if (!(pci_resource_flags(pdev, 0) & IORESOURCE_MEM) ||
 	    pci_resource_len(pdev, 0) != 1 << 20) {
@@ -797,6 +806,9 @@ static int __mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	dev->pdev = pdev;
 	INIT_LIST_HEAD(&priv->ctx_list);
 	spin_lock_init(&priv->ctx_lock);
+
+	INIT_LIST_HEAD(&priv->pgdir_list);
+	mutex_init(&priv->pgdir_mutex);
 
 	/*
 	 * Now reset the HCA before we touch the PCI capabilities or

@@ -40,6 +40,7 @@
 #include "xfs_btree.h"
 #include "xfs_ialloc.h"
 #include "xfs_rw.h"
+#include "xfs_error.h"
 
 
 kmem_zone_t	*xfs_ili_zone;		/* inode log item zone */
@@ -546,7 +547,7 @@ STATIC void
 xfs_inode_item_pin(
 	xfs_inode_log_item_t	*iip)
 {
-	ASSERT(ismrlocked(&(iip->ili_inode->i_lock), MR_UPDATE));
+	ASSERT(xfs_isilocked(iip->ili_inode, XFS_ILOCK_EXCL));
 	xfs_ipin(iip->ili_inode);
 }
 
@@ -663,13 +664,13 @@ xfs_inode_item_unlock(
 
 	ASSERT(iip != NULL);
 	ASSERT(iip->ili_inode->i_itemp != NULL);
-	ASSERT(ismrlocked(&(iip->ili_inode->i_lock), MR_UPDATE));
+	ASSERT(xfs_isilocked(iip->ili_inode, XFS_ILOCK_EXCL));
 	ASSERT((!(iip->ili_inode->i_itemp->ili_flags &
 		  XFS_ILI_IOLOCKED_EXCL)) ||
-	       ismrlocked(&(iip->ili_inode->i_iolock), MR_UPDATE));
+	       xfs_isilocked(iip->ili_inode, XFS_IOLOCK_EXCL));
 	ASSERT((!(iip->ili_inode->i_itemp->ili_flags &
 		  XFS_ILI_IOLOCKED_SHARED)) ||
-	       ismrlocked(&(iip->ili_inode->i_iolock), MR_ACCESS));
+	       xfs_isilocked(iip->ili_inode, XFS_IOLOCK_SHARED));
 	/*
 	 * Clear the transaction pointer in the inode.
 	 */
@@ -685,7 +686,7 @@ xfs_inode_item_unlock(
 		ASSERT(ip->i_d.di_nextents > 0);
 		ASSERT(iip->ili_format.ilf_fields & XFS_ILOG_DEXT);
 		ASSERT(ip->i_df.if_bytes > 0);
-		kmem_free(iip->ili_extents_buf, ip->i_df.if_bytes);
+		kmem_free(iip->ili_extents_buf);
 		iip->ili_extents_buf = NULL;
 	}
 	if (iip->ili_aextents_buf != NULL) {
@@ -693,7 +694,7 @@ xfs_inode_item_unlock(
 		ASSERT(ip->i_d.di_anextents > 0);
 		ASSERT(iip->ili_format.ilf_fields & XFS_ILOG_AEXT);
 		ASSERT(ip->i_afp->if_bytes > 0);
-		kmem_free(iip->ili_aextents_buf, ip->i_afp->if_bytes);
+		kmem_free(iip->ili_aextents_buf);
 		iip->ili_aextents_buf = NULL;
 	}
 
@@ -768,7 +769,7 @@ xfs_inode_item_pushbuf(
 
 	ip = iip->ili_inode;
 
-	ASSERT(ismrlocked(&(ip->i_lock), MR_ACCESS));
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_SHARED));
 
 	/*
 	 * The ili_pushbuf_flag keeps others from
@@ -778,11 +779,10 @@ xfs_inode_item_pushbuf(
 	ASSERT(iip->ili_push_owner == current_pid());
 
 	/*
-	 * If flushlock isn't locked anymore, chances are that the
-	 * inode flush completed and the inode was taken off the AIL.
-	 * So, just get out.
+	 * If a flush is not in progress anymore, chances are that the
+	 * inode was taken off the AIL. So, just get out.
 	 */
-	if (!issemalocked(&(ip->i_flock)) ||
+	if (completion_done(&ip->i_flush) ||
 	    ((iip->ili_item.li_flags & XFS_LI_IN_AIL) == 0)) {
 		iip->ili_pushbuf_flag = 0;
 		xfs_iunlock(ip, XFS_ILOCK_SHARED);
@@ -804,7 +804,7 @@ xfs_inode_item_pushbuf(
 			 * If not, we can flush it async.
 			 */
 			dopush = ((iip->ili_item.li_flags & XFS_LI_IN_AIL) &&
-				  issemalocked(&(ip->i_flock)));
+				  !completion_done(&ip->i_flush));
 			iip->ili_pushbuf_flag = 0;
 			xfs_iunlock(ip, XFS_ILOCK_SHARED);
 			xfs_buftrace("INODE ITEM PUSH", bp);
@@ -813,7 +813,12 @@ xfs_inode_item_pushbuf(
 					      XFS_LOG_FORCE);
 			}
 			if (dopush) {
-				xfs_bawrite(mp, bp);
+				int	error;
+				error = xfs_bawrite(mp, bp);
+				if (error)
+					xfs_fs_cmn_err(CE_WARN, mp,
+		"xfs_inode_item_pushbuf: pushbuf error %d on iip %p, bp %p",
+							error, iip, bp);
 			} else {
 				xfs_buf_relse(bp);
 			}
@@ -851,8 +856,8 @@ xfs_inode_item_push(
 
 	ip = iip->ili_inode;
 
-	ASSERT(ismrlocked(&(ip->i_lock), MR_ACCESS));
-	ASSERT(issemalocked(&(ip->i_flock)));
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_SHARED));
+	ASSERT(!completion_done(&ip->i_flush));
 	/*
 	 * Since we were able to lock the inode's flush lock and
 	 * we found it on the AIL, the inode must be dirty.  This
@@ -951,8 +956,7 @@ xfs_inode_item_destroy(
 {
 #ifdef XFS_TRANS_DEBUG
 	if (ip->i_itemp->ili_root_size != 0) {
-		kmem_free(ip->i_itemp->ili_orig_root,
-			  ip->i_itemp->ili_root_size);
+		kmem_free(ip->i_itemp->ili_orig_root);
 	}
 #endif
 	kmem_zone_free(xfs_ili_zone, ip->i_itemp);

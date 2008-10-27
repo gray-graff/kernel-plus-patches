@@ -27,7 +27,7 @@
 #include <asm/uaccess.h>
 #include <linux/i2c.h>
 #include <linux/i2c-id.h>
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
@@ -261,7 +261,8 @@ static int wm8739_command(struct i2c_client *client, unsigned cmd, void *arg)
 
 /* i2c implementation */
 
-static int wm8739_probe(struct i2c_client *client)
+static int wm8739_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct wm8739_state *state;
 
@@ -273,10 +274,8 @@ static int wm8739_probe(struct i2c_client *client)
 			client->addr << 1, client->adapter->name);
 
 	state = kmalloc(sizeof(struct wm8739_state), GFP_KERNEL);
-	if (state == NULL) {
-		kfree(client);
+	if (state == NULL)
 		return -ENOMEM;
-	}
 	state->vol_l = 0x17; /* 0dB */
 	state->vol_r = 0x17; /* 0dB */
 	state->muted = 0;
@@ -312,11 +311,17 @@ static int wm8739_remove(struct i2c_client *client)
 	return 0;
 }
 
+static const struct i2c_device_id wm8739_id[] = {
+	{ "wm8739", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, wm8739_id);
+
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "wm8739",
 	.driverid = I2C_DRIVERID_WM8739,
 	.command = wm8739_command,
 	.probe = wm8739_probe,
 	.remove = wm8739_remove,
+	.id_table = wm8739_id,
 };
-

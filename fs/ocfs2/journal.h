@@ -134,6 +134,10 @@ static inline void ocfs2_inode_set_new(struct ocfs2_super *osb,
 
 /* Exported only for the journal struct init code in super.c. Do not call. */
 void ocfs2_complete_recovery(struct work_struct *work);
+void ocfs2_wait_for_recovery(struct ocfs2_super *osb);
+
+int ocfs2_recovery_init(struct ocfs2_super *osb);
+void ocfs2_recovery_exit(struct ocfs2_super *osb);
 
 /*
  *  Journal Control:
@@ -157,7 +161,8 @@ int    ocfs2_journal_init(struct ocfs2_journal *journal,
 void   ocfs2_journal_shutdown(struct ocfs2_super *osb);
 int    ocfs2_journal_wipe(struct ocfs2_journal *journal,
 			  int full);
-int    ocfs2_journal_load(struct ocfs2_journal *journal, int local);
+int    ocfs2_journal_load(struct ocfs2_journal *journal, int local,
+			  int replayed);
 int    ocfs2_check_journals_nolocks(struct ocfs2_super *osb);
 void   ocfs2_recovery_thread(struct ocfs2_super *osb,
 			     int node_num);

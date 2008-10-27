@@ -195,7 +195,7 @@ struct uart_qe_port {
 
 static struct uart_driver ucc_uart_driver = {
 	.owner  	= THIS_MODULE,
-	.driver_name    = "serial",
+	.driver_name    = "ucc_uart",
 	.dev_name       = "ttyQE",
 	.major  	= SERIAL_QE_MAJOR,
 	.minor  	= SERIAL_QE_MINOR,
@@ -215,7 +215,7 @@ static inline dma_addr_t cpu2qe_addr(void *addr, struct uart_qe_port *qe_port)
 		return qe_port->bd_dma_addr + (addr - qe_port->bd_virt);
 
 	/* something nasty happened */
-	printk(KERN_ERR "%s: addr=%p\n", __FUNCTION__, addr);
+	printk(KERN_ERR "%s: addr=%p\n", __func__, addr);
 	BUG();
 	return 0;
 }
@@ -234,7 +234,7 @@ static inline void *qe2cpu_addr(dma_addr_t addr, struct uart_qe_port *qe_port)
 		return qe_port->bd_virt + (addr - qe_port->bd_dma_addr);
 
 	/* something nasty happened */
-	printk(KERN_ERR "%s: addr=%x\n", __FUNCTION__, addr);
+	printk(KERN_ERR "%s: addr=%x\n", __func__, addr);
 	BUG();
 	return NULL;
 }
@@ -466,7 +466,7 @@ static void qe_uart_int_rx(struct uart_qe_port *qe_port)
 	int i;
 	unsigned char ch, *cp;
 	struct uart_port *port = &qe_port->port;
-	struct tty_struct *tty = port->info->tty;
+	struct tty_struct *tty = port->info->port.tty;
 	struct qe_bd *bdp;
 	u16 status;
 	unsigned int flg;
@@ -1270,10 +1270,18 @@ static int ucc_uart_probe(struct of_device *ofdev,
 
 	/* Get the UCC number (device ID) */
 	/* UCCs are numbered 1-7 */
-	iprop = of_get_property(np, "device-id", NULL);
-	if (!iprop || (*iprop < 1) || (*iprop > UCC_MAX_NUM)) {
-		dev_err(&ofdev->dev,
-			"missing or invalid UCC specified in device tree\n");
+	iprop = of_get_property(np, "cell-index", NULL);
+	if (!iprop) {
+		iprop = of_get_property(np, "device-id", NULL);
+		if (!iprop) {
+			dev_err(&ofdev->dev, "UCC is unspecified in "
+				"device tree\n");
+			return -EINVAL;
+		}
+	}
+
+	if ((*iprop < 1) || (*iprop > UCC_MAX_NUM)) {
+		dev_err(&ofdev->dev, "no support for UCC%u\n", *iprop);
 		kfree(qe_port);
 		return -ENODEV;
 	}

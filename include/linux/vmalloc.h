@@ -4,9 +4,9 @@
 #include <linux/spinlock.h>
 #include <asm/page.h>		/* pgprot_t */
 
-struct vm_area_struct;
+struct vm_area_struct;		/* vma defining user mapping in mm_types.h */
 
-/* bits in vm_struct->flags */
+/* bits in flags of vmalloc's vm_struct below */
 #define VM_IOREMAP	0x00000001	/* ioremap() and friends */
 #define VM_ALLOC	0x00000002	/* vmalloc() */
 #define VM_MAP		0x00000004	/* vmap()ed pages */
@@ -31,6 +31,7 @@ struct vm_struct {
 	struct page		**pages;
 	unsigned int		nr_pages;
 	unsigned long		phys_addr;
+	void			*caller;
 };
 
 /*
@@ -66,6 +67,8 @@ static inline size_t get_vm_area_size(const struct vm_struct *area)
 }
 
 extern struct vm_struct *get_vm_area(unsigned long size, unsigned long flags);
+extern struct vm_struct *get_vm_area_caller(unsigned long size,
+					unsigned long flags, void *caller);
 extern struct vm_struct *__get_vm_area(unsigned long size, unsigned long flags,
 					unsigned long start, unsigned long end);
 extern struct vm_struct *get_vm_area_node(unsigned long size,
@@ -86,5 +89,7 @@ extern void free_vm_area(struct vm_struct *area);
  */
 extern rwlock_t vmlist_lock;
 extern struct vm_struct *vmlist;
+
+extern const struct seq_operations vmalloc_op;
 
 #endif /* _LINUX_VMALLOC_H */

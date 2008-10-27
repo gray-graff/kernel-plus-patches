@@ -35,6 +35,7 @@
 #ifdef CONFIG_X86
 #include <asm/mpspec.h>
 #endif
+#include <linux/pci.h>
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
 
@@ -293,6 +294,28 @@ int acpi_bus_set_power(acpi_handle handle, int state)
 }
 
 EXPORT_SYMBOL(acpi_bus_set_power);
+
+bool acpi_bus_power_manageable(acpi_handle handle)
+{
+	struct acpi_device *device;
+	int result;
+
+	result = acpi_bus_get_device(handle, &device);
+	return result ? false : device->flags.power_manageable;
+}
+
+EXPORT_SYMBOL(acpi_bus_power_manageable);
+
+bool acpi_bus_can_wakeup(acpi_handle handle)
+{
+	struct acpi_device *device;
+	int result;
+
+	result = acpi_bus_get_device(handle, &device);
+	return result ? false : device->wakeup.flags.valid;
+}
+
+EXPORT_SYMBOL(acpi_bus_can_wakeup);
 
 /* --------------------------------------------------------------------------
                                 Event Management
@@ -611,7 +634,7 @@ static int __init acpi_bus_init_irq(void)
 	return 0;
 }
 
-acpi_native_uint acpi_gbl_permanent_mmap;
+u8 acpi_gbl_permanent_mmap;
 
 
 void __init acpi_early_init(void)
@@ -784,6 +807,7 @@ static int __init acpi_init(void)
 	result = acpi_bus_init();
 
 	if (!result) {
+		pci_mmcfg_late_init();
 		if (!(pm_flags & PM_APM))
 			pm_flags |= PM_ACPI;
 		else {

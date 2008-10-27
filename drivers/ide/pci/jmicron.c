@@ -12,6 +12,8 @@
 #include <linux/ide.h>
 #include <linux/init.h>
 
+#define DRV_NAME "jmicron"
+
 typedef enum {
 	PORT_PATA0 = 0,
 	PORT_PATA1 = 1,
@@ -19,13 +21,13 @@ typedef enum {
 } port_type;
 
 /**
- *	ata66_jmicron		-	Cable check
+ *	jmicron_cable_detect	-	cable detection
  *	@hwif: IDE port
  *
  *	Returns the cable type.
  */
 
-static u8 __devinit ata66_jmicron(ide_hwif_t *hwif)
+static u8 jmicron_cable_detect(ide_hwif_t *hwif)
 {
 	struct pci_dev *pdev = to_pci_dev(hwif->dev);
 
@@ -63,8 +65,7 @@ static u8 __devinit ata66_jmicron(ide_hwif_t *hwif)
 	 *	actually do our cable checking etc. Thankfully we don't need
 	 *	to do the plumbing for other cases.
 	 */
-	switch (port_map[port])
-	{
+	switch (port_map[port]) {
 	case PORT_PATA0:
 		if (control & (1 << 3))	/* 40/80 pin primary */
 			return ATA_CBL_PATA40;
@@ -96,26 +97,16 @@ static void jmicron_set_dma_mode(ide_drive_t *drive, const u8 mode)
 {
 }
 
-/**
- *	init_hwif_jmicron	-	set up hwif structs
- *	@hwif: interface to set up
- *
- *	Minimal set up is required for the Jmicron hardware.
- */
-
-static void __devinit init_hwif_jmicron(ide_hwif_t *hwif)
-{
-	hwif->set_pio_mode = &jmicron_set_pio_mode;
-	hwif->set_dma_mode = &jmicron_set_dma_mode;
-
-	hwif->cable_detect = ata66_jmicron;
-}
+static const struct ide_port_ops jmicron_port_ops = {
+	.set_pio_mode		= jmicron_set_pio_mode,
+	.set_dma_mode		= jmicron_set_dma_mode,
+	.cable_detect		= jmicron_cable_detect,
+};
 
 static const struct ide_port_info jmicron_chipset __devinitdata = {
-	.name		= "JMB",
-	.init_hwif	= init_hwif_jmicron,
-	.host_flags	= IDE_HFLAG_BOOTABLE,
+	.name		= DRV_NAME,
 	.enablebits	= { { 0x40, 0x01, 0x01 }, { 0x40, 0x10, 0x10 } },
+	.port_ops	= &jmicron_port_ops,
 	.pio_mask	= ATA_PIO5,
 	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA6,
@@ -132,7 +123,7 @@ static const struct ide_port_info jmicron_chipset __devinitdata = {
 
 static int __devinit jmicron_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	return ide_setup_pci_device(dev, &jmicron_chipset);
+	return ide_pci_init_one(dev, &jmicron_chipset, NULL);
 }
 
 /* All JMB PATA controllers have and will continue to have the same
@@ -163,6 +154,7 @@ static struct pci_driver driver = {
 	.name		= "JMicron IDE",
 	.id_table	= jmicron_pci_tbl,
 	.probe		= jmicron_init_one,
+	.remove		= ide_pci_remove,
 };
 
 static int __init jmicron_ide_init(void)
@@ -170,7 +162,13 @@ static int __init jmicron_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit jmicron_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(jmicron_ide_init);
+module_exit(jmicron_ide_exit);
 
 MODULE_AUTHOR("Alan Cox");
 MODULE_DESCRIPTION("PCI driver module for the JMicron in legacy modes");

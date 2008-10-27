@@ -19,9 +19,8 @@
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
 
-#include <asm/mach/time.h>
-#include <asm/arch/board.h>
-#include <asm/arch/at91_rtt.h>
+#include <mach/board.h>
+#include <mach/at91_rtt.h>
 
 
 /*
@@ -288,7 +287,7 @@ static irqreturn_t at91_rtc_interrupt(int irq, void *_rtc)
 
 	rtc_update_irq(rtc->rtcdev, 1, events);
 
-	pr_debug("%s: num=%ld, events=0x%02lx\n", __FUNCTION__,
+	pr_debug("%s: num=%ld, events=0x%02lx\n", __func__,
 		events >> 8, events & 0x000000FF);
 
 	return IRQ_HANDLED;

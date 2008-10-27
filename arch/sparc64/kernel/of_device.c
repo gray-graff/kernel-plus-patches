@@ -6,6 +6,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
+#include <linux/irq.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 
@@ -55,9 +56,6 @@ struct of_device *of_find_device_by_node(struct device_node *dp)
 EXPORT_SYMBOL(of_find_device_by_node);
 
 #ifdef CONFIG_PCI
-struct bus_type isa_bus_type;
-EXPORT_SYMBOL(isa_bus_type);
-
 struct bus_type ebus_bus_type;
 EXPORT_SYMBOL(ebus_bus_type);
 #endif
@@ -98,7 +96,7 @@ struct of_bus {
 				       int *addrc, int *sizec);
 	int		(*map)(u32 *addr, const u32 *range,
 			       int na, int ns, int pna);
-	unsigned int	(*get_flags)(const u32 *addr);
+	unsigned long	(*get_flags)(const u32 *addr, unsigned long);
 };
 
 /*
@@ -158,8 +156,10 @@ static int of_bus_default_map(u32 *addr, const u32 *range,
 	return 0;
 }
 
-static unsigned int of_bus_default_get_flags(const u32 *addr)
+static unsigned long of_bus_default_get_flags(const u32 *addr, unsigned long flags)
 {
+	if (flags)
+		return flags;
 	return IORESOURCE_MEM;
 }
 
@@ -169,7 +169,7 @@ static unsigned int of_bus_default_get_flags(const u32 *addr)
 
 static int of_bus_pci_match(struct device_node *np)
 {
-	if (!strcmp(np->type, "pci") || !strcmp(np->type, "pciex")) {
+	if (!strcmp(np->name, "pci")) {
 		const char *model = of_get_property(np, "model", NULL);
 
 		if (model && !strcmp(model, "SUNW,simba"))
@@ -200,7 +200,7 @@ static int of_bus_simba_match(struct device_node *np)
 	/* Treat PCI busses lacking ranges property just like
 	 * simba.
 	 */
-	if (!strcmp(np->type, "pci") || !strcmp(np->type, "pciex")) {
+	if (!strcmp(np->name, "pci")) {
 		if (!of_find_property(np, "ranges", NULL))
 			return 1;
 	}
@@ -251,17 +251,21 @@ static int of_bus_pci_map(u32 *addr, const u32 *range,
 	return 0;
 }
 
-static unsigned int of_bus_pci_get_flags(const u32 *addr)
+static unsigned long of_bus_pci_get_flags(const u32 *addr, unsigned long flags)
 {
-	unsigned int flags = 0;
 	u32 w = addr[0];
 
+	/* For PCI, we override whatever child busses may have used.  */
+	flags = 0;
 	switch((w >> 24) & 0x03) {
 	case 0x01:
 		flags |= IORESOURCE_IO;
+		break;
+
 	case 0x02: /* 32 bits */
 	case 0x03: /* 64 bits */
 		flags |= IORESOURCE_MEM;
+		break;
 	}
 	if (w & 0x40000000)
 		flags |= IORESOURCE_PREFETCH;
@@ -411,12 +415,6 @@ static int __init build_one_resource(struct device_node *parent,
 
 static int __init use_1to1_mapping(struct device_node *pp)
 {
-	/* If this is on the PMU bus, don't try to translate it even
-	 * if a ranges property exists.
-	 */
-	if (!strcmp(pp->name, "pmu"))
-		return 1;
-
 	/* If we have a ranges property in the parent, use it.  */
 	if (of_find_property(pp, "ranges", NULL) != NULL)
 		return 0;
@@ -431,7 +429,7 @@ static int __init use_1to1_mapping(struct device_node *pp)
 	 * it lacks a ranges property, and this will include
 	 * cases like Simba.
 	 */
-	if (!strcmp(pp->type, "pci") || !strcmp(pp->type, "pciex"))
+	if (!strcmp(pp->name, "pci"))
 		return 0;
 
 	return 1;
@@ -486,9 +484,9 @@ static void __init build_device_resources(struct of_device *op,
 		int pna, pns;
 
 		size = of_read_addr(reg + na, ns);
-		flags = bus->get_flags(reg);
-
 		memcpy(addr, reg, na * 4);
+
+		flags = bus->get_flags(addr, 0);
 
 		if (use_1to1_mapping(pp)) {
 			result = of_read_addr(addr, na);
@@ -513,6 +511,8 @@ static void __init build_device_resources(struct of_device *op,
 			if (build_one_resource(dp, dbus, pbus, addr,
 					       dna, dns, pna))
 				break;
+
+			flags = pbus->get_flags(addr, flags);
 
 			dna = pna;
 			dns = pns;
@@ -660,6 +660,7 @@ static unsigned int __init build_one_device_irq(struct of_device *op,
 	struct device_node *dp = op->node;
 	struct device_node *pp, *ip;
 	unsigned int orig_irq = irq;
+	int nid;
 
 	if (irq == 0xffffffff)
 		return irq;
@@ -672,7 +673,7 @@ static unsigned int __init build_one_device_irq(struct of_device *op,
 			printk("%s: direct translate %x --> %x\n",
 			       dp->full_name, orig_irq, irq);
 
-		return irq;
+		goto out;
 	}
 
 	/* Something more complicated.  Walk up to the root, applying
@@ -713,8 +714,7 @@ static unsigned int __init build_one_device_irq(struct of_device *op,
 				break;
 			}
 		} else {
-			if (!strcmp(pp->type, "pci") ||
-			    !strcmp(pp->type, "pciex")) {
+			if (!strcmp(pp->name, "pci")) {
 				unsigned int this_orig_irq = irq;
 
 				irq = pci_irq_swizzle(dp, pp, irq);
@@ -743,6 +743,14 @@ static unsigned int __init build_one_device_irq(struct of_device *op,
 	if (of_irq_verbose)
 		printk("%s: Apply IRQ trans [%s] %x --> %x\n",
 		       op->node->full_name, ip->full_name, orig_irq, irq);
+
+out:
+	nid = of_node_to_nid(dp);
+	if (nid != -1) {
+		cpumask_t numa_mask = node_to_cpumask(nid);
+
+		irq_set_affinity(irq, numa_mask);
+	}
 
 	return irq;
 }
@@ -793,9 +801,9 @@ static struct of_device * __init scan_one_device(struct device_node *dp,
 	op->dev.parent = parent;
 	op->dev.bus = &of_platform_bus_type;
 	if (!parent)
-		strcpy(op->dev.bus_id, "root");
+		dev_set_name(&op->dev, "root");
 	else
-		sprintf(op->dev.bus_id, "%08x", dp->node);
+		dev_set_name(&op->dev, "%08x", dp->node);
 
 	if (of_device_register(op)) {
 		printk("%s: Could not register of device.\n",
@@ -837,8 +845,6 @@ static int __init of_bus_driver_init(void)
 
 	err = of_bus_type_init(&of_platform_bus_type, "of");
 #ifdef CONFIG_PCI
-	if (!err)
-		err = of_bus_type_init(&isa_bus_type, "isa");
 	if (!err)
 		err = of_bus_type_init(&ebus_bus_type, "ebus");
 #endif

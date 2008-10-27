@@ -19,9 +19,10 @@
 #include <linux/slab.h>
 #include <linux/irq.h>
 
-#include <asm/arch/sharpsl.h>
-#include <asm/arch/hardware.h>
-#include <asm/arch/pxa-regs.h>
+#include <mach/sharpsl.h>
+#include <mach/hardware.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-gpio.h>
 
 
 #define PWR_MODE_ACTIVE		0
@@ -194,7 +195,7 @@ static void ts_interrupt_main(struct corgi_ts *corgi_ts, int isTimer)
 {
 	if ((GPLR(IRQ_TO_GPIO(corgi_ts->irq_gpio)) & GPIO_bit(IRQ_TO_GPIO(corgi_ts->irq_gpio))) == 0) {
 		/* Disable Interrupt */
-		set_irq_type(corgi_ts->irq_gpio, IRQT_NOEDGE);
+		set_irq_type(corgi_ts->irq_gpio, IRQ_TYPE_NONE);
 		if (read_xydata(corgi_ts)) {
 			corgi_ts->pendown = 1;
 			new_data(corgi_ts);
@@ -213,7 +214,7 @@ static void ts_interrupt_main(struct corgi_ts *corgi_ts, int isTimer)
 		}
 
 		/* Enable Falling Edge */
-		set_irq_type(corgi_ts->irq_gpio, IRQT_FALLING);
+		set_irq_type(corgi_ts->irq_gpio, IRQ_TYPE_EDGE_FALLING);
 		corgi_ts->pendown = 0;
 	}
 }
@@ -257,7 +258,7 @@ static int corgits_resume(struct platform_device *dev)
 
 	corgi_ssp_ads7846_putget((4u << ADSCTRL_ADR_SH) | ADSCTRL_STS);
 	/* Enable Falling Edge */
-	set_irq_type(corgi_ts->irq_gpio, IRQT_FALLING);
+	set_irq_type(corgi_ts->irq_gpio, IRQ_TYPE_EDGE_FALLING);
 	corgi_ts->power_mode = PWR_MODE_ACTIVE;
 
 	return 0;
@@ -332,7 +333,7 @@ static int __init corgits_probe(struct platform_device *pdev)
 	corgi_ts->power_mode = PWR_MODE_ACTIVE;
 
 	/* Enable Falling Edge */
-	set_irq_type(corgi_ts->irq_gpio, IRQT_FALLING);
+	set_irq_type(corgi_ts->irq_gpio, IRQ_TYPE_EDGE_FALLING);
 
 	return 0;
 
@@ -361,6 +362,7 @@ static struct platform_driver corgits_driver = {
 	.resume		= corgits_resume,
 	.driver		= {
 		.name	= "corgi-ts",
+		.owner	= THIS_MODULE,
 	},
 };
 
@@ -380,3 +382,4 @@ module_exit(corgits_exit);
 MODULE_AUTHOR("Richard Purdie <rpurdie@rpsys.net>");
 MODULE_DESCRIPTION("Corgi TouchScreen Driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:corgi-ts");

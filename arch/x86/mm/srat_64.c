@@ -20,6 +20,7 @@
 #include <asm/proto.h>
 #include <asm/numa.h>
 #include <asm/e820.h>
+#include <asm/genapic.h>
 
 int acpi_numa __initdata;
 
@@ -31,6 +32,10 @@ static struct bootnode nodes_add[MAX_NUMNODES];
 static int found_add_area __initdata;
 int hotadd_percent __initdata = 0;
 
+static int num_node_memblks __initdata;
+static struct bootnode node_memblk_range[NR_NODE_MEMBLKS] __initdata;
+static int memblk_nodeid[NR_NODE_MEMBLKS] __initdata;
+
 /* Too small nodes confuse the VM badly. Usually they result
    from BIOS bugs. */
 #define NODE_MIN_SIZE (4*1024*1024)
@@ -40,17 +45,17 @@ static __init int setup_node(int pxm)
 	return acpi_map_pxm_to_node(pxm);
 }
 
-static __init int conflicting_nodes(unsigned long start, unsigned long end)
+static __init int conflicting_memblks(unsigned long start, unsigned long end)
 {
 	int i;
-	for_each_node_mask(i, nodes_parsed) {
-		struct bootnode *nd = &nodes[i];
+	for (i = 0; i < num_node_memblks; i++) {
+		struct bootnode *nd = &node_memblk_range[i];
 		if (nd->start == nd->end)
 			continue;
 		if (nd->end > start && nd->start < end)
-			return i;
+			return memblk_nodeid[i];
 		if (nd->end == end && nd->start == start)
-			return i;
+			return memblk_nodeid[i];
 	}
 	return -1;
 }
@@ -92,37 +97,22 @@ static __init inline int srat_disabled(void)
 	return numa_off || acpi_numa < 0;
 }
 
-/*
- * A lot of BIOS fill in 10 (= no distance) everywhere. This messes
- * up the NUMA heuristics which wants the local node to have a smaller
- * distance than the others.
- * Do some quick checks here and only use the SLIT if it passes.
- */
-static __init int slit_valid(struct acpi_table_slit *slit)
-{
-	int i, j;
-	int d = slit->locality_count;
-	for (i = 0; i < d; i++) {
-		for (j = 0; j < d; j++)  {
-			u8 val = slit->entry[d*i + j];
-			if (i == j) {
-				if (val != LOCAL_DISTANCE)
-					return 0;
-			} else if (val <= LOCAL_DISTANCE)
-				return 0;
-		}
-	}
-	return 1;
-}
-
 /* Callback for SLIT parsing */
 void __init acpi_numa_slit_init(struct acpi_table_slit *slit)
 {
-	if (!slit_valid(slit)) {
-		printk(KERN_INFO "ACPI: SLIT table looks invalid. Not used.\n");
-		return;
-	}
-	acpi_slit = slit;
+	unsigned length;
+	unsigned long phys;
+
+	length = slit->header.length;
+	phys = find_e820_area(0, max_pfn_mapped<<PAGE_SHIFT, length,
+		 PAGE_SIZE);
+
+	if (phys == -1L)
+		panic(" Can not save slit!\n");
+
+	acpi_slit = __va(phys);
+	memcpy(acpi_slit, slit, length);
+	reserve_early(phys, phys + length, "ACPI SLIT");
 }
 
 /* Callback for Proximity Domain -> LAPIC mapping */
@@ -132,7 +122,6 @@ acpi_numa_processor_affinity_init(struct acpi_srat_cpu_affinity *pa)
 	int pxm, node;
 	int apic_id;
 
-	apic_id = pa->apic_id;
 	if (srat_disabled())
 		return;
 	if (pa->header.length != sizeof(struct acpi_srat_cpu_affinity)) {
@@ -148,13 +137,18 @@ acpi_numa_processor_affinity_init(struct acpi_srat_cpu_affinity *pa)
 		bad_srat();
 		return;
 	}
+
+	if (is_uv_system())
+		apic_id = (pa->apic_id << 8) | pa->local_sapic_eid;
+	else
+		apic_id = pa->apic_id;
 	apicid_to_node[apic_id] = node;
 	acpi_numa = 1;
 	printk(KERN_INFO "SRAT: PXM %u -> APIC %u -> Node %u\n",
 	       pxm, apic_id, node);
 }
 
-int update_end_of_memory(unsigned long end) {return -1;}
+static int update_end_of_memory(unsigned long end) {return -1;}
 static int hotadd_enough_memory(struct bootnode *nd) {return 1;}
 #ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
 static inline int save_add_info(void) {return 1;}
@@ -253,7 +247,7 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 		bad_srat();
 		return;
 	}
-	i = conflicting_nodes(start, end);
+	i = conflicting_memblks(start, end);
 	if (i == node) {
 		printk(KERN_WARNING
 		"SRAT: Warning: PXM %d (%lx-%lx) overlaps with itself (%Lx-%Lx)\n",
@@ -278,10 +272,10 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 			nd->end = end;
 	}
 
-	printk(KERN_INFO "SRAT: Node %u PXM %u %Lx-%Lx\n", node, pxm,
-	       nd->start, nd->end);
-	e820_register_active_regions(node, nd->start >> PAGE_SHIFT,
-						nd->end >> PAGE_SHIFT);
+	printk(KERN_INFO "SRAT: Node %u PXM %u %lx-%lx\n", node, pxm,
+	       start, end);
+	e820_register_active_regions(node, start >> PAGE_SHIFT,
+				     end >> PAGE_SHIFT);
 	push_node_boundaries(node, nd->start >> PAGE_SHIFT,
 						nd->end >> PAGE_SHIFT);
 
@@ -293,6 +287,11 @@ acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 		if ((nd->start | nd->end) == 0)
 			node_clear(node, nodes_parsed);
 	}
+
+	node_memblk_range[num_node_memblks].start = start;
+	node_memblk_range[num_node_memblks].end = end;
+	memblk_nodeid[num_node_memblks] = node;
+	num_node_memblks++;
 }
 
 /* Sanity check to catch more bad SRATs (they are amazingly common).
@@ -312,7 +311,7 @@ static int __init nodes_cover_memory(const struct bootnode *nodes)
 			pxmram = 0;
 	}
 
-	e820ram = end_pfn - absent_pages_in_range(0, end_pfn);
+	e820ram = max_pfn - absent_pages_in_range(0, max_pfn);
 	/* We seem to lose 3 pages somewhere. Allow a bit of slack. */
 	if ((long)(e820ram - pxmram) >= 1*1024*1024) {
 		printk(KERN_ERR
@@ -363,7 +362,8 @@ int __init acpi_scan_nodes(unsigned long start, unsigned long end)
 		return -1;
 	}
 
-	memnode_shift = compute_hash_shift(nodes, MAX_NUMNODES);
+	memnode_shift = compute_hash_shift(node_memblk_range, num_node_memblks,
+					   memblk_nodeid);
 	if (memnode_shift < 0) {
 		printk(KERN_ERR
 		     "SRAT: No NUMA node hash function found. Contact maintainer\n");
@@ -388,7 +388,7 @@ int __init acpi_scan_nodes(unsigned long start, unsigned long end)
 		if (node == NUMA_NO_NODE)
 			continue;
 		if (!node_isset(node, node_possible_map))
-			numa_set_node(i, NUMA_NO_NODE);
+			numa_clear_node(i);
 	}
 	numa_init_array();
 	return 0;
@@ -507,6 +507,7 @@ int __node_distance(int a, int b)
 
 EXPORT_SYMBOL(__node_distance);
 
+#if defined(CONFIG_MEMORY_HOTPLUG_SPARSE) || defined(CONFIG_ACPI_HOTPLUG_MEMORY)
 int memory_add_physaddr_to_nid(u64 start)
 {
 	int i, ret = 0;
@@ -518,4 +519,4 @@ int memory_add_physaddr_to_nid(u64 start)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
-
+#endif

@@ -23,9 +23,9 @@
  * 	DCCP - specific warning and debugging macros.
  */
 #define DCCP_WARN(fmt, a...) LIMIT_NETDEBUG(KERN_WARNING "%s: " fmt,       \
-							__FUNCTION__, ##a)
+							__func__, ##a)
 #define DCCP_CRIT(fmt, a...) printk(KERN_CRIT fmt " at %s:%d/%s()\n", ##a, \
-					 __FILE__, __LINE__, __FUNCTION__)
+					 __FILE__, __LINE__, __func__)
 #define DCCP_BUG(a...)       do { DCCP_CRIT("BUG: " a); dump_stack(); } while(0)
 #define DCCP_BUG_ON(cond)    do { if (unlikely((cond) != 0))		   \
 				     DCCP_BUG("\"%s\" holds (exception!)", \
@@ -36,7 +36,7 @@
 							printk(fmt, ##args); \
 						} while(0)
 #define DCCP_PR_DEBUG(enable, fmt, a...)	DCCP_PRINTK(enable, KERN_DEBUG \
-						  "%s: " fmt, __FUNCTION__, ##a)
+						  "%s: " fmt, __func__, ##a)
 
 #ifdef CONFIG_IP_DCCP_DEBUG
 extern int dccp_debug;
@@ -153,6 +153,21 @@ static inline u64 max48(const u64 seq1, const u64 seq2)
 	return after48(seq1, seq2) ? seq1 : seq2;
 }
 
+/**
+ * dccp_loss_free  -  Evaluates condition for data loss from RFC 4340, 7.7.1
+ * @s1:	 start sequence number
+ * @s2:  end sequence number
+ * @ndp: NDP count on packet with sequence number @s2
+ * Returns true if the sequence range s1...s2 has no data loss.
+ */
+static inline bool dccp_loss_free(const u64 s1, const u64 s2, const u64 ndp)
+{
+	s64 delta = dccp_delta_seqno(s1, s2);
+
+	WARN_ON(delta < 0);
+	return (u64)delta <= ndp + 1;
+}
+
 enum {
 	DCCP_MIB_NUM = 0,
 	DCCP_MIB_ACTIVEOPENS,			/* ActiveOpens */
@@ -211,10 +226,11 @@ static inline void dccp_csum_outgoing(struct sk_buff *skb)
 
 extern void dccp_v4_send_check(struct sock *sk, int len, struct sk_buff *skb);
 
-extern int  dccp_retransmit_skb(struct sock *sk, struct sk_buff *skb);
+extern int  dccp_retransmit_skb(struct sock *sk);
 
 extern void dccp_send_ack(struct sock *sk);
-extern void dccp_reqsk_send_ack(struct sk_buff *sk, struct request_sock *rsk);
+extern void dccp_reqsk_send_ack(struct sock *sk, struct sk_buff *skb,
+				struct request_sock *rsk);
 
 extern void dccp_send_sync(struct sock *sk, const u64 seq,
 			   const enum dccp_pkt_type pkt_type);
@@ -262,7 +278,7 @@ extern int dccp_rcv_established(struct sock *sk, struct sk_buff *skb,
 				const struct dccp_hdr *dh, const unsigned len);
 
 extern int dccp_init_sock(struct sock *sk, const __u8 ctl_sock_initialized);
-extern int dccp_destroy_sock(struct sock *sk);
+extern void dccp_destroy_sock(struct sock *sk);
 
 extern void		dccp_close(struct sock *sk, long timeout);
 extern struct sk_buff	*dccp_make_response(struct sock *sk,
@@ -296,7 +312,7 @@ extern unsigned int dccp_poll(struct file *file, struct socket *sock,
 extern int	   dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr,
 				   int addr_len);
 
-extern struct sk_buff *dccp_ctl_make_reset(struct socket *ctl,
+extern struct sk_buff *dccp_ctl_make_reset(struct sock *sk,
 					   struct sk_buff *skb);
 extern int	   dccp_send_reset(struct sock *sk, enum dccp_reset_codes code);
 extern void	   dccp_send_close(struct sock *sk, const int active);

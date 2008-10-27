@@ -312,7 +312,7 @@ static void sg_complete(struct urb *urb)
 				    retval != -EBUSY)
 					dev_err(&io->dev->dev,
 						"%s, unlink --> %d\n",
-						__FUNCTION__, retval);
+						__func__, retval);
 			} else if (urb == io->urbs [i])
 				found = 1;
 		}
@@ -389,16 +389,17 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 	if (io->entries <= 0)
 		return io->entries;
 
-	io->count = io->entries;
 	io->urbs = kmalloc(io->entries * sizeof *io->urbs, mem_flags);
 	if (!io->urbs)
 		goto nomem;
 
-	urb_flags = URB_NO_TRANSFER_DMA_MAP | URB_NO_INTERRUPT;
+	urb_flags = URB_NO_INTERRUPT;
+	if (dma)
+		urb_flags |= URB_NO_TRANSFER_DMA_MAP;
 	if (usb_pipein(pipe))
 		urb_flags |= URB_SHORT_NOT_OK;
 
-	for (i = 0; i < io->entries; i++) {
+	for_each_sg(sg, sg, io->entries, i) {
 		unsigned len;
 
 		io->urbs[i] = usb_alloc_urb(0, mem_flags);
@@ -432,17 +433,17 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 		 * to prevent stale pointers and to help spot bugs.
 		 */
 		if (dma) {
-			io->urbs[i]->transfer_dma = sg_dma_address(sg + i);
-			len = sg_dma_len(sg + i);
+			io->urbs[i]->transfer_dma = sg_dma_address(sg);
+			len = sg_dma_len(sg);
 #if defined(CONFIG_HIGHMEM) || defined(CONFIG_GART_IOMMU)
 			io->urbs[i]->transfer_buffer = NULL;
 #else
-			io->urbs[i]->transfer_buffer = sg_virt(&sg[i]);
+			io->urbs[i]->transfer_buffer = sg_virt(sg);
 #endif
 		} else {
 			/* hc may use _only_ transfer_buffer */
-			io->urbs[i]->transfer_buffer = sg_virt(&sg[i]);
-			len = sg[i].length;
+			io->urbs[i]->transfer_buffer = sg_virt(sg);
+			len = sg->length;
 		}
 
 		if (length) {
@@ -456,6 +457,7 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 	io->urbs[--i]->transfer_flags &= ~URB_NO_INTERRUPT;
 
 	/* transaction state */
+	io->count = io->entries;
 	io->status = 0;
 	io->bytes = 0;
 	init_completion(&io->complete);
@@ -550,7 +552,7 @@ void usb_sg_wait(struct usb_sg_request *io)
 			io->urbs[i]->dev = NULL;
 			io->urbs[i]->status = retval;
 			dev_dbg(&io->dev->dev, "%s, submit --> %d\n",
-				__FUNCTION__, retval);
+				__func__, retval);
 			usb_sg_cancel(io);
 		}
 		spin_lock_irq(&io->lock);
@@ -600,7 +602,7 @@ void usb_sg_cancel(struct usb_sg_request *io)
 			retval = usb_unlink_urb(io->urbs [i]);
 			if (retval != -EINPROGRESS && retval != -EBUSY)
 				dev_warn(&io->dev->dev, "%s, unlink --> %d\n",
-					__FUNCTION__, retval);
+					__func__, retval);
 		}
 		spin_lock(&io->lock);
 	}
@@ -784,7 +786,7 @@ int usb_string(struct usb_device *dev, int index, char *buf, size_t size)
 	if (size <= 0 || !buf || !index)
 		return -EINVAL;
 	buf[0] = 0;
-	tbuf = kmalloc(256, GFP_KERNEL);
+	tbuf = kmalloc(256, GFP_NOIO);
 	if (!tbuf)
 		return -ENOMEM;
 
@@ -1068,7 +1070,7 @@ void usb_disable_device(struct usb_device *dev, int skip_ep0)
 {
 	int i;
 
-	dev_dbg(&dev->dev, "%s nuking %s URBs\n", __FUNCTION__,
+	dev_dbg(&dev->dev, "%s nuking %s URBs\n", __func__,
 		skip_ep0 ? "non-ep0" : "all");
 	for (i = skip_ep0; i < 16; ++i) {
 		usb_disable_endpoint(dev, i);
@@ -1088,7 +1090,7 @@ void usb_disable_device(struct usb_device *dev, int skip_ep0)
 			if (!device_is_registered(&interface->dev))
 				continue;
 			dev_dbg(&dev->dev, "unregistering interface %s\n",
-				interface->dev.bus_id);
+				dev_name(&interface->dev));
 			usb_remove_sysfs_intf_files(interface);
 			device_del(&interface->dev);
 		}
@@ -1231,7 +1233,7 @@ int usb_set_interface(struct usb_device *dev, int interface, int alternate)
 	 */
 
 	/* prevent submissions using previous endpoint settings */
-	if (iface->cur_altsetting != alt && device_is_registered(&iface->dev))
+	if (iface->cur_altsetting != alt)
 		usb_remove_sysfs_intf_files(iface);
 	usb_disable_interface(dev, iface);
 
@@ -1330,8 +1332,7 @@ int usb_reset_configuration(struct usb_device *dev)
 		struct usb_interface *intf = config->interface[i];
 		struct usb_host_interface *alt;
 
-		if (device_is_registered(&intf->dev))
-			usb_remove_sysfs_intf_files(intf);
+		usb_remove_sysfs_intf_files(intf);
 		alt = usb_altnum_to_altsetting(intf, 0);
 
 		/* No altsetting 0?  We'll assume the first altsetting.
@@ -1475,7 +1476,7 @@ static struct usb_interface_assoc_descriptor *find_iad(struct usb_device *dev,
  *
  * This call is synchronous. The calling context must be able to sleep,
  * must own the device lock, and must not hold the driver model's USB
- * bus mutex; usb device driver probe() methods cannot use this routine.
+ * bus mutex; usb interface driver probe() methods cannot use this routine.
  *
  * Returns zero on success, or else the status code returned by the
  * underlying call that failed.  On successful completion, each interface
@@ -1606,10 +1607,11 @@ free_interfaces:
 		intf->dev.driver = NULL;
 		intf->dev.bus = &usb_bus_type;
 		intf->dev.type = &usb_if_device_type;
+		intf->dev.groups = usb_interface_groups;
 		intf->dev.dma_mask = dev->dev.dma_mask;
 		device_initialize(&intf->dev);
 		mark_quiesced(intf);
-		sprintf(&intf->dev.bus_id[0], "%d-%s:%d.%d",
+		dev_set_name(&intf->dev, "%d-%s:%d.%d",
 			dev->bus->busnum, dev->devpath,
 			configuration, alt->desc.bInterfaceNumber);
 	}
@@ -1629,12 +1631,12 @@ free_interfaces:
 
 		dev_dbg(&dev->dev,
 			"adding %s (config #%d, interface %d)\n",
-			intf->dev.bus_id, configuration,
+			dev_name(&intf->dev), configuration,
 			intf->cur_altsetting->desc.bInterfaceNumber);
 		ret = device_add(&intf->dev);
 		if (ret != 0) {
 			dev_err(&dev->dev, "device_add(%s) --> %d\n",
-				intf->dev.bus_id, ret);
+				dev_name(&intf->dev), ret);
 			continue;
 		}
 		usb_create_sysfs_intf_files(intf);

@@ -30,6 +30,7 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/module.h>
+#include <linux/spinlock.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/8xx_immap.h>
@@ -42,11 +43,12 @@
 
 #include <asm/fs_pd.h>
 
+#ifdef CONFIG_8xx_GPIO
+#include <linux/of_gpio.h>
+#endif
+
 #define CPM_MAP_SIZE    (0x4000)
 
-#ifndef CONFIG_PPC_CPM_NEW_BINDING
-static void m8xx_cpm_dpinit(void);
-#endif
 cpm8xx_t __iomem *cpmp;  /* Pointer to comm processor space */
 immap_t __iomem *mpc8xx_immr;
 static cpic8xx_t __iomem *cpic_reg;
@@ -162,7 +164,7 @@ unsigned int cpm_pic_init(void)
 
 	out_be32(&cpic_reg->cpic_cimr, 0);
 
-	cpm_pic_host = irq_alloc_host(of_node_get(np), IRQ_HOST_MAP_LINEAR,
+	cpm_pic_host = irq_alloc_host(np, IRQ_HOST_MAP_LINEAR,
 				      64, &cpm_pic_host_ops, 64);
 	if (cpm_pic_host == NULL) {
 		printk(KERN_ERR "CPM2 PIC: failed to allocate irq host!\n");
@@ -229,12 +231,7 @@ void __init cpm_reset(void)
 	out_be32(&siu_conf->sc_sdcr, 1);
 	immr_unmap(siu_conf);
 
-#ifdef CONFIG_PPC_CPM_NEW_BINDING
 	cpm_muram_init();
-#else
-	/* Reclaim the DP memory for our use. */
-	m8xx_cpm_dpinit();
-#endif
 }
 
 static DEFINE_SPINLOCK(cmd_lock);
@@ -257,7 +254,7 @@ int cpm_command(u32 command, u8 opcode)
 		if ((in_be16(&cpmp->cp_cpcr) & CPM_CR_FLG) == 0)
 			goto out;
 
-	printk(KERN_ERR "%s(): Not able to issue CPM command\n", __FUNCTION__);
+	printk(KERN_ERR "%s(): Not able to issue CPM command\n", __func__);
 	ret = -EIO;
 out:
 	spin_unlock_irqrestore(&cmd_lock, flags);
@@ -293,129 +290,29 @@ cpm_setbrg(uint brg, uint rate)
 			      CPM_BRG_EN | CPM_BRG_DIV16);
 }
 
-#ifndef CONFIG_PPC_CPM_NEW_BINDING
-/*
- * dpalloc / dpfree bits.
- */
-static spinlock_t cpm_dpmem_lock;
-/*
- * 16 blocks should be enough to satisfy all requests
- * until the memory subsystem goes up...
- */
-static rh_block_t cpm_boot_dpmem_rh_block[16];
-static rh_info_t cpm_dpmem_info;
-
-#define CPM_DPMEM_ALIGNMENT	8
-static u8 __iomem *dpram_vbase;
-static phys_addr_t dpram_pbase;
-
-static void m8xx_cpm_dpinit(void)
-{
-	spin_lock_init(&cpm_dpmem_lock);
-
-	dpram_vbase = cpmp->cp_dpmem;
-	dpram_pbase = get_immrbase() + offsetof(immap_t, im_cpm.cp_dpmem);
-
-	/* Initialize the info header */
-	rh_init(&cpm_dpmem_info, CPM_DPMEM_ALIGNMENT,
-			sizeof(cpm_boot_dpmem_rh_block) /
-			sizeof(cpm_boot_dpmem_rh_block[0]),
-			cpm_boot_dpmem_rh_block);
-
-	/*
-	 * Attach the usable dpmem area.
-	 * XXX: This is actually crap.  CPM_DATAONLY_BASE and
-	 * CPM_DATAONLY_SIZE are a subset of the available dparm.  It varies
-	 * with the processor and the microcode patches applied / activated.
-	 * But the following should be at least safe.
-	 */
-	rh_attach_region(&cpm_dpmem_info, CPM_DATAONLY_BASE, CPM_DATAONLY_SIZE);
-}
-
-/*
- * Allocate the requested size worth of DP memory.
- * This function returns an offset into the DPRAM area.
- * Use cpm_dpram_addr() to get the virtual address of the area.
- */
-unsigned long cpm_dpalloc(uint size, uint align)
-{
-	unsigned long start;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cpm_dpmem_lock, flags);
-	cpm_dpmem_info.alignment = align;
-	start = rh_alloc(&cpm_dpmem_info, size, "commproc");
-	spin_unlock_irqrestore(&cpm_dpmem_lock, flags);
-
-	return (uint)start;
-}
-EXPORT_SYMBOL(cpm_dpalloc);
-
-int cpm_dpfree(unsigned long offset)
-{
-	int ret;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cpm_dpmem_lock, flags);
-	ret = rh_free(&cpm_dpmem_info, offset);
-	spin_unlock_irqrestore(&cpm_dpmem_lock, flags);
-
-	return ret;
-}
-EXPORT_SYMBOL(cpm_dpfree);
-
-unsigned long cpm_dpalloc_fixed(unsigned long offset, uint size, uint align)
-{
-	unsigned long start;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cpm_dpmem_lock, flags);
-	cpm_dpmem_info.alignment = align;
-	start = rh_alloc_fixed(&cpm_dpmem_info, offset, size, "commproc");
-	spin_unlock_irqrestore(&cpm_dpmem_lock, flags);
-
-	return start;
-}
-EXPORT_SYMBOL(cpm_dpalloc_fixed);
-
-void cpm_dpdump(void)
-{
-	rh_dump(&cpm_dpmem_info);
-}
-EXPORT_SYMBOL(cpm_dpdump);
-
-void *cpm_dpram_addr(unsigned long offset)
-{
-	return (void *)(dpram_vbase + offset);
-}
-EXPORT_SYMBOL(cpm_dpram_addr);
-
-uint cpm_dpram_phys(u8 *addr)
-{
-	return (dpram_pbase + (uint)(addr - dpram_vbase));
-}
-EXPORT_SYMBOL(cpm_dpram_phys);
-#endif /* !CONFIG_PPC_CPM_NEW_BINDING */
-
 struct cpm_ioport16 {
 	__be16 dir, par, odr_sor, dat, intr;
 	__be16 res[3];
 };
 
-struct cpm_ioport32 {
-	__be32 dir, par, sor;
+struct cpm_ioport32b {
+	__be32 dir, par, odr, dat;
+};
+
+struct cpm_ioport32e {
+	__be32 dir, par, sor, odr, dat;
 };
 
 static void cpm1_set_pin32(int port, int pin, int flags)
 {
-	struct cpm_ioport32 __iomem *iop;
+	struct cpm_ioport32e __iomem *iop;
 	pin = 1 << (31 - pin);
 
 	if (port == CPM_PORTB)
-		iop = (struct cpm_ioport32 __iomem *)
+		iop = (struct cpm_ioport32e __iomem *)
 		      &mpc8xx_immr->im_cpm.cp_pbdir;
 	else
-		iop = (struct cpm_ioport32 __iomem *)
+		iop = (struct cpm_ioport32e __iomem *)
 		      &mpc8xx_immr->im_cpm.cp_pedir;
 
 	if (flags & CPM_PIN_OUTPUT)
@@ -610,3 +507,251 @@ int cpm1_clk_setup(enum cpm_clk_target target, int clock, int mode)
 
 	return 0;
 }
+
+/*
+ * GPIO LIB API implementation
+ */
+#ifdef CONFIG_8xx_GPIO
+
+struct cpm1_gpio16_chip {
+	struct of_mm_gpio_chip mm_gc;
+	spinlock_t lock;
+
+	/* shadowed data register to clear/set bits safely */
+	u16 cpdata;
+};
+
+static inline struct cpm1_gpio16_chip *
+to_cpm1_gpio16_chip(struct of_mm_gpio_chip *mm_gc)
+{
+	return container_of(mm_gc, struct cpm1_gpio16_chip, mm_gc);
+}
+
+static void cpm1_gpio16_save_regs(struct of_mm_gpio_chip *mm_gc)
+{
+	struct cpm1_gpio16_chip *cpm1_gc = to_cpm1_gpio16_chip(mm_gc);
+	struct cpm_ioport16 __iomem *iop = mm_gc->regs;
+
+	cpm1_gc->cpdata = in_be16(&iop->dat);
+}
+
+static int cpm1_gpio16_get(struct gpio_chip *gc, unsigned int gpio)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport16 __iomem *iop = mm_gc->regs;
+	u16 pin_mask;
+
+	pin_mask = 1 << (15 - gpio);
+
+	return !!(in_be16(&iop->dat) & pin_mask);
+}
+
+static void cpm1_gpio16_set(struct gpio_chip *gc, unsigned int gpio, int value)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm1_gpio16_chip *cpm1_gc = to_cpm1_gpio16_chip(mm_gc);
+	struct cpm_ioport16 __iomem *iop = mm_gc->regs;
+	unsigned long flags;
+	u16 pin_mask = 1 << (15 - gpio);
+
+	spin_lock_irqsave(&cpm1_gc->lock, flags);
+
+	if (value)
+		cpm1_gc->cpdata |= pin_mask;
+	else
+		cpm1_gc->cpdata &= ~pin_mask;
+
+	out_be16(&iop->dat, cpm1_gc->cpdata);
+
+	spin_unlock_irqrestore(&cpm1_gc->lock, flags);
+}
+
+static int cpm1_gpio16_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport16 __iomem *iop = mm_gc->regs;
+	u16 pin_mask;
+
+	pin_mask = 1 << (15 - gpio);
+
+	setbits16(&iop->dir, pin_mask);
+
+	cpm1_gpio16_set(gc, gpio, val);
+
+	return 0;
+}
+
+static int cpm1_gpio16_dir_in(struct gpio_chip *gc, unsigned int gpio)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport16 __iomem *iop = mm_gc->regs;
+	u16 pin_mask;
+
+	pin_mask = 1 << (15 - gpio);
+
+	clrbits16(&iop->dir, pin_mask);
+
+	return 0;
+}
+
+int cpm1_gpiochip_add16(struct device_node *np)
+{
+	struct cpm1_gpio16_chip *cpm1_gc;
+	struct of_mm_gpio_chip *mm_gc;
+	struct of_gpio_chip *of_gc;
+	struct gpio_chip *gc;
+
+	cpm1_gc = kzalloc(sizeof(*cpm1_gc), GFP_KERNEL);
+	if (!cpm1_gc)
+		return -ENOMEM;
+
+	spin_lock_init(&cpm1_gc->lock);
+
+	mm_gc = &cpm1_gc->mm_gc;
+	of_gc = &mm_gc->of_gc;
+	gc = &of_gc->gc;
+
+	mm_gc->save_regs = cpm1_gpio16_save_regs;
+	of_gc->gpio_cells = 2;
+	gc->ngpio = 16;
+	gc->direction_input = cpm1_gpio16_dir_in;
+	gc->direction_output = cpm1_gpio16_dir_out;
+	gc->get = cpm1_gpio16_get;
+	gc->set = cpm1_gpio16_set;
+
+	return of_mm_gpiochip_add(np, mm_gc);
+}
+
+struct cpm1_gpio32_chip {
+	struct of_mm_gpio_chip mm_gc;
+	spinlock_t lock;
+
+	/* shadowed data register to clear/set bits safely */
+	u32 cpdata;
+};
+
+static inline struct cpm1_gpio32_chip *
+to_cpm1_gpio32_chip(struct of_mm_gpio_chip *mm_gc)
+{
+	return container_of(mm_gc, struct cpm1_gpio32_chip, mm_gc);
+}
+
+static void cpm1_gpio32_save_regs(struct of_mm_gpio_chip *mm_gc)
+{
+	struct cpm1_gpio32_chip *cpm1_gc = to_cpm1_gpio32_chip(mm_gc);
+	struct cpm_ioport32b __iomem *iop = mm_gc->regs;
+
+	cpm1_gc->cpdata = in_be32(&iop->dat);
+}
+
+static int cpm1_gpio32_get(struct gpio_chip *gc, unsigned int gpio)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport32b __iomem *iop = mm_gc->regs;
+	u32 pin_mask;
+
+	pin_mask = 1 << (31 - gpio);
+
+	return !!(in_be32(&iop->dat) & pin_mask);
+}
+
+static void cpm1_gpio32_set(struct gpio_chip *gc, unsigned int gpio, int value)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm1_gpio32_chip *cpm1_gc = to_cpm1_gpio32_chip(mm_gc);
+	struct cpm_ioport32b __iomem *iop = mm_gc->regs;
+	unsigned long flags;
+	u32 pin_mask = 1 << (31 - gpio);
+
+	spin_lock_irqsave(&cpm1_gc->lock, flags);
+
+	if (value)
+		cpm1_gc->cpdata |= pin_mask;
+	else
+		cpm1_gc->cpdata &= ~pin_mask;
+
+	out_be32(&iop->dat, cpm1_gc->cpdata);
+
+	spin_unlock_irqrestore(&cpm1_gc->lock, flags);
+}
+
+static int cpm1_gpio32_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport32b __iomem *iop = mm_gc->regs;
+	u32 pin_mask;
+
+	pin_mask = 1 << (31 - gpio);
+
+	setbits32(&iop->dir, pin_mask);
+
+	cpm1_gpio32_set(gc, gpio, val);
+
+	return 0;
+}
+
+static int cpm1_gpio32_dir_in(struct gpio_chip *gc, unsigned int gpio)
+{
+	struct of_mm_gpio_chip *mm_gc = to_of_mm_gpio_chip(gc);
+	struct cpm_ioport32b __iomem *iop = mm_gc->regs;
+	u32 pin_mask;
+
+	pin_mask = 1 << (31 - gpio);
+
+	clrbits32(&iop->dir, pin_mask);
+
+	return 0;
+}
+
+int cpm1_gpiochip_add32(struct device_node *np)
+{
+	struct cpm1_gpio32_chip *cpm1_gc;
+	struct of_mm_gpio_chip *mm_gc;
+	struct of_gpio_chip *of_gc;
+	struct gpio_chip *gc;
+
+	cpm1_gc = kzalloc(sizeof(*cpm1_gc), GFP_KERNEL);
+	if (!cpm1_gc)
+		return -ENOMEM;
+
+	spin_lock_init(&cpm1_gc->lock);
+
+	mm_gc = &cpm1_gc->mm_gc;
+	of_gc = &mm_gc->of_gc;
+	gc = &of_gc->gc;
+
+	mm_gc->save_regs = cpm1_gpio32_save_regs;
+	of_gc->gpio_cells = 2;
+	gc->ngpio = 32;
+	gc->direction_input = cpm1_gpio32_dir_in;
+	gc->direction_output = cpm1_gpio32_dir_out;
+	gc->get = cpm1_gpio32_get;
+	gc->set = cpm1_gpio32_set;
+
+	return of_mm_gpiochip_add(np, mm_gc);
+}
+
+static int cpm_init_par_io(void)
+{
+	struct device_node *np;
+
+	for_each_compatible_node(np, NULL, "fsl,cpm1-pario-bank-a")
+		cpm1_gpiochip_add16(np);
+
+	for_each_compatible_node(np, NULL, "fsl,cpm1-pario-bank-b")
+		cpm1_gpiochip_add32(np);
+
+	for_each_compatible_node(np, NULL, "fsl,cpm1-pario-bank-c")
+		cpm1_gpiochip_add16(np);
+
+	for_each_compatible_node(np, NULL, "fsl,cpm1-pario-bank-d")
+		cpm1_gpiochip_add16(np);
+
+	/* Port E uses CPM2 layout */
+	for_each_compatible_node(np, NULL, "fsl,cpm1-pario-bank-e")
+		cpm2_gpiochip_add32(np);
+	return 0;
+}
+arch_initcall(cpm_init_par_io);
+
+#endif /* CONFIG_8xx_GPIO */

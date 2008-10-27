@@ -57,22 +57,19 @@ static struct dentry_operations anon_inodefs_dentry_operations = {
  *                    anonymous inode, and a dentry that describe the "class"
  *                    of the file
  *
- * @pfd:     [out]   pointer to the file descriptor
- * @dpinode: [out]   pointer to the inode
- * @pfile:   [out]   pointer to the file struct
  * @name:    [in]    name of the "class" of the new file
- * @fops     [in]    file operations for the new file
- * @priv     [in]    private data for the new file (will be file's private_data)
+ * @fops:    [in]    file operations for the new file
+ * @priv:    [in]    private data for the new file (will be file's private_data)
+ * @flags:   [in]    flags
  *
  * Creates a new file by hooking it on a single inode. This is useful for files
  * that do not need to have a full-fledged inode in order to operate correctly.
  * All the files created with anon_inode_getfd() will share a single inode,
  * hence saving memory and avoiding code duplication for the file/inode/dentry
- * setup.
+ * setup.  Returns new descriptor or -error.
  */
-int anon_inode_getfd(int *pfd, struct inode **pinode, struct file **pfile,
-		     const char *name, const struct file_operations *fops,
-		     void *priv)
+int anon_inode_getfd(const char *name, const struct file_operations *fops,
+		     void *priv, int flags)
 {
 	struct qstr this;
 	struct dentry *dentry;
@@ -82,7 +79,7 @@ int anon_inode_getfd(int *pfd, struct inode **pinode, struct file **pfile,
 	if (IS_ERR(anon_inode_inode))
 		return -ENODEV;
 
-	error = get_unused_fd();
+	error = get_unused_fd_flags(flags);
 	if (error < 0)
 		return error;
 	fd = error;
@@ -119,16 +116,13 @@ int anon_inode_getfd(int *pfd, struct inode **pinode, struct file **pfile,
 	file->f_mapping = anon_inode_inode->i_mapping;
 
 	file->f_pos = 0;
-	file->f_flags = O_RDWR;
+	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
 	file->f_version = 0;
 	file->private_data = priv;
 
 	fd_install(fd, file);
 
-	*pfd = fd;
-	*pinode = anon_inode_inode;
-	*pfile = file;
-	return 0;
+	return fd;
 
 err_dput:
 	dput(dentry);

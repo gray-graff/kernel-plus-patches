@@ -67,15 +67,13 @@ int sctp_bind_addr_copy(struct sctp_bind_addr *dest,
 			int flags)
 {
 	struct sctp_sockaddr_entry *addr;
-	struct list_head *pos;
 	int error = 0;
 
 	/* All addresses share the same port.  */
 	dest->port = src->port;
 
 	/* Extract the addresses which are relevant for this scope.  */
-	list_for_each(pos, &src->address_list) {
-		addr = list_entry(pos, struct sctp_sockaddr_entry, list);
+	list_for_each_entry(addr, &src->address_list, list) {
 		error = sctp_copy_one_addr(dest, &addr->a, scope,
 					   gfp, flags);
 		if (error < 0)
@@ -87,9 +85,7 @@ int sctp_bind_addr_copy(struct sctp_bind_addr *dest,
 	 * the assumption that we must be sitting behind a NAT.
 	 */
 	if (list_empty(&dest->address_list) && (SCTP_SCOPE_GLOBAL == scope)) {
-		list_for_each(pos, &src->address_list) {
-			addr = list_entry(pos, struct sctp_sockaddr_entry,
-					  list);
+		list_for_each_entry(addr, &src->address_list, list) {
 			error = sctp_copy_one_addr(dest, &addr->a,
 						   SCTP_SCOPE_LINK, gfp,
 						   flags);
@@ -115,14 +111,12 @@ int sctp_bind_addr_dup(struct sctp_bind_addr *dest,
 			gfp_t gfp)
 {
 	struct sctp_sockaddr_entry *addr;
-	struct list_head *pos;
 	int error = 0;
 
 	/* All addresses share the same port.  */
 	dest->port = src->port;
 
-	list_for_each(pos, &src->address_list) {
-		addr = list_entry(pos, struct sctp_sockaddr_entry, list);
+	list_for_each_entry(addr, &src->address_list, list) {
 		error = sctp_add_bind_addr(dest, &addr->a, 1, gfp);
 		if (error < 0)
 			break;
@@ -273,8 +267,7 @@ union sctp_params sctp_bind_addrs_to_raw(const struct sctp_bind_addr *bp,
 
 	addrparms = retval;
 
-	list_for_each(pos, &bp->address_list) {
-		addr = list_entry(pos, struct sctp_sockaddr_entry, list);
+	list_for_each_entry(addr, &bp->address_list, list) {
 		af = sctp_get_af_specific(addr->a.v4.sin_family);
 		len = af->to_addr_param(&addr->a, &rawaddr);
 		memcpy(addrparms.v, &rawaddr, len);
@@ -353,6 +346,43 @@ int sctp_bind_addr_match(struct sctp_bind_addr *bp,
 	rcu_read_unlock();
 
 	return match;
+}
+
+/* Does the address 'addr' conflict with any addresses in
+ * the bp.
+ */
+int sctp_bind_addr_conflict(struct sctp_bind_addr *bp,
+			    const union sctp_addr *addr,
+			    struct sctp_sock *bp_sp,
+			    struct sctp_sock *addr_sp)
+{
+	struct sctp_sockaddr_entry *laddr;
+	int conflict = 0;
+	struct sctp_sock *sp;
+
+	/* Pick the IPv6 socket as the basis of comparison
+	 * since it's usually a superset of the IPv4.
+	 * If there is no IPv6 socket, then default to bind_addr.
+	 */
+	if (sctp_opt2sk(bp_sp)->sk_family == AF_INET6)
+		sp = bp_sp;
+	else if (sctp_opt2sk(addr_sp)->sk_family == AF_INET6)
+		sp = addr_sp;
+	else
+		sp = bp_sp;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(laddr, &bp->address_list, list) {
+		if (!laddr->valid)
+			continue;
+
+		conflict = sp->pf->cmp_addr(&laddr->a, addr, sp);
+		if (conflict)
+			break;
+	}
+	rcu_read_unlock();
+
+	return conflict;
 }
 
 /* Get the state of the entry in the bind_addr_list */

@@ -3,38 +3,17 @@
  */
 
 /*
- *
- *  Version 0.01        Initial version hacked out of ide.c
- *
- *  Version 0.02        Added support for PIO modes, auto-tune
- *
- *  Version 0.03        Some cleanups
- *
- *  Version 0.05        PIO mode cycle timings auto-tune using bus-speed
- *
- *  Version 0.06        Prefetch mode now defaults no OFF. To set
- *                      prefetch mode OFF/ON use "hdparm -p8/-p9".
- *                      Unmask irq is disabled when prefetch mode
- *                      is enabled.
- *
- *  Version 0.07        Trying to fix CD-ROM detection problem.
- *                      "Prefetch" mode bit OFF for ide disks and
- *                      ON for anything else.
- *
- *  Version 0.08        Need to force prefetch for CDs and other non-disk
- *                      devices. (not sure which devices exactly need
- *                      prefetch)
- *
  *  HT-6560B EIDE-controller support
  *  To activate controller support use kernel parameter "ide0=ht6560b".
  *  Use hdparm utility to enable PIO mode support.
  *
  *  Author:    Mikko Ala-Fossi            <maf@iki.fi>
- *             Jan Evert van Grootheest   <janevert@caiway.nl>
+ *             Jan Evert van Grootheest   <j.e.van.grootheest@caiway.nl>
  *
  *  Try:  http://www.maf.iki.fi/~maf/ht6560b/
  */
 
+#define DRV_NAME	"ht6560b"
 #define HT6560B_VERSION "v0.08"
 
 #include <linux/module.h>
@@ -82,7 +61,7 @@
  * out how they setup those cycle time interfacing values, as they at Holtek
  * call them. IDESETUP.COM that is supplied with the drivers figures out
  * optimal values and fetches those values to drivers. I found out that
- * they use IDE_SELECT_REG to fetch timings to the ide board right after
+ * they use Select register to fetch timings to the ide board right after
  * interface switching. After that it was quite easy to add code to
  * ht6560b.c.
  *
@@ -127,6 +106,7 @@
  */
 static void ht6560b_selectproc (ide_drive_t *drive)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	unsigned long flags;
 	static u8 current_select = 0;
 	static u8 current_timing = 0;
@@ -155,8 +135,8 @@ static void ht6560b_selectproc (ide_drive_t *drive)
 		/*
 		 * Set timing for this drive:
 		 */
-		outb(timing, IDE_SELECT_REG);
-		(void)inb(IDE_STATUS_REG);
+		outb(timing, hwif->io_ports.device_addr);
+		(void)inb(hwif->io_ports.status_addr);
 #ifdef DEBUG
 		printk("ht6560b: %s: select=%#x timing=%#x\n",
 			drive->name, select, timing);
@@ -193,9 +173,9 @@ static int __init try_to_init_ht6560b(void)
 	 * Ht6560b autodetected
 	 */
 	outb(HT_CONFIG_DEFAULT, HT_CONFIG_PORT);
-	outb(HT_TIMING_DEFAULT, 0x1f6);  /* IDE_SELECT_REG */
-	(void) inb(0x1f7);               /* IDE_STATUS_REG */
-	
+	outb(HT_TIMING_DEFAULT, 0x1f6);	/* Select register */
+	(void)inb(0x1f7);		/* Status register */
+
 	printk("ht6560b " HT6560B_VERSION
 	       ": chipset detected and initialized"
 #ifdef DEBUG
@@ -210,10 +190,11 @@ static u8 ht_pio2timings(ide_drive_t *drive, const u8 pio)
 {
 	int active_time, recovery_time;
 	int active_cycles, recovery_cycles;
-	int bus_speed = system_bus_clock();
-	
+	int bus_speed = ide_vlb_clk ? ide_vlb_clk : 50;
+
         if (pio) {
 		unsigned int cycle_time;
+		struct ide_timing *t = ide_timing_find_mode(XFER_PIO_0 + pio);
 
 		cycle_time = ide_pio_cycle_time(drive, pio);
 
@@ -222,10 +203,8 @@ static u8 ht_pio2timings(ide_drive_t *drive, const u8 pio)
 		 *  actual cycle time for recovery and activity
 		 *  according system bus speed.
 		 */
-		active_time = ide_pio_timings[pio].active_time;
-		recovery_time = cycle_time
-			- active_time
-			- ide_pio_timings[pio].setup_time;
+		active_time = t->active;
+		recovery_time = cycle_time - active_time - t->setup;
 		/*
 		 *  Cycle times should be Vesa bus cycles
 		 */
@@ -309,66 +288,56 @@ static void ht6560b_set_pio_mode(ide_drive_t *drive, const u8 pio)
 #endif
 }
 
-static void __init ht6560b_port_init_devs(ide_hwif_t *hwif)
+static void __init ht6560b_init_dev(ide_drive_t *drive)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	/* Setting default configurations for drives. */
 	int t = (HT_CONFIG_DEFAULT << 8) | HT_TIMING_DEFAULT;
 
 	if (hwif->channel)
 		t |= (HT_SECONDARY_IF << 8);
 
-	hwif->drives[0].drive_data = t;
-	hwif->drives[1].drive_data = t;
+	drive->drive_data = t;
 }
 
-int probe_ht6560b = 0;
+static int probe_ht6560b;
 
 module_param_named(probe, probe_ht6560b, bool, 0);
 MODULE_PARM_DESC(probe, "probe for HT6560B chipset");
 
+static const struct ide_port_ops ht6560b_port_ops = {
+	.init_dev		= ht6560b_init_dev,
+	.set_pio_mode		= ht6560b_set_pio_mode,
+	.selectproc		= ht6560b_selectproc,
+};
+
 static const struct ide_port_info ht6560b_port_info __initdata = {
+	.name			= DRV_NAME,
 	.chipset		= ide_ht6560b,
+	.port_ops		= &ht6560b_port_ops,
 	.host_flags		= IDE_HFLAG_SERIALIZE | /* is this needed? */
 				  IDE_HFLAG_NO_DMA |
-				  IDE_HFLAG_NO_AUTOTUNE |
 				  IDE_HFLAG_ABUSE_PREFETCH,
 	.pio_mask		= ATA_PIO4,
 };
 
 static int __init ht6560b_init(void)
 {
-	ide_hwif_t *hwif, *mate;
-	static u8 idx[4] = { 0, 1, 0xff, 0xff };
-
 	if (probe_ht6560b == 0)
 		return -ENODEV;
 
-	hwif = &ide_hwifs[0];
-	mate = &ide_hwifs[1];
-
-	if (!request_region(HT_CONFIG_PORT, 1, hwif->name)) {
+	if (!request_region(HT_CONFIG_PORT, 1, DRV_NAME)) {
 		printk(KERN_NOTICE "%s: HT_CONFIG_PORT not found\n",
-			__FUNCTION__);
+			__func__);
 		return -ENODEV;
 	}
 
 	if (!try_to_init_ht6560b()) {
-		printk(KERN_NOTICE "%s: HBA not found\n", __FUNCTION__);
+		printk(KERN_NOTICE "%s: HBA not found\n", __func__);
 		goto release_region;
 	}
 
-	hwif->selectproc = &ht6560b_selectproc;
-	hwif->set_pio_mode = &ht6560b_set_pio_mode;
-
-	mate->selectproc = &ht6560b_selectproc;
-	mate->set_pio_mode = &ht6560b_set_pio_mode;
-
-	hwif->port_init_devs = ht6560b_port_init_devs;
-	mate->port_init_devs = ht6560b_port_init_devs;
-
-	ide_device_add(idx, &ht6560b_port_info);
-
-	return 0;
+	return ide_legacy_device_add(&ht6560b_port_info, 0);
 
 release_region:
 	release_region(HT_CONFIG_PORT, 1);

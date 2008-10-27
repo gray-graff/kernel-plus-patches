@@ -1,7 +1,6 @@
 #ifndef _ASMX86_TIME_H
 #define _ASMX86_TIME_H
 
-extern void (*late_time_init)(void);
 extern void hpet_time_init(void);
 
 #include <asm/mc146818rtc.h>
@@ -56,5 +55,7 @@ static inline int native_set_wallclock(unsigned long nowtime)
 #define choose_time_init() hpet_time_init
 
 #endif /* CONFIG_PARAVIRT */
+
+extern unsigned long __init calibrate_cpu(void);
 
 #endif

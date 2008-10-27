@@ -216,6 +216,7 @@ lpfc_vport_create(struct fc_vport *fc_vport, bool disable)
 	int vpi;
 	int rc = VPORT_ERROR;
 	int status;
+	int size;
 
 	if ((phba->sli_rev < 3) ||
 		!(phba->sli3_options & LPFC_SLI3_NPIV_ENABLED)) {
@@ -278,7 +279,20 @@ lpfc_vport_create(struct fc_vport *fc_vport, bool disable)
 
 	memcpy(vport->fc_portname.u.wwn, vport->fc_sparam.portName.u.wwn, 8);
 	memcpy(vport->fc_nodename.u.wwn, vport->fc_sparam.nodeName.u.wwn, 8);
-
+	size = strnlen(fc_vport->symbolic_name, LPFC_VNAME_LEN);
+	if (size) {
+		vport->vname = kzalloc(size+1, GFP_KERNEL);
+		if (!vport->vname) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_VPORT,
+					 "1814 Create VPORT failed. "
+					 "vname allocation failed.\n");
+			rc = VPORT_ERROR;
+			lpfc_free_vpi(phba, vpi);
+			destroy_port(vport);
+			goto error_out;
+		}
+		memcpy(vport->vname, fc_vport->symbolic_name, size+1);
+	}
 	if (fc_vport->node_name != 0)
 		u64_to_wwn(fc_vport->node_name, vport->fc_nodename.u.wwn);
 	if (fc_vport->port_name != 0)
@@ -538,7 +552,8 @@ lpfc_vport_delete(struct fc_vport *fc_vport)
 	/* Otherwise, we will perform fabric logo as needed */
 	if (ndlp && NLP_CHK_NODE_ACT(ndlp) &&
 	    ndlp->nlp_state == NLP_STE_UNMAPPED_NODE &&
-	    phba->link_state >= LPFC_LINK_UP) {
+	    phba->link_state >= LPFC_LINK_UP &&
+	    phba->fc_topology != TOPOLOGY_LOOP) {
 		if (vport->cfg_enable_da_id) {
 			timeout = msecs_to_jiffies(phba->fc_ratov * 2000);
 			if (!lpfc_ns_cmd(vport, SLI_CTNS_DA_ID, 0, 0))

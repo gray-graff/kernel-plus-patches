@@ -16,12 +16,15 @@
  * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
-#include <linux/module.h>
-#include <linux/errno.h>
+#include <linux/completion.h>
+#include <linux/crc-itu-t.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/errno.h>
+#include <linux/kref.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/crc-itu-t.h>
+
 #include "fw-transaction.h"
 #include "fw-topology.h"
 #include "fw-device.h"
@@ -167,7 +170,6 @@ fw_core_add_descriptor(struct fw_descriptor *desc)
 
 	return 0;
 }
-EXPORT_SYMBOL(fw_core_add_descriptor);
 
 void
 fw_core_remove_descriptor(struct fw_descriptor *desc)
@@ -182,7 +184,6 @@ fw_core_remove_descriptor(struct fw_descriptor *desc)
 
 	mutex_unlock(&card_mutex);
 }
-EXPORT_SYMBOL(fw_core_remove_descriptor);
 
 static const char gap_count_table[] = {
 	63, 5, 7, 8, 10, 13, 16, 18, 21, 24, 26, 29, 32, 35, 37, 40
@@ -220,7 +221,7 @@ fw_card_bm_work(struct work_struct *work)
 	struct bm_data bmd;
 	unsigned long flags;
 	int root_id, new_root_id, irm_id, gap_count, generation, grace;
-	int do_reset = 0;
+	bool do_reset = false;
 
 	spin_lock_irqsave(&card->lock, flags);
 	local_node = card->local_node;
@@ -331,7 +332,7 @@ fw_card_bm_work(struct work_struct *work)
 		 */
 		spin_unlock_irqrestore(&card->lock, flags);
 		goto out;
-	} else if (root_device->config_rom[2] & BIB_CMC) {
+	} else if (root_device->cmc) {
 		/*
 		 * FIXME: I suppose we should set the cmstr bit in the
 		 * STATE_CLEAR register of this node, as described in
@@ -360,14 +361,14 @@ fw_card_bm_work(struct work_struct *work)
 		gap_count = 63;
 
 	/*
-	 * Finally, figure out if we should do a reset or not.  If we've
-	 * done less that 5 resets with the same physical topology and we
+	 * Finally, figure out if we should do a reset or not.  If we have
+	 * done less than 5 resets with the same physical topology and we
 	 * have either a new root or a new gap count setting, let's do it.
 	 */
 
 	if (card->bm_retries++ < 5 &&
 	    (card->gap_count != gap_count || new_root_id != root_id))
-		do_reset = 1;
+		do_reset = true;
 
 	spin_unlock_irqrestore(&card->lock, flags);
 
@@ -398,15 +399,16 @@ fw_card_initialize(struct fw_card *card, const struct fw_card_driver *driver,
 {
 	static atomic_t index = ATOMIC_INIT(-1);
 
-	kref_init(&card->kref);
-	atomic_set(&card->device_count, 0);
 	card->index = atomic_inc_return(&index);
 	card->driver = driver;
 	card->device = device;
 	card->current_tlabel = 0;
 	card->tlabel_mask = 0;
 	card->color = 0;
+	card->broadcast_channel = BROADCAST_CHANNEL_INITIAL;
 
+	kref_init(&card->kref);
+	init_completion(&card->done);
 	INIT_LIST_HEAD(&card->transaction_list);
 	spin_lock_init(&card->lock);
 	setup_timer(&card->flush_timer,
@@ -428,12 +430,6 @@ fw_card_add(struct fw_card *card,
 	card->max_receive = max_receive;
 	card->link_speed = link_speed;
 	card->guid = guid;
-
-	/*
-	 * The subsystem grabs a reference when the card is added and
-	 * drops it when the driver calls fw_core_remove_card.
-	 */
-	fw_card_get(card);
 
 	mutex_lock(&card_mutex);
 	config_rom = generate_config_rom(card, &length);
@@ -505,7 +501,6 @@ dummy_enable_phys_dma(struct fw_card *card,
 }
 
 static struct fw_card_driver dummy_driver = {
-	.name            = "dummy",
 	.enable          = dummy_enable,
 	.update_phy_reg  = dummy_update_phy_reg,
 	.set_config_rom  = dummy_set_config_rom,
@@ -514,6 +509,14 @@ static struct fw_card_driver dummy_driver = {
 	.send_response   = dummy_send_response,
 	.enable_phys_dma = dummy_enable_phys_dma,
 };
+
+void
+fw_card_release(struct kref *kref)
+{
+	struct fw_card *card = container_of(kref, struct fw_card, kref);
+
+	complete(&card->done);
+}
 
 void
 fw_core_remove_card(struct fw_card *card)
@@ -530,49 +533,16 @@ fw_core_remove_card(struct fw_card *card)
 	card->driver = &dummy_driver;
 
 	fw_destroy_nodes(card);
-	/*
-	 * Wait for all device workqueue jobs to finish.  Otherwise the
-	 * firewire-core module could be unloaded before the jobs ran.
-	 */
-	while (atomic_read(&card->device_count) > 0)
-		msleep(100);
+
+	/* Wait for all users, especially device workqueue jobs, to finish. */
+	fw_card_put(card);
+	wait_for_completion(&card->done);
 
 	cancel_delayed_work_sync(&card->work);
-	fw_flush_transactions(card);
+	WARN_ON(!list_empty(&card->transaction_list));
 	del_timer_sync(&card->flush_timer);
-
-	fw_card_put(card);
 }
 EXPORT_SYMBOL(fw_core_remove_card);
-
-struct fw_card *
-fw_card_get(struct fw_card *card)
-{
-	kref_get(&card->kref);
-
-	return card;
-}
-EXPORT_SYMBOL(fw_card_get);
-
-static void
-release_card(struct kref *kref)
-{
-	struct fw_card *card = container_of(kref, struct fw_card, kref);
-
-	kfree(card);
-}
-
-/*
- * An assumption for fw_card_put() is that the card driver allocates
- * the fw_card struct with kalloc and that it has been shut down
- * before the last ref is dropped.
- */
-void
-fw_card_put(struct fw_card *card)
-{
-	kref_put(&card->kref, release_card);
-}
-EXPORT_SYMBOL(fw_card_put);
 
 int
 fw_core_initiate_bus_reset(struct fw_card *card, int short_reset)

@@ -22,6 +22,7 @@
 #include <linux/interrupt.h>
 #include <linux/fb.h>
 #include <linux/module.h>
+#include <linux/mm.h>
 #include <linux/console.h>
 #include <linux/errno.h>
 #include <linux/string.h>
@@ -162,7 +163,7 @@ void __init setup_arch(char **cmdline_p)
 	printk(KERN_INFO "DragonEngine II board support by Georges Menie\n");
 #endif
 #ifdef CONFIG_M5235EVB
-	printk(KERN_INFO "Motorola M5235EVB support (C)2005 Syn-tech Systems, Inc. (Jate Sujjavanich)");
+	printk(KERN_INFO "Motorola M5235EVB support (C)2005 Syn-tech Systems, Inc. (Jate Sujjavanich)\n");
 #endif
 
 #ifdef DEBUG

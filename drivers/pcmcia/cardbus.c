@@ -30,11 +30,9 @@
 #include <asm/irq.h>
 #include <asm/io.h>
 
-#define IN_CARD_SERVICES
 #include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cs.h>
-#include <pcmcia/bulkmem.h>
 #include <pcmcia/cistpl.h>
 #include "cs_internal.h"
 
@@ -209,7 +207,7 @@ static void cardbus_assign_irqs(struct pci_bus *bus, int irq)
 	}
 }
 
-int cb_alloc(struct pcmcia_socket * s)
+int __ref cb_alloc(struct pcmcia_socket * s)
 {
 	struct pci_bus *bus = s->cb_dev->subordinate;
 	struct pci_dev *dev;

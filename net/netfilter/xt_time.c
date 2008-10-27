@@ -173,7 +173,7 @@ time_mt(const struct sk_buff *skb, const struct net_device *in,
 		__net_timestamp((struct sk_buff *)skb);
 
 	stamp = ktime_to_ns(skb->tstamp);
-	do_div(stamp, NSEC_PER_SEC);
+	stamp = div_s64(stamp, NSEC_PER_SEC);
 
 	if (info->flags & XT_TIME_LOCAL_TZ)
 		/* Adjust for local timezone */
@@ -223,7 +223,7 @@ time_mt_check(const char *tablename, const void *ip,
               const struct xt_match *match, void *matchinfo,
               unsigned int hook_mask)
 {
-	struct xt_time_info *info = matchinfo;
+	const struct xt_time_info *info = matchinfo;
 
 	if (info->daytime_start > XT_TIME_MAX_DAYTIME ||
 	    info->daytime_stop > XT_TIME_MAX_DAYTIME) {

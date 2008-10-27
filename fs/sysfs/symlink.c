@@ -19,13 +19,8 @@
 
 #include "sysfs.h"
 
-/**
- *	sysfs_create_link - create symlink between two objects.
- *	@kobj:	object whose directory we're creating the link in.
- *	@target:	object we're pointing to.
- *	@name:		name of the symlink.
- */
-int sysfs_create_link(struct kobject * kobj, struct kobject * target, const char * name)
+static int sysfs_do_create_link(struct kobject *kobj, struct kobject *target,
+				const char *name, int warn)
 {
 	struct sysfs_dirent *parent_sd = NULL;
 	struct sysfs_dirent *target_sd = NULL;
@@ -65,7 +60,10 @@ int sysfs_create_link(struct kobject * kobj, struct kobject * target, const char
 	target_sd = NULL;	/* reference is now owned by the symlink */
 
 	sysfs_addrm_start(&acxt, parent_sd);
-	error = sysfs_add_one(&acxt, sd);
+	if (warn)
+		error = sysfs_add_one(&acxt, sd);
+	else
+		error = __sysfs_add_one(&acxt, sd);
 	sysfs_addrm_finish(&acxt);
 
 	if (error)
@@ -80,6 +78,33 @@ int sysfs_create_link(struct kobject * kobj, struct kobject * target, const char
 }
 
 /**
+ *	sysfs_create_link - create symlink between two objects.
+ *	@kobj:	object whose directory we're creating the link in.
+ *	@target:	object we're pointing to.
+ *	@name:		name of the symlink.
+ */
+int sysfs_create_link(struct kobject *kobj, struct kobject *target,
+		      const char *name)
+{
+	return sysfs_do_create_link(kobj, target, name, 1);
+}
+
+/**
+ *	sysfs_create_link_nowarn - create symlink between two objects.
+ *	@kobj:	object whose directory we're creating the link in.
+ *	@target:	object we're pointing to.
+ *	@name:		name of the symlink.
+ *
+ *	This function does the same as sysf_create_link(), but it
+ *	doesn't warn if the link already exists.
+ */
+int sysfs_create_link_nowarn(struct kobject *kobj, struct kobject *target,
+			     const char *name)
+{
+	return sysfs_do_create_link(kobj, target, name, 0);
+}
+
+/**
  *	sysfs_remove_link - remove symlink in object's directory.
  *	@kobj:	object we're acting for.
  *	@name:	name of the symlink to remove.
@@ -87,7 +112,14 @@ int sysfs_create_link(struct kobject * kobj, struct kobject * target, const char
 
 void sysfs_remove_link(struct kobject * kobj, const char * name)
 {
-	sysfs_hash_and_remove(kobj->sd, name);
+	struct sysfs_dirent *parent_sd = NULL;
+
+	if (!kobj)
+		parent_sd = &sysfs_root;
+	else
+		parent_sd = kobj->sd;
+
+	sysfs_hash_and_remove(parent_sd, name);
 }
 
 static int sysfs_get_target_path(struct sysfs_dirent *parent_sd,

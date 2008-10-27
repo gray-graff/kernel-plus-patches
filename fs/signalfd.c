@@ -205,13 +205,18 @@ static const struct file_operations signalfd_fops = {
 	.read		= signalfd_read,
 };
 
-asmlinkage long sys_signalfd(int ufd, sigset_t __user *user_mask, size_t sizemask)
+asmlinkage long sys_signalfd4(int ufd, sigset_t __user *user_mask,
+			      size_t sizemask, int flags)
 {
-	int error;
 	sigset_t sigmask;
 	struct signalfd_ctx *ctx;
-	struct file *file;
-	struct inode *inode;
+
+	/* Check the SFD_* constants for consistency.  */
+	BUILD_BUG_ON(SFD_CLOEXEC != O_CLOEXEC);
+	BUILD_BUG_ON(SFD_NONBLOCK != O_NONBLOCK);
+
+	if (flags & ~(SFD_CLOEXEC | SFD_NONBLOCK))
+		return -EINVAL;
 
 	if (sizemask != sizeof(sigset_t) ||
 	    copy_from_user(&sigmask, user_mask, sizeof(sigmask)))
@@ -230,12 +235,12 @@ asmlinkage long sys_signalfd(int ufd, sigset_t __user *user_mask, size_t sizemas
 		 * When we call this, the initialization must be complete, since
 		 * anon_inode_getfd() will install the fd.
 		 */
-		error = anon_inode_getfd(&ufd, &inode, &file, "[signalfd]",
-					 &signalfd_fops, ctx);
-		if (error)
-			goto err_fdalloc;
+		ufd = anon_inode_getfd("[signalfd]", &signalfd_fops, ctx,
+				       flags & (O_CLOEXEC | O_NONBLOCK));
+		if (ufd < 0)
+			kfree(ctx);
 	} else {
-		file = fget(ufd);
+		struct file *file = fget(ufd);
 		if (!file)
 			return -EBADF;
 		ctx = file->private_data;
@@ -252,9 +257,10 @@ asmlinkage long sys_signalfd(int ufd, sigset_t __user *user_mask, size_t sizemas
 	}
 
 	return ufd;
-
-err_fdalloc:
-	kfree(ctx);
-	return error;
 }
 
+asmlinkage long sys_signalfd(int ufd, sigset_t __user *user_mask,
+			     size_t sizemask)
+{
+	return sys_signalfd4(ufd, user_mask, sizemask, 0);
+}

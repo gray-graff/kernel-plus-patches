@@ -231,6 +231,7 @@
 #define  PCI_PM_CAP_PME_D2	0x2000	/* PME# from D2 */
 #define  PCI_PM_CAP_PME_D3	0x4000	/* PME# from D3 (hot) */
 #define  PCI_PM_CAP_PME_D3cold	0x8000	/* PME# from D3 (cold) */
+#define  PCI_PM_CAP_PME_SHIFT	11	/* Start of the PME Mask in PMC */
 #define PCI_PM_CTRL		4	/* PM control and status register */
 #define  PCI_PM_CTRL_STATE_MASK	0x0003	/* Current power state (D0 to D3) */
 #define  PCI_PM_CTRL_NO_SOFT_RESET	0x0004	/* No reset for D3hot->D0 */
@@ -373,6 +374,7 @@
 #define  PCI_EXP_DEVCAP_ATN_BUT	0x1000	/* Attention Button Present */
 #define  PCI_EXP_DEVCAP_ATN_IND	0x2000	/* Attention Indicator Present */
 #define  PCI_EXP_DEVCAP_PWR_IND	0x4000	/* Power Indicator Present */
+#define  PCI_EXP_DEVCAP_RBER	0x8000	/* Role-Based Error Reporting */
 #define  PCI_EXP_DEVCAP_PWR_VAL	0x3fc0000 /* Slot Power Limit Value */
 #define  PCI_EXP_DEVCAP_PWR_SCL	0xc000000 /* Slot Power Limit Scale */
 #define PCI_EXP_DEVCTL		8	/* Device Control */
@@ -395,9 +397,17 @@
 #define  PCI_EXP_DEVSTA_AUXPD	0x10	/* AUX Power Detected */
 #define  PCI_EXP_DEVSTA_TRPND	0x20	/* Transactions Pending */
 #define PCI_EXP_LNKCAP		12	/* Link Capabilities */
+#define  PCI_EXP_LNKCAP_ASPMS	0xc00	/* ASPM Support */
+#define  PCI_EXP_LNKCAP_L0SEL	0x7000	/* L0s Exit Latency */
+#define  PCI_EXP_LNKCAP_L1EL	0x38000	/* L1 Exit Latency */
+#define  PCI_EXP_LNKCAP_CLKPM	0x40000	/* L1 Clock Power Management */
 #define PCI_EXP_LNKCTL		16	/* Link Control */
+#define  PCI_EXP_LNKCTL_RL	0x20	/* Retrain Link */
+#define  PCI_EXP_LNKCTL_CCC	0x40	/* Common Clock COnfiguration */
 #define  PCI_EXP_LNKCTL_CLKREQ_EN 0x100	/* Enable clkreq */
 #define PCI_EXP_LNKSTA		18	/* Link Status */
+#define  PCI_EXP_LNKSTA_LT	0x800	/* Link Training */
+#define  PCI_EXP_LNKSTA_SLC	0x1000	/* Slot Clock Configuration */
 #define PCI_EXP_SLTCAP		20	/* Slot Capabilities */
 #define PCI_EXP_SLTCTL		24	/* Slot Control */
 #define PCI_EXP_SLTSTA		26	/* Slot Status */

@@ -68,6 +68,14 @@ enum {
 	MLX4_DEV_CAP_FLAG_UD_MCAST	= 1 << 21
 };
 
+enum {
+	MLX4_BMME_FLAG_LOCAL_INV	= 1 <<  6,
+	MLX4_BMME_FLAG_REMOTE_INV	= 1 <<  7,
+	MLX4_BMME_FLAG_TYPE_2_WIN	= 1 <<  9,
+	MLX4_BMME_FLAG_RESERVED_LKEY	= 1 << 10,
+	MLX4_BMME_FLAG_FAST_REG_WR	= 1 << 11,
+};
+
 enum mlx4_event {
 	MLX4_EVENT_TYPE_COMP		   = 0x00,
 	MLX4_EVENT_TYPE_PATH_MIG	   = 0x01,
@@ -133,6 +141,10 @@ enum {
 	MLX4_STAT_RATE_OFFSET	= 5
 };
 
+enum {
+	MLX4_MTT_FLAG_PRESENT		= 1
+};
+
 static inline u64 mlx4_fw_ver(u64 major, u64 minor, u64 subminor)
 {
 	return (major << 32) | (minor << 16) | subminor;
@@ -184,8 +196,11 @@ struct mlx4_caps {
 	u32			max_msg_sz;
 	u32			page_size_cap;
 	u32			flags;
+	u32			bmme_flags;
+	u32			reserved_lkey;
 	u16			stat_rate_support;
 	u8			port_width_cap[MLX4_MAX_PORTS + 1];
+	int			max_gso_sz;
 };
 
 struct mlx4_buf_list {
@@ -205,6 +220,38 @@ struct mlx4_mtt {
 	u32			first_seg;
 	int			order;
 	int			page_shift;
+};
+
+enum {
+	MLX4_DB_PER_PAGE = PAGE_SIZE / 4
+};
+
+struct mlx4_db_pgdir {
+	struct list_head	list;
+	DECLARE_BITMAP(order0, MLX4_DB_PER_PAGE);
+	DECLARE_BITMAP(order1, MLX4_DB_PER_PAGE / 2);
+	unsigned long	       *bits[2];
+	__be32		       *db_page;
+	dma_addr_t		db_dma;
+};
+
+struct mlx4_ib_user_db_page;
+
+struct mlx4_db {
+	__be32			*db;
+	union {
+		struct mlx4_db_pgdir		*pgdir;
+		struct mlx4_ib_user_db_page	*user_page;
+	}			u;
+	dma_addr_t		dma;
+	int			index;
+	int			order;
+};
+
+struct mlx4_hwq_resources {
+	struct mlx4_db		db;
+	struct mlx4_mtt		mtt;
+	struct mlx4_buf		buf;
 };
 
 struct mlx4_mr {
@@ -340,8 +387,17 @@ int mlx4_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
 int mlx4_buf_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
 		       struct mlx4_buf *buf);
 
+int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order);
+void mlx4_db_free(struct mlx4_dev *dev, struct mlx4_db *db);
+
+int mlx4_alloc_hwq_res(struct mlx4_dev *dev, struct mlx4_hwq_resources *wqres,
+		       int size, int max_direct);
+void mlx4_free_hwq_res(struct mlx4_dev *mdev, struct mlx4_hwq_resources *wqres,
+		       int size);
+
 int mlx4_cq_alloc(struct mlx4_dev *dev, int nent, struct mlx4_mtt *mtt,
-		  struct mlx4_uar *uar, u64 db_rec, struct mlx4_cq *cq);
+		  struct mlx4_uar *uar, u64 db_rec, struct mlx4_cq *cq,
+		  int collapsed);
 void mlx4_cq_free(struct mlx4_dev *dev, struct mlx4_cq *cq);
 
 int mlx4_qp_alloc(struct mlx4_dev *dev, int sqpn, struct mlx4_qp *qp);
@@ -356,7 +412,8 @@ int mlx4_srq_query(struct mlx4_dev *dev, struct mlx4_srq *srq, int *limit_waterm
 int mlx4_INIT_PORT(struct mlx4_dev *dev, int port);
 int mlx4_CLOSE_PORT(struct mlx4_dev *dev, int port);
 
-int mlx4_multicast_attach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16]);
+int mlx4_multicast_attach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16],
+			  int block_mcast_loopback);
 int mlx4_multicast_detach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16]);
 
 int mlx4_map_phys_fmr(struct mlx4_dev *dev, struct mlx4_fmr *fmr, u64 *page_list,

@@ -16,26 +16,22 @@
 #include <linux/kobject.h>
 #include <linux/klist.h>
 #include <linux/list.h>
+#include <linux/lockdep.h>
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/pm.h>
-#include <asm/semaphore.h>
+#include <linux/semaphore.h>
 #include <asm/atomic.h>
 #include <asm/device.h>
 
-#define DEVICE_NAME_SIZE	50
-/* DEVICE_NAME_HALF is really less than half to accommodate slop */
-#define DEVICE_NAME_HALF	__stringify(20)
-#define DEVICE_ID_SIZE		32
-#define BUS_ID_SIZE		KOBJ_NAME_LEN
-
+#define BUS_ID_SIZE		20
 
 struct device;
 struct device_driver;
 struct driver_private;
 struct class;
-struct class_device;
+struct class_private;
 struct bus_type;
 struct bus_type_private;
 
@@ -68,6 +64,8 @@ struct bus_type {
 	int (*suspend_late)(struct device *dev, pm_message_t state);
 	int (*resume_early)(struct device *dev);
 	int (*resume)(struct device *dev);
+
+	struct pm_ext_ops *pm;
 
 	struct bus_type_private *p;
 };
@@ -132,6 +130,8 @@ struct device_driver {
 	int (*resume) (struct device *dev);
 	struct attribute_group **groups;
 
+	struct pm_ops *pm;
+
 	struct driver_private *p;
 };
 
@@ -183,36 +183,42 @@ struct class {
 	const char		*name;
 	struct module		*owner;
 
-	struct kset		subsys;
-	struct list_head	children;
-	struct list_head	devices;
-	struct list_head	interfaces;
-	struct kset		class_dirs;
-	struct semaphore	sem; /* locks children, devices, interfaces */
 	struct class_attribute		*class_attrs;
-	struct class_device_attribute	*class_dev_attrs;
 	struct device_attribute		*dev_attrs;
+	struct kobject			*dev_kobj;
 
-	int (*uevent)(struct class_device *dev, struct kobj_uevent_env *env);
 	int (*dev_uevent)(struct device *dev, struct kobj_uevent_env *env);
 
-	void (*release)(struct class_device *dev);
 	void (*class_release)(struct class *class);
 	void (*dev_release)(struct device *dev);
 
 	int (*suspend)(struct device *dev, pm_message_t state);
 	int (*resume)(struct device *dev);
+
+	struct pm_ops *pm;
+	struct class_private *p;
 };
 
-extern int __must_check class_register(struct class *class);
+extern struct kobject *sysfs_dev_block_kobj;
+extern struct kobject *sysfs_dev_char_kobj;
+extern int __must_check __class_register(struct class *class,
+					 struct lock_class_key *key);
 extern void class_unregister(struct class *class);
-extern int class_for_each_device(struct class *class, void *data,
-				 int (*fn)(struct device *dev, void *data));
-extern struct device *class_find_device(struct class *class, void *data,
-					int (*match)(struct device *, void *));
-extern struct class_device *class_find_child(struct class *class, void *data,
-				   int (*match)(struct class_device *, void *));
 
+/* This is a #define to keep the compiler from merging different
+ * instances of the __key variable */
+#define class_register(class)			\
+({						\
+	static struct lock_class_key __key;	\
+	__class_register(class, &__key);	\
+})
+
+extern int class_for_each_device(struct class *class, struct device *start,
+				 void *data,
+				 int (*fn)(struct device *dev, void *data));
+extern struct device *class_find_device(struct class *class,
+					struct device *start, void *data,
+					int (*match)(struct device *, void *));
 
 struct class_attribute {
 	struct attribute attr;
@@ -228,92 +234,10 @@ extern int __must_check class_create_file(struct class *class,
 extern void class_remove_file(struct class *class,
 			      const struct class_attribute *attr);
 
-struct class_device_attribute {
-	struct attribute attr;
-	ssize_t (*show)(struct class_device *, char *buf);
-	ssize_t (*store)(struct class_device *, const char *buf, size_t count);
-};
-
-#define CLASS_DEVICE_ATTR(_name, _mode, _show, _store)		\
-struct class_device_attribute class_device_attr_##_name = 	\
-	__ATTR(_name, _mode, _show, _store)
-
-extern int __must_check class_device_create_file(struct class_device *,
-				    const struct class_device_attribute *);
-
-/**
- * struct class_device - class devices
- * @class: pointer to the parent class for this class device.  This is required.
- * @devt: for internal use by the driver core only.
- * @node: for internal use by the driver core only.
- * @kobj: for internal use by the driver core only.
- * @groups: optional additional groups to be created
- * @dev: if set, a symlink to the struct device is created in the sysfs
- * directory for this struct class device.
- * @class_data: pointer to whatever you want to store here for this struct
- * class_device.  Use class_get_devdata() and class_set_devdata() to get and
- * set this pointer.
- * @parent: pointer to a struct class_device that is the parent of this struct
- * class_device.  If NULL, this class_device will show up at the root of the
- * struct class in sysfs (which is probably what you want to have happen.)
- * @release: pointer to a release function for this struct class_device.  If
- * set, this will be called instead of the class specific release function.
- * Only use this if you want to override the default release function, like
- * when you are nesting class_device structures.
- * @uevent: pointer to a uevent function for this struct class_device.  If
- * set, this will be called instead of the class specific uevent function.
- * Only use this if you want to override the default uevent function, like
- * when you are nesting class_device structures.
- */
-struct class_device {
-	struct list_head	node;
-
-	struct kobject		kobj;
-	struct class		*class;
-	dev_t			devt;
-	struct device		*dev;
-	void			*class_data;
-	struct class_device	*parent;
-	struct attribute_group  **groups;
-
-	void (*release)(struct class_device *dev);
-	int (*uevent)(struct class_device *dev, struct kobj_uevent_env *env);
-	char class_id[BUS_ID_SIZE];
-};
-
-static inline void *class_get_devdata(struct class_device *dev)
-{
-	return dev->class_data;
-}
-
-static inline void class_set_devdata(struct class_device *dev, void *data)
-{
-	dev->class_data = data;
-}
-
-
-extern int __must_check class_device_register(struct class_device *);
-extern void class_device_unregister(struct class_device *);
-extern void class_device_initialize(struct class_device *);
-extern int __must_check class_device_add(struct class_device *);
-extern void class_device_del(struct class_device *);
-
-extern struct class_device *class_device_get(struct class_device *);
-extern void class_device_put(struct class_device *);
-
-extern void class_device_remove_file(struct class_device *,
-				     const struct class_device_attribute *);
-extern int __must_check class_device_create_bin_file(struct class_device *,
-					struct bin_attribute *);
-extern void class_device_remove_bin_file(struct class_device *,
-					 struct bin_attribute *);
-
 struct class_interface {
 	struct list_head	node;
 	struct class		*class;
 
-	int (*add)	(struct class_device *, struct class_interface *);
-	void (*remove)	(struct class_device *, struct class_interface *);
 	int (*add_dev)		(struct device *, struct class_interface *);
 	void (*remove_dev)	(struct device *, struct class_interface *);
 };
@@ -321,15 +245,18 @@ struct class_interface {
 extern int __must_check class_interface_register(struct class_interface *);
 extern void class_interface_unregister(struct class_interface *);
 
-extern struct class *class_create(struct module *owner, const char *name);
+extern struct class * __must_check __class_create(struct module *owner,
+						  const char *name,
+						  struct lock_class_key *key);
 extern void class_destroy(struct class *cls);
-extern struct class_device *class_device_create(struct class *cls,
-						struct class_device *parent,
-						dev_t devt,
-						struct device *device,
-						const char *fmt, ...)
-					__attribute__((format(printf, 5, 6)));
-extern void class_device_destroy(struct class *cls, dev_t devt);
+
+/* This is a #define to keep the compiler from merging different
+ * instances of the __key variable */
+#define class_create(owner, name)		\
+({						\
+	static struct lock_class_key __key;	\
+	__class_create(owner, name, &__key);	\
+})
 
 /*
  * The type of device, "struct device" is embedded in. A class
@@ -345,8 +272,11 @@ struct device_type {
 	struct attribute_group **groups;
 	int (*uevent)(struct device *dev, struct kobj_uevent_env *env);
 	void (*release)(struct device *dev);
+
 	int (*suspend)(struct device *dev, pm_message_t state);
 	int (*resume)(struct device *dev);
+
+	struct pm_ops *pm;
 };
 
 /* interface for exporting device attributes */
@@ -428,8 +358,8 @@ struct device {
 
 	struct kobject kobj;
 	char	bus_id[BUS_ID_SIZE];	/* position on parent bus */
+	const char		*init_name; /* initial name of the device */
 	struct device_type	*type;
-	unsigned		is_registered:1;
 	unsigned		uevent_suppress:1;
 
 	struct semaphore	sem;	/* semaphore to synchronize calls to
@@ -466,7 +396,6 @@ struct device {
 	spinlock_t		devres_lock;
 	struct list_head	devres_head;
 
-	/* class_device migration path */
 	struct list_head	node;
 	struct class		*class;
 	dev_t			devt;	/* dev_t, creates the sysfs "dev" */
@@ -474,6 +403,18 @@ struct device {
 
 	void	(*release)(struct device *dev);
 };
+
+/* Get the wakeup routines, which depend on struct device */
+#include <linux/pm_wakeup.h>
+
+static inline const char *dev_name(const struct device *dev)
+{
+	/* will be changed into kobject_name(&dev->kobj) in the near future */
+	return dev->bus_id;
+}
+
+extern int dev_set_name(struct device *dev, const char *name, ...)
+			__attribute__((format(printf, 2, 3)));
 
 #ifdef CONFIG_NUMA
 static inline int dev_to_node(struct device *dev)
@@ -506,7 +447,7 @@ static inline void dev_set_drvdata(struct device *dev, void *data)
 
 static inline int device_is_registered(struct device *dev)
 {
-	return dev->is_registered;
+	return dev->kobj.state_in_sysfs;
 }
 
 void driver_init(void);
@@ -539,24 +480,18 @@ extern int __must_check device_reprobe(struct device *dev);
 /*
  * Easy functions for dynamically creating devices on the fly
  */
+extern struct device *device_create_vargs(struct class *cls,
+					  struct device *parent,
+					  dev_t devt,
+					  void *drvdata,
+					  const char *fmt,
+					  va_list vargs);
 extern struct device *device_create(struct class *cls, struct device *parent,
-				    dev_t devt, const char *fmt, ...)
-				    __attribute__((format(printf, 4, 5)));
+				    dev_t devt, void *drvdata,
+				    const char *fmt, ...)
+				    __attribute__((format(printf, 5, 6)));
+#define device_create_drvdata	device_create
 extern void device_destroy(struct class *cls, dev_t devt);
-#ifdef CONFIG_PM_SLEEP
-extern void destroy_suspended_device(struct class *cls, dev_t devt);
-extern void device_pm_schedule_removal(struct device *);
-#else /* !CONFIG_PM_SLEEP */
-static inline void destroy_suspended_device(struct class *cls, dev_t devt)
-{
-	device_destroy(cls, devt);
-}
-
-static inline void device_pm_schedule_removal(struct device *dev)
-{
-	device_unregister(dev);
-}
-#endif /* !CONFIG_PM_SLEEP */
 
 /*
  * Platform "fixup" functions - allow the platform to have their say
@@ -584,10 +519,10 @@ extern void device_shutdown(void);
 extern void sysdev_shutdown(void);
 
 /* debugging and troubleshooting/diagnostic helpers. */
-extern const char *dev_driver_string(struct device *dev);
+extern const char *dev_driver_string(const struct device *dev);
 #define dev_printk(level, dev, format, arg...)	\
 	printk(level "%s %s: " format , dev_driver_string(dev) , \
-	       (dev)->bus_id , ## arg)
+	       dev_name(dev) , ## arg)
 
 #define dev_emerg(dev, format, arg...)		\
 	dev_printk(KERN_EMERG , dev , format , ## arg)
@@ -608,21 +543,16 @@ extern const char *dev_driver_string(struct device *dev);
 #define dev_dbg(dev, format, arg...)		\
 	dev_printk(KERN_DEBUG , dev , format , ## arg)
 #else
-static inline int __attribute__ ((format (printf, 2, 3)))
-dev_dbg(struct device *dev, const char *fmt, ...)
-{
-	return 0;
-}
+#define dev_dbg(dev, format, arg...)		\
+	({ if (0) dev_printk(KERN_DEBUG, dev, format, ##arg); 0; })
 #endif
 
 #ifdef VERBOSE_DEBUG
 #define dev_vdbg	dev_dbg
 #else
-static inline int __attribute__ ((format (printf, 2, 3)))
-dev_vdbg(struct device *dev, const char *fmt, ...)
-{
-	return 0;
-}
+
+#define dev_vdbg(dev, format, arg...)		\
+	({ if (0) dev_printk(KERN_DEBUG, dev, format, ##arg); 0; })
 #endif
 
 /* Create alias, so I can be autoloaded. */

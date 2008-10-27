@@ -6,6 +6,8 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/acpi.h>
+#include <linux/signal.h>
+#include <linux/kthread.h>
 
 #include <acpi/acpi_drivers.h>
 #include <acpi/acinterp.h>	/* for acpi_ex_eisa_id_to_string() */
@@ -92,17 +94,37 @@ acpi_device_modalias_show(struct device *dev, struct device_attribute *attr, cha
 }
 static DEVICE_ATTR(modalias, 0444, acpi_device_modalias_show, NULL);
 
-static int acpi_eject_operation(acpi_handle handle, int lockable)
+static int acpi_bus_hot_remove_device(void *context)
 {
+	struct acpi_device *device;
+	acpi_handle handle = context;
 	struct acpi_object_list arg_list;
 	union acpi_object arg;
 	acpi_status status = AE_OK;
 
-	/*
-	 * TBD: evaluate _PS3?
-	 */
+	if (acpi_bus_get_device(handle, &device))
+		return 0;
 
-	if (lockable) {
+	if (!device)
+		return 0;
+
+	ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+		"Hot-removing device %s...\n", device->dev.bus_id));
+
+
+	if (acpi_bus_trim(device, 1)) {
+		ACPI_DEBUG_PRINT((ACPI_DB_ERROR,
+				"Removing device failed\n"));
+		return -1;
+	}
+
+	/* power off device */
+	status = acpi_evaluate_object(handle, "_PS3", NULL, NULL);
+	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND)
+		ACPI_DEBUG_PRINT((ACPI_DB_WARN,
+				"Power-off device failed\n"));
+
+	if (device->flags.lockable) {
 		arg_list.count = 1;
 		arg_list.pointer = &arg;
 		arg.type = ACPI_TYPE_INTEGER;
@@ -118,26 +140,22 @@ static int acpi_eject_operation(acpi_handle handle, int lockable)
 	/*
 	 * TBD: _EJD support.
 	 */
-
 	status = acpi_evaluate_object(handle, "_EJ0", &arg_list, NULL);
-	if (ACPI_FAILURE(status)) {
-		return (-ENODEV);
-	}
+	if (ACPI_FAILURE(status))
+		return -ENODEV;
 
-	return (0);
+	return 0;
 }
 
 static ssize_t
 acpi_eject_store(struct device *d, struct device_attribute *attr,
 		const char *buf, size_t count)
 {
-	int result;
 	int ret = count;
-	int islockable;
 	acpi_status status;
-	acpi_handle handle;
 	acpi_object_type type = 0;
 	struct acpi_device *acpi_device = to_acpi_device(d);
+	struct task_struct *task;
 
 	if ((!count) || (buf[0] != '1')) {
 		return -EINVAL;
@@ -154,18 +172,12 @@ acpi_eject_store(struct device *d, struct device_attribute *attr,
 		goto err;
 	}
 
-	islockable = acpi_device->flags.lockable;
-	handle = acpi_device->handle;
-
-	result = acpi_bus_trim(acpi_device, 1);
-
-	if (!result)
-		result = acpi_eject_operation(handle, islockable);
-
-	if (result) {
-		ret = -EBUSY;
-	}
-      err:
+	/* remove the device in another thread to fix the deadlock issue */
+	task = kthread_run(acpi_bus_hot_remove_device,
+				acpi_device->handle, "acpi_hot_remove_device");
+	if (IS_ERR(task))
+		ret = PTR_ERR(task);
+err:
 	return ret;
 }
 
@@ -459,7 +471,7 @@ static int acpi_device_register(struct acpi_device *device,
 	device->dev.release = &acpi_device_release;
 	result = device_add(&device->dev);
 	if(result) {
-		printk(KERN_ERR PREFIX "Error adding device %s", device->dev.bus_id);
+		dev_err(&device->dev, "Error adding device\n");
 		goto end;
 	}
 
@@ -677,9 +689,8 @@ acpi_bus_extract_wakeup_device_power_package(struct acpi_device *device,
 	device->wakeup.resources.count = package->package.count - 2;
 	for (i = 0; i < device->wakeup.resources.count; i++) {
 		element = &(package->package.elements[i + 2]);
-		if (element->type != ACPI_TYPE_ANY) {
+		if (element->type != ACPI_TYPE_LOCAL_REFERENCE)
 			return AE_BAD_DATA;
-		}
 
 		device->wakeup.resources.handles[i] = element->reference.handle;
 	}
@@ -692,6 +703,7 @@ static int acpi_bus_get_wakeup_device_flags(struct acpi_device *device)
 	acpi_status status = 0;
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *package = NULL;
+	int psw_error;
 
 	struct acpi_device_id button_device_ids[] = {
 		{"PNP0C0D", 0},
@@ -699,7 +711,6 @@ static int acpi_bus_get_wakeup_device_flags(struct acpi_device *device)
 		{"PNP0C0E", 0},
 		{"", 0},
 	};
-
 
 	/* _PRW */
 	status = acpi_evaluate_object(device->handle, "_PRW", NULL, &buffer);
@@ -718,6 +729,17 @@ static int acpi_bus_get_wakeup_device_flags(struct acpi_device *device)
 	kfree(buffer.pointer);
 
 	device->wakeup.flags.valid = 1;
+	/* Call _PSW/_DSW object to disable its ability to wake the sleeping
+	 * system for the ACPI device with the _PRW object.
+	 * The _PSW object is depreciated in ACPI 3.0 and is replaced by _DSW.
+	 * So it is necessary to call _DSW object first. Only when it is not
+	 * present will the _PSW object used.
+	 */
+	psw_error = acpi_device_sleep_wake(device, 0, 0, 0);
+	if (psw_error)
+		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+				"error in _DSW or _PSW evaluation\n"));
+
 	/* Power button, Lid switch always enable wakeup */
 	if (!acpi_match_device_ids(device, button_device_ids))
 		device->wakeup.flags.run_wake = 1;
@@ -882,10 +904,7 @@ static void acpi_device_get_busid(struct acpi_device *device,
 static int
 acpi_video_bus_match(struct acpi_device *device)
 {
-	acpi_handle h_dummy1;
-	acpi_handle h_dummy2;
-	acpi_handle h_dummy3;
-
+	acpi_handle h_dummy;
 
 	if (!device)
 		return -EINVAL;
@@ -895,18 +914,18 @@ acpi_video_bus_match(struct acpi_device *device)
 	 */
 
 	/* Does this device able to support video switching ? */
-	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_DOD", &h_dummy1)) &&
-	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_DOS", &h_dummy2)))
+	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_DOD", &h_dummy)) &&
+	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_DOS", &h_dummy)))
 		return 0;
 
 	/* Does this device able to retrieve a video ROM ? */
-	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_ROM", &h_dummy1)))
+	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_ROM", &h_dummy)))
 		return 0;
 
 	/* Does this device able to configure which video head to be POSTed ? */
-	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_VPO", &h_dummy1)) &&
-	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_GPD", &h_dummy2)) &&
-	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_SPD", &h_dummy3)))
+	if (ACPI_SUCCESS(acpi_get_handle(device->handle, "_VPO", &h_dummy)) &&
+	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_GPD", &h_dummy)) &&
+	    ACPI_SUCCESS(acpi_get_handle(device->handle, "_SPD", &h_dummy)))
 		return 0;
 
 	return -ENODEV;

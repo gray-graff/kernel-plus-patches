@@ -38,7 +38,6 @@
 #if defined(CONFIG_USB_ISP1362_HCD) || defined(CONFIG_USB_ISP1362_HCD_MODULE)
 #include <linux/usb/isp1362.h>
 #endif
-#include <linux/ata_platform.h>
 #include <linux/irq.h>
 
 #include <asm/dma.h>
@@ -65,10 +64,15 @@ static struct platform_device rtc_device = {
 static struct resource dm9000_resources[] = {
 	[0] = {
 		.start	= 0x20300000,
-		.end	= 0x20300000 + 8,
+		.end	= 0x20300000 + 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
+		.start	= 0x20300000 + 4,
+		.end	= 0x20300000 + 5,
+		.flags	= IORESOURCE_MEM,
+	},
+	[2] = {
 		.start	= IRQ_PF10,
 		.end	= IRQ_PF10,
 		.flags	= (IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE),
@@ -136,16 +140,16 @@ static struct platform_device net2272_bfin_device = {
 #if defined(CONFIG_MTD_M25P80) || defined(CONFIG_MTD_M25P80_MODULE)
 static struct mtd_partition bfin_spi_flash_partitions[] = {
 	{
-		.name = "bootloader",
+		.name = "bootloader(spi)",
 		.size = 0x00060000,
 		.offset = 0,
 		.mask_flags = MTD_CAP_ROM
 	}, {
-		.name = "kernel",
+		.name = "linux kernel(spi)",
 		.size = 0x100000,
 		.offset = 0x60000
 	}, {
-		.name = "file system",
+		.name = "file system(spi)",
 		.size = 0x6a0000,
 		.offset = 0x00160000,
 	}
@@ -304,6 +308,25 @@ static struct platform_device bfin_uart_device = {
 };
 #endif
 
+#if defined(CONFIG_BFIN_SIR) || defined(CONFIG_BFIN_SIR_MODULE)
+static struct resource bfin_sir_resources[] = {
+#ifdef CONFIG_BFIN_SIR0
+	{
+		.start = 0xFFC00400,
+		.end = 0xFFC004FF,
+		.flags = IORESOURCE_MEM,
+	},
+#endif
+};
+
+static struct platform_device bfin_sir_device = {
+	.name = "bfin_sir",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(bfin_sir_resources),
+	.resource = bfin_sir_resources,
+};
+#endif
+
 #if defined(CONFIG_SERIAL_8250) || defined(CONFIG_SERIAL_8250_MODULE)
 
 #include <linux/serial_8250.h>
@@ -403,6 +426,10 @@ static struct platform_device *h8606_devices[] __initdata = {
 	&serial8250_device,
 #endif
 
+#if defined(CONFIG_BFIN_SIR) || defined(CONFIG_BFIN_SIR_MODULE)
+	&bfin_sir_device,
+#endif
+
 #if defined(CONFIG_KEYBOARD_OPENCORES) || defined(CONFIG_KEYBOARD_OPENCORES_MODULE)
 	&opencores_kbd_device,
 #endif
@@ -411,7 +438,7 @@ static struct platform_device *h8606_devices[] __initdata = {
 static int __init H8606_init(void)
 {
 	printk(KERN_INFO "HV Sistemas H8606 board support by http://www.hvsistemas.com\n");
-	printk(KERN_INFO "%s(): registering device resources\n", __FUNCTION__);
+	printk(KERN_INFO "%s(): registering device resources\n", __func__);
 	platform_add_devices(h8606_devices, ARRAY_SIZE(h8606_devices));
 #if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
 	spi_register_board_info(bfin_spi_board_info, ARRAY_SIZE(bfin_spi_board_info));

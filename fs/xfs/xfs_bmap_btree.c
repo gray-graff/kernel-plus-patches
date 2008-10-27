@@ -275,21 +275,21 @@ xfs_bmbt_trace_cursor(
 }
 
 #define	XFS_BMBT_TRACE_ARGBI(c,b,i)	\
-	xfs_bmbt_trace_argbi(__FUNCTION__, c, b, i, __LINE__)
+	xfs_bmbt_trace_argbi(__func__, c, b, i, __LINE__)
 #define	XFS_BMBT_TRACE_ARGBII(c,b,i,j)	\
-	xfs_bmbt_trace_argbii(__FUNCTION__, c, b, i, j, __LINE__)
+	xfs_bmbt_trace_argbii(__func__, c, b, i, j, __LINE__)
 #define	XFS_BMBT_TRACE_ARGFFFI(c,o,b,i,j)	\
-	xfs_bmbt_trace_argfffi(__FUNCTION__, c, o, b, i, j, __LINE__)
+	xfs_bmbt_trace_argfffi(__func__, c, o, b, i, j, __LINE__)
 #define	XFS_BMBT_TRACE_ARGI(c,i)	\
-	xfs_bmbt_trace_argi(__FUNCTION__, c, i, __LINE__)
+	xfs_bmbt_trace_argi(__func__, c, i, __LINE__)
 #define	XFS_BMBT_TRACE_ARGIFK(c,i,f,s)	\
-	xfs_bmbt_trace_argifk(__FUNCTION__, c, i, f, s, __LINE__)
+	xfs_bmbt_trace_argifk(__func__, c, i, f, s, __LINE__)
 #define	XFS_BMBT_TRACE_ARGIFR(c,i,f,r)	\
-	xfs_bmbt_trace_argifr(__FUNCTION__, c, i, f, r, __LINE__)
+	xfs_bmbt_trace_argifr(__func__, c, i, f, r, __LINE__)
 #define	XFS_BMBT_TRACE_ARGIK(c,i,k)	\
-	xfs_bmbt_trace_argik(__FUNCTION__, c, i, k, __LINE__)
+	xfs_bmbt_trace_argik(__func__, c, i, k, __LINE__)
 #define	XFS_BMBT_TRACE_CURSOR(c,s)	\
-	xfs_bmbt_trace_cursor(__FUNCTION__, c, s, __LINE__)
+	xfs_bmbt_trace_cursor(__func__, c, s, __LINE__)
 #else
 #define	XFS_BMBT_TRACE_ARGBI(c,b,i)
 #define	XFS_BMBT_TRACE_ARGBII(c,b,i,j)
@@ -1493,12 +1493,27 @@ xfs_bmbt_split(
 	left = XFS_BUF_TO_BMBT_BLOCK(lbp);
 	args.fsbno = cur->bc_private.b.firstblock;
 	args.firstblock = args.fsbno;
+	args.minleft = 0;
 	if (args.fsbno == NULLFSBLOCK) {
 		args.fsbno = lbno;
 		args.type = XFS_ALLOCTYPE_START_BNO;
-	} else
+		/*
+		 * Make sure there is sufficient room left in the AG to
+		 * complete a full tree split for an extent insert.  If
+		 * we are converting the middle part of an extent then
+		 * we may need space for two tree splits.
+		 *
+		 * We are relying on the caller to make the correct block
+		 * reservation for this operation to succeed.  If the
+		 * reservation amount is insufficient then we may fail a
+		 * block allocation here and corrupt the filesystem.
+		 */
+		args.minleft = xfs_trans_get_block_res(args.tp);
+	} else if (cur->bc_private.b.flist->xbf_low)
+		args.type = XFS_ALLOCTYPE_START_BNO;
+	else
 		args.type = XFS_ALLOCTYPE_NEAR_BNO;
-	args.mod = args.minleft = args.alignment = args.total = args.isfl =
+	args.mod = args.alignment = args.total = args.isfl =
 		args.userdata = args.minalignslop = 0;
 	args.minlen = args.maxlen = args.prod = 1;
 	args.wasdel = cur->bc_private.b.flags & XFS_BTCUR_BPRV_WASDEL;
@@ -1509,6 +1524,21 @@ xfs_bmbt_split(
 	if ((error = xfs_alloc_vextent(&args))) {
 		XFS_BMBT_TRACE_CURSOR(cur, ERROR);
 		return error;
+	}
+	if (args.fsbno == NULLFSBLOCK && args.minleft) {
+		/*
+		 * Could not find an AG with enough free space to satisfy
+		 * a full btree split.  Try again without minleft and if
+		 * successful activate the lowspace algorithm.
+		 */
+		args.fsbno = 0;
+		args.type = XFS_ALLOCTYPE_FIRST_AG;
+		args.minleft = 0;
+		if ((error = xfs_alloc_vextent(&args))) {
+			XFS_BMBT_TRACE_CURSOR(cur, ERROR);
+			return error;
+		}
+		cur->bc_private.b.flist->xbf_low = 1;
 	}
 	if (args.fsbno == NULLFSBLOCK) {
 		XFS_BMBT_TRACE_CURSOR(cur, EXIT);
@@ -2027,6 +2057,10 @@ xfs_bmbt_increment(
 
 /*
  * Insert the current record at the point referenced by cur.
+ *
+ * A multi-level split of the tree on insert will invalidate the original
+ * cursor.  All callers of this function should assume that the cursor is
+ * no longer valid and revalidate it.
  */
 int					/* error */
 xfs_bmbt_insert(
@@ -2220,7 +2254,9 @@ xfs_bmbt_newroot(
 #endif
 		args.fsbno = be64_to_cpu(*pp);
 		args.type = XFS_ALLOCTYPE_START_BNO;
-	} else
+	} else if (cur->bc_private.b.flist->xbf_low)
+		args.type = XFS_ALLOCTYPE_START_BNO;
+	else
 		args.type = XFS_ALLOCTYPE_NEAR_BNO;
 	if ((error = xfs_alloc_vextent(&args))) {
 		XFS_BMBT_TRACE_CURSOR(cur, ERROR);

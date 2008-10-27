@@ -36,6 +36,7 @@
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
 #include <linux/tick.h>
+#include <linux/prctl.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -54,15 +55,6 @@
 asmlinkage extern void ret_from_fork(void);
 
 unsigned long kernel_thread_flags = CLONE_VM | CLONE_UNTRACED;
-
-unsigned long boot_option_idle_override = 0;
-EXPORT_SYMBOL(boot_option_idle_override);
-
-/*
- * Powermanagement idle function, if any..
- */
-void (*pm_idle)(void);
-EXPORT_SYMBOL(pm_idle);
 
 static ATOMIC_NOTIFIER_HEAD(idle_notifier);
 
@@ -93,46 +85,6 @@ void exit_idle(void)
 	__exit_idle();
 }
 
-/*
- * We use this if we don't have any better
- * idle routine..
- */
-void default_idle(void)
-{
-	current_thread_info()->status &= ~TS_POLLING;
-	/*
-	 * TS_POLLING-cleared state must be visible before we
-	 * test NEED_RESCHED:
-	 */
-	smp_mb();
-	local_irq_disable();
-	if (!need_resched()) {
-		ktime_t t0, t1;
-		u64 t0n, t1n;
-
-		t0 = ktime_get();
-		t0n = ktime_to_ns(t0);
-		safe_halt();	/* enables interrupts racelessly */
-		local_irq_disable();
-		t1 = ktime_get();
-		t1n = ktime_to_ns(t1);
-		sched_clock_idle_wakeup_event(t1n - t0n);
-	}
-	local_irq_enable();
-	current_thread_info()->status |= TS_POLLING;
-}
-
-/*
- * On SMP it's slightly faster (but much more power-consuming!)
- * to poll the ->need_resched flag instead of waiting for the
- * cross-CPU IPI to arrive. Use this option with caution.
- */
-static void poll_idle(void)
-{
-	local_irq_enable();
-	cpu_relax();
-}
-
 #ifdef CONFIG_HOTPLUG_CPU
 DECLARE_PER_CPU(int, cpu_state);
 
@@ -141,14 +93,15 @@ DECLARE_PER_CPU(int, cpu_state);
 static inline void play_dead(void)
 {
 	idle_task_exit();
-	wbinvd();
+	c1e_remove_cpu(raw_smp_processor_id());
+
 	mb();
 	/* Ack it */
 	__get_cpu_var(cpu_state) = CPU_DEAD;
 
 	local_irq_disable();
-	while (1)
-		halt();
+	/* mask all interrupts, flush any and all caches, and halt */
+	wbinvd_halt();
 }
 #else
 static inline void play_dead(void)
@@ -168,14 +121,11 @@ void cpu_idle(void)
 	current_thread_info()->status |= TS_POLLING;
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_stop_sched_tick();
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched()) {
-			void (*idle)(void);
 
 			rmb();
-			idle = pm_idle;
-			if (!idle)
-				idle = default_idle;
+
 			if (cpu_is_offline(smp_processor_id()))
 				play_dead();
 			/*
@@ -185,7 +135,10 @@ void cpu_idle(void)
 			 */
 			local_irq_disable();
 			enter_idle();
-			idle();
+			/* Don't trace irqs off for idle */
+			stop_critical_timings();
+			pm_idle();
+			start_critical_timings();
 			/* In many cases the interrupt that ended idle
 			   has already called exit_idle. But some idle
 			   loops can be woken up without interrupt. */
@@ -198,110 +151,6 @@ void cpu_idle(void)
 		preempt_disable();
 	}
 }
-
-static void do_nothing(void *unused)
-{
-}
-
-/*
- * cpu_idle_wait - Used to ensure that all the CPUs discard old value of
- * pm_idle and update to new pm_idle value. Required while changing pm_idle
- * handler on SMP systems.
- *
- * Caller must have changed pm_idle to the new value before the call. Old
- * pm_idle value will not be used by any CPU after the return of this function.
- */
-void cpu_idle_wait(void)
-{
-	smp_mb();
-	/* kick all the CPUs so that they exit out of pm_idle */
-	smp_call_function(do_nothing, NULL, 0, 1);
-}
-EXPORT_SYMBOL_GPL(cpu_idle_wait);
-
-/*
- * This uses new MONITOR/MWAIT instructions on P4 processors with PNI,
- * which can obviate IPI to trigger checking of need_resched.
- * We execute MONITOR against need_resched and enter optimized wait state
- * through MWAIT. Whenever someone changes need_resched, we would be woken
- * up from MWAIT (without an IPI).
- *
- * New with Core Duo processors, MWAIT can take some hints based on CPU
- * capability.
- */
-void mwait_idle_with_hints(unsigned long ax, unsigned long cx)
-{
-	if (!need_resched()) {
-		__monitor((void *)&current_thread_info()->flags, 0, 0);
-		smp_mb();
-		if (!need_resched())
-			__mwait(ax, cx);
-	}
-}
-
-/* Default MONITOR/MWAIT with no hints, used for default C1 state */
-static void mwait_idle(void)
-{
-	if (!need_resched()) {
-		__monitor((void *)&current_thread_info()->flags, 0, 0);
-		smp_mb();
-		if (!need_resched())
-			__sti_mwait(0, 0);
-		else
-			local_irq_enable();
-	} else {
-		local_irq_enable();
-	}
-}
-
-
-static int __cpuinit mwait_usable(const struct cpuinfo_x86 *c)
-{
-	if (force_mwait)
-		return 1;
-	/* Any C1 states supported? */
-	return c->cpuid_level >= 5 && ((cpuid_edx(5) >> 4) & 0xf) > 0;
-}
-
-void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
-{
-	static int selected;
-
-	if (selected)
-		return;
-#ifdef CONFIG_X86_SMP
-	if (pm_idle == poll_idle && smp_num_siblings > 1) {
-		printk(KERN_WARNING "WARNING: polling idle and HT enabled,"
-			" performance may degrade.\n");
-	}
-#endif
-	if (cpu_has(c, X86_FEATURE_MWAIT) && mwait_usable(c)) {
-		/*
-		 * Skip, if setup has overridden idle.
-		 * One CPU supports mwait => All CPUs supports mwait
-		 */
-		if (!pm_idle) {
-			printk(KERN_INFO "using mwait in idle threads.\n");
-			pm_idle = mwait_idle;
-		}
-	}
-	selected = 1;
-}
-
-static int __init idle_setup(char *str)
-{
-	if (!strcmp(str, "poll")) {
-		printk("using polling idle threads.\n");
-		pm_idle = poll_idle;
-	} else if (!strcmp(str, "mwait"))
-		force_mwait = 1;
-	else
-		return -1;
-
-	boot_option_idle_override = 1;
-	return 0;
-}
-early_param("idle", idle_setup);
 
 /* Prints also some state that isn't saved in the pt_regs */
 void __show_regs(struct pt_regs * regs)
@@ -418,6 +267,7 @@ void flush_thread(void)
 	/*
 	 * Forget coprocessor state..
 	 */
+	tsk->fpu_counter = 0;
 	clear_fpu(tsk);
 	clear_used_math();
 }
@@ -489,10 +339,10 @@ int copy_thread(int nr, unsigned long clone_flags, unsigned long sp,
 	p->thread.fs = me->thread.fs;
 	p->thread.gs = me->thread.gs;
 
-	asm("mov %%gs,%0" : "=m" (p->thread.gsindex));
-	asm("mov %%fs,%0" : "=m" (p->thread.fsindex));
-	asm("mov %%es,%0" : "=m" (p->thread.es));
-	asm("mov %%ds,%0" : "=m" (p->thread.ds));
+	savesegment(gs, p->thread.gsindex);
+	savesegment(fs, p->thread.fsindex);
+	savesegment(es, p->thread.es);
+	savesegment(ds, p->thread.ds);
 
 	if (unlikely(test_tsk_thread_flag(me, TIF_IO_BITMAP))) {
 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
@@ -528,6 +378,85 @@ out:
 	return err;
 }
 
+void
+start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
+{
+	loadsegment(fs, 0);
+	loadsegment(es, 0);
+	loadsegment(ds, 0);
+	load_gs_index(0);
+	regs->ip		= new_ip;
+	regs->sp		= new_sp;
+	write_pda(oldrsp, new_sp);
+	regs->cs		= __USER_CS;
+	regs->ss		= __USER_DS;
+	regs->flags		= 0x200;
+	set_fs(USER_DS);
+	/*
+	 * Free the old FP and other extended state
+	 */
+	free_thread_xstate(current);
+}
+EXPORT_SYMBOL_GPL(start_thread);
+
+static void hard_disable_TSC(void)
+{
+	write_cr4(read_cr4() | X86_CR4_TSD);
+}
+
+void disable_TSC(void)
+{
+	preempt_disable();
+	if (!test_and_set_thread_flag(TIF_NOTSC))
+		/*
+		 * Must flip the CPU state synchronously with
+		 * TIF_NOTSC in the current running context.
+		 */
+		hard_disable_TSC();
+	preempt_enable();
+}
+
+static void hard_enable_TSC(void)
+{
+	write_cr4(read_cr4() & ~X86_CR4_TSD);
+}
+
+static void enable_TSC(void)
+{
+	preempt_disable();
+	if (test_and_clear_thread_flag(TIF_NOTSC))
+		/*
+		 * Must flip the CPU state synchronously with
+		 * TIF_NOTSC in the current running context.
+		 */
+		hard_enable_TSC();
+	preempt_enable();
+}
+
+int get_tsc_mode(unsigned long adr)
+{
+	unsigned int val;
+
+	if (test_thread_flag(TIF_NOTSC))
+		val = PR_TSC_SIGSEGV;
+	else
+		val = PR_TSC_ENABLE;
+
+	return put_user(val, (unsigned int __user *)adr);
+}
+
+int set_tsc_mode(unsigned int val)
+{
+	if (val == PR_TSC_SIGSEGV)
+		disable_TSC();
+	else if (val == PR_TSC_ENABLE)
+		enable_TSC();
+	else
+		return -EINVAL;
+
+	return 0;
+}
+
 /*
  * This special macro can be used to load a debugging register
  */
@@ -548,12 +477,12 @@ static inline void __switch_to_xtra(struct task_struct *prev_p,
 		/* we clear debugctl to make sure DS
 		 * is not in use when we change it */
 		debugctl = 0;
-		wrmsrl(MSR_IA32_DEBUGCTLMSR, 0);
+		update_debugctlmsr(0);
 		wrmsrl(MSR_IA32_DS_AREA, next->ds_area_msr);
 	}
 
 	if (next->debugctlmsr != debugctl)
-		wrmsrl(MSR_IA32_DEBUGCTLMSR, next->debugctlmsr);
+		update_debugctlmsr(next->debugctlmsr);
 
 	if (test_tsk_thread_flag(next_p, TIF_DEBUG)) {
 		loaddebug(next, 0);
@@ -563,6 +492,15 @@ static inline void __switch_to_xtra(struct task_struct *prev_p,
 		/* no 4 and 5 */
 		loaddebug(next, 6);
 		loaddebug(next, 7);
+	}
+
+	if (test_tsk_thread_flag(prev_p, TIF_NOTSC) ^
+	    test_tsk_thread_flag(next_p, TIF_NOTSC)) {
+		/* prev and next are different */
+		if (test_tsk_thread_flag(next_p, TIF_NOTSC))
+			hard_disable_TSC();
+		else
+			hard_enable_TSC();
 	}
 
 	if (test_tsk_thread_flag(next_p, TIF_IO_BITMAP)) {
@@ -600,14 +538,15 @@ static inline void __switch_to_xtra(struct task_struct *prev_p,
 struct task_struct *
 __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 {
-	struct thread_struct *prev = &prev_p->thread,
-				 *next = &next_p->thread;
+	struct thread_struct *prev = &prev_p->thread;
+	struct thread_struct *next = &next_p->thread;
 	int cpu = smp_processor_id();
 	struct tss_struct *tss = &per_cpu(init_tss, cpu);
+	unsigned fsindex, gsindex;
 
 	/* we're going to use this soon, after a few expensive things */
 	if (next_p->fpu_counter>5)
-		prefetch(&next->i387.fxsave);
+		prefetch(next->xstate);
 
 	/*
 	 * Reload esp0, LDT and the page table pointer:
@@ -618,52 +557,64 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * Switch DS and ES.
 	 * This won't pick up thread selector changes, but I guess that is ok.
 	 */
-	asm volatile("mov %%es,%0" : "=m" (prev->es));
+	savesegment(es, prev->es);
 	if (unlikely(next->es | prev->es))
 		loadsegment(es, next->es); 
-	
-	asm volatile ("mov %%ds,%0" : "=m" (prev->ds));
+
+	savesegment(ds, prev->ds);
 	if (unlikely(next->ds | prev->ds))
 		loadsegment(ds, next->ds);
 
+
+	/* We must save %fs and %gs before load_TLS() because
+	 * %fs and %gs may be cleared by load_TLS().
+	 *
+	 * (e.g. xen_load_tls())
+	 */
+	savesegment(fs, fsindex);
+	savesegment(gs, gsindex);
+
 	load_TLS(next, cpu);
+
+	/*
+	 * Leave lazy mode, flushing any hypercalls made here.
+	 * This must be done before restoring TLS segments so
+	 * the GDT and LDT are properly updated, and must be
+	 * done before math_state_restore, so the TS bit is up
+	 * to date.
+	 */
+	arch_leave_lazy_cpu_mode();
 
 	/* 
 	 * Switch FS and GS.
+	 *
+	 * Segment register != 0 always requires a reload.  Also
+	 * reload when it has changed.  When prev process used 64bit
+	 * base always reload to avoid an information leak.
 	 */
-	{ 
-		unsigned fsindex;
-		asm volatile("movl %%fs,%0" : "=r" (fsindex)); 
-		/* segment register != 0 always requires a reload. 
-		   also reload when it has changed. 
-		   when prev process used 64bit base always reload
-		   to avoid an information leak. */
-		if (unlikely(fsindex | next->fsindex | prev->fs)) {
-			loadsegment(fs, next->fsindex);
-			/* check if the user used a selector != 0
-	                 * if yes clear 64bit base, since overloaded base
-                         * is always mapped to the Null selector
-                         */
-			if (fsindex)
+	if (unlikely(fsindex | next->fsindex | prev->fs)) {
+		loadsegment(fs, next->fsindex);
+		/* 
+		 * Check if the user used a selector != 0; if yes
+		 *  clear 64bit base, since overloaded base is always
+		 *  mapped to the Null selector
+		 */
+		if (fsindex)
 			prev->fs = 0;				
-		}
-		/* when next process has a 64bit base use it */
-		if (next->fs) 
-			wrmsrl(MSR_FS_BASE, next->fs); 
-		prev->fsindex = fsindex;
 	}
-	{ 
-		unsigned gsindex;
-		asm volatile("movl %%gs,%0" : "=r" (gsindex)); 
-		if (unlikely(gsindex | next->gsindex | prev->gs)) {
-			load_gs_index(next->gsindex);
-			if (gsindex)
+	/* when next process has a 64bit base use it */
+	if (next->fs)
+		wrmsrl(MSR_FS_BASE, next->fs);
+	prev->fsindex = fsindex;
+
+	if (unlikely(gsindex | next->gsindex | prev->gs)) {
+		load_gs_index(next->gsindex);
+		if (gsindex)
 			prev->gs = 0;				
-		}
-		if (next->gs)
-			wrmsrl(MSR_KERNEL_GS_BASE, next->gs); 
-		prev->gsindex = gsindex;
 	}
+	if (next->gs)
+		wrmsrl(MSR_KERNEL_GS_BASE, next->gs);
+	prev->gsindex = gsindex;
 
 	/* Must be after DS reload */
 	unlazy_fpu(prev_p);
@@ -676,7 +627,8 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	write_pda(pcurrent, next_p); 
 
 	write_pda(kernelstack,
-	(unsigned long)task_stack_page(next_p) + THREAD_SIZE - PDA_STACKOFFSET);
+		  (unsigned long)task_stack_page(next_p) +
+		  THREAD_SIZE - PDA_STACKOFFSET);
 #ifdef CONFIG_CC_STACKPROTECTOR
 	write_pda(stack_canary, next_p->stack_canary);
 	/*
@@ -696,8 +648,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	/* If the task has used fpu the last 5 timeslices, just do a full
 	 * restore of the math state immediately to avoid the trap; the
 	 * chances of needing FPU soon are obviously high now
+	 *
+	 * tsk_used_math() checks prevent calling math_state_restore(),
+	 * which can sleep in the case of !tsk_used_math()
 	 */
-	if (next_p->fpu_counter>5)
+	if (tsk_used_math(next_p) && next_p->fpu_counter > 5)
 		math_state_restore();
 	return prev_p;
 }
@@ -832,7 +787,7 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 			set_32bit_tls(task, FS_TLS, addr);
 			if (doit) {
 				load_TLS(&task->thread, cpu);
-				asm volatile("movl %0,%%fs" :: "r"(FS_TLS_SEL));
+				loadsegment(fs, FS_TLS_SEL);
 			}
 			task->thread.fsindex = FS_TLS_SEL;
 			task->thread.fs = 0;
@@ -842,7 +797,7 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 			if (doit) {
 				/* set the selector to 0 to not confuse
 				   __switch_to */
-				asm volatile("movl %0,%%fs" :: "r" (0));
+				loadsegment(fs, 0);
 				ret = checking_wrmsrl(MSR_FS_BASE, addr);
 			}
 		}
@@ -865,7 +820,7 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 		if (task->thread.gsindex == GS_TLS_SEL)
 			base = read_32bit_tls(task, GS_TLS);
 		else if (doit) {
-			asm("movl %%gs,%0" : "=r" (gsindex));
+			savesegment(gs, gsindex);
 			if (gsindex)
 				rdmsrl(MSR_KERNEL_GS_BASE, base);
 			else

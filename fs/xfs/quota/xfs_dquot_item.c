@@ -146,11 +146,12 @@ xfs_qm_dquot_logitem_push(
 	xfs_dq_logitem_t	*logitem)
 {
 	xfs_dquot_t	*dqp;
+	int		error;
 
 	dqp = logitem->qli_dquot;
 
 	ASSERT(XFS_DQ_IS_LOCKED(dqp));
-	ASSERT(XFS_DQ_IS_FLUSH_LOCKED(dqp));
+	ASSERT(!completion_done(&dqp->q_flush));
 
 	/*
 	 * Since we were able to lock the dquot's flush lock and
@@ -161,7 +162,11 @@ xfs_qm_dquot_logitem_push(
 	 * lock without sleeping, then there must not have been
 	 * anyone in the process of flushing the dquot.
 	 */
-	xfs_qm_dqflush(dqp, XFS_B_DELWRI);
+	error = xfs_qm_dqflush(dqp, XFS_QMOPT_DELWRI);
+	if (error)
+		xfs_fs_cmn_err(CE_WARN, dqp->q_mount,
+			"xfs_qm_dquot_logitem_push: push error %d on dqp %p",
+			error, dqp);
 	xfs_dqunlock(dqp);
 }
 
@@ -240,7 +245,7 @@ xfs_qm_dquot_logitem_pushbuf(
 	 * inode flush completed and the inode was taken off the AIL.
 	 * So, just get out.
 	 */
-	if (!issemalocked(&(dqp->q_flock))  ||
+	if (completion_done(&dqp->q_flush)  ||
 	    ((qip->qli_item.li_flags & XFS_LI_IN_AIL) == 0)) {
 		qip->qli_pushbuf_flag = 0;
 		xfs_dqunlock(dqp);
@@ -253,7 +258,7 @@ xfs_qm_dquot_logitem_pushbuf(
 	if (bp != NULL) {
 		if (XFS_BUF_ISDELAYWRITE(bp)) {
 			dopush = ((qip->qli_item.li_flags & XFS_LI_IN_AIL) &&
-				  issemalocked(&(dqp->q_flock)));
+				  !completion_done(&dqp->q_flush));
 			qip->qli_pushbuf_flag = 0;
 			xfs_dqunlock(dqp);
 
@@ -262,11 +267,16 @@ xfs_qm_dquot_logitem_pushbuf(
 					      XFS_LOG_FORCE);
 			}
 			if (dopush) {
+				int	error;
 #ifdef XFSRACEDEBUG
 				delay_for_intr();
 				delay(300);
 #endif
-				xfs_bawrite(mp, bp);
+				error = xfs_bawrite(mp, bp);
+				if (error)
+					xfs_fs_cmn_err(CE_WARN, mp,
+	"xfs_qm_dquot_logitem_pushbuf: pushbuf error %d on qip %p, bp %p",
+							error, qip, bp);
 			} else {
 				xfs_buf_relse(bp);
 			}
@@ -307,7 +317,7 @@ xfs_qm_dquot_logitem_trylock(
 		return (XFS_ITEM_LOCKED);
 
 	retval = XFS_ITEM_SUCCESS;
-	if (! xfs_qm_dqflock_nowait(dqp)) {
+	if (!xfs_dqflock_nowait(dqp)) {
 		/*
 		 * The dquot is already being flushed.	It may have been
 		 * flushed delayed write, however, and we don't want to
@@ -566,8 +576,8 @@ xfs_qm_qoffend_logitem_committed(
 	 * xfs_trans_delete_ail() drops the AIL lock.
 	 */
 	xfs_trans_delete_ail(qfs->qql_item.li_mountp, (xfs_log_item_t *)qfs);
-	kmem_free(qfs, sizeof(xfs_qoff_logitem_t));
-	kmem_free(qfe, sizeof(xfs_qoff_logitem_t));
+	kmem_free(qfs);
+	kmem_free(qfe);
 	return (xfs_lsn_t)-1;
 }
 

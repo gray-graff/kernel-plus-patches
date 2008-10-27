@@ -15,6 +15,10 @@
  * we just keep it from happening
  */
 #undef CONFIG_PARAVIRT
+#ifdef CONFIG_X86_32
+#define _ASM_DESC_H_ 1
+#endif
+
 #ifdef CONFIG_X86_64
 #define _LINUX_STRING_H_ 1
 #define __LINUX_BITMAP_H 1
@@ -22,9 +26,11 @@
 
 #include <linux/linkage.h>
 #include <linux/screen_info.h>
+#include <linux/elf.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/boot.h>
+#include <asm/bootparam.h>
 
 /* WARNING!!
  * This code is compiled with -fPIC and it is relocated dynamically
@@ -53,8 +59,8 @@
  * 1 bit (last block flag)
  * 2 bits (block type)
  *
- * 1 block occurs every 32K -1 bytes or when there 50% compression has been achieved.
- * The smallest block type encoding is always used.
+ * 1 block occurs every 32K -1 bytes or when there 50% compression
+ * has been achieved. The smallest block type encoding is always used.
  *
  * stored:
  *    32 bits length in bytes.
@@ -90,9 +96,9 @@
  *
  * All of which is enough to compute an amount of extra data that is required
  * to be safe.  To avoid problems at the block level allocating 5 extra bytes
- * per 32767 bytes of data is sufficient.  To avoind problems internal to a block
- * adding an extra 32767 bytes (the worst case uncompressed block size) is
- * sufficient, to ensure that in the worst case the decompressed data for
+ * per 32767 bytes of data is sufficient.  To avoind problems internal to a
+ * block adding an extra 32767 bytes (the worst case uncompressed block size)
+ * is sufficient, to ensure that in the worst case the decompressed data for
  * block will stop the byte before the compressed data for a block begins.
  * To avoid problems with the compressed data's meta information an extra 18
  * bytes are needed.  Leading to the formula:
@@ -111,89 +117,88 @@
  * gzip declarations
  */
 
-#define OF(args)  args
-#define STATIC static
+#define OF(args)	args
+#define STATIC		static
 
 #undef memset
 #undef memcpy
-#define memzero(s, n)     memset ((s), 0, (n))
+#define memzero(s, n)	memset((s), 0, (n))
 
-typedef unsigned char  uch;
-typedef unsigned short ush;
-typedef unsigned long  ulg;
+typedef unsigned char	uch;
+typedef unsigned short	ush;
+typedef unsigned long	ulg;
 
-#define WSIZE 0x80000000	/* Window size must be at least 32k,
-				 * and a power of two
-				 * We don't actually have a window just
-				 * a huge output buffer so I report
-				 * a 2G windows size, as that should
-				 * always be larger than our output buffer.
-				 */
+/*
+ * Window size must be at least 32k, and a power of two.
+ * We don't actually have a window just a huge output buffer,
+ * so we report a 2G window size, as that should always be
+ * larger than our output buffer:
+ */
+#define WSIZE		0x80000000
 
-static uch *inbuf;	/* input buffer */
-static uch *window;	/* Sliding window buffer, (and final output buffer) */
+/* Input buffer: */
+static unsigned char	*inbuf;
 
-static unsigned insize;  /* valid bytes in inbuf */
-static unsigned inptr;   /* index of next byte to be processed in inbuf */
-static unsigned outcnt;  /* bytes in output buffer */
+/* Sliding window buffer (and final output buffer): */
+static unsigned char	*window;
+
+/* Valid bytes in inbuf: */
+static unsigned		insize;
+
+/* Index of next byte to be processed in inbuf: */
+static unsigned		inptr;
+
+/* Bytes in output buffer: */
+static unsigned		outcnt;
 
 /* gzip flag byte */
-#define ASCII_FLAG   0x01 /* bit 0 set: file probably ASCII text */
-#define CONTINUATION 0x02 /* bit 1 set: continuation of multi-part gzip file */
-#define EXTRA_FIELD  0x04 /* bit 2 set: extra field present */
-#define ORIG_NAME    0x08 /* bit 3 set: original file name present */
-#define COMMENT      0x10 /* bit 4 set: file comment present */
-#define ENCRYPTED    0x20 /* bit 5 set: file is encrypted */
-#define RESERVED     0xC0 /* bit 6,7:   reserved */
+#define ASCII_FLAG	0x01 /* bit 0 set: file probably ASCII text */
+#define CONTINUATION	0x02 /* bit 1 set: continuation of multi-part gz file */
+#define EXTRA_FIELD	0x04 /* bit 2 set: extra field present */
+#define ORIG_NAM	0x08 /* bit 3 set: original file name present */
+#define COMMENT		0x10 /* bit 4 set: file comment present */
+#define ENCRYPTED	0x20 /* bit 5 set: file is encrypted */
+#define RESERVED	0xC0 /* bit 6, 7:  reserved */
 
-#define get_byte()  (inptr < insize ? inbuf[inptr++] : fill_inbuf())
-		
+#define get_byte()	(inptr < insize ? inbuf[inptr++] : fill_inbuf())
+
 /* Diagnostic functions */
 #ifdef DEBUG
-#  define Assert(cond,msg) {if(!(cond)) error(msg);}
-#  define Trace(x) fprintf x
-#  define Tracev(x) {if (verbose) fprintf x ;}
-#  define Tracevv(x) {if (verbose>1) fprintf x ;}
-#  define Tracec(c,x) {if (verbose && (c)) fprintf x ;}
-#  define Tracecv(c,x) {if (verbose>1 && (c)) fprintf x ;}
+#  define Assert(cond, msg) do { if (!(cond)) error(msg); } while (0)
+#  define Trace(x)	do { fprintf x; } while (0)
+#  define Tracev(x)	do { if (verbose) fprintf x ; } while (0)
+#  define Tracevv(x)	do { if (verbose > 1) fprintf x ; } while (0)
+#  define Tracec(c, x)	do { if (verbose && (c)) fprintf x ; } while (0)
+#  define Tracecv(c, x)	do { if (verbose > 1 && (c)) fprintf x ; } while (0)
 #else
-#  define Assert(cond,msg)
+#  define Assert(cond, msg)
 #  define Trace(x)
 #  define Tracev(x)
 #  define Tracevv(x)
-#  define Tracec(c,x)
-#  define Tracecv(c,x)
+#  define Tracec(c, x)
+#  define Tracecv(c, x)
 #endif
 
 static int  fill_inbuf(void);
 static void flush_window(void);
 static void error(char *m);
-static void gzip_mark(void **);
-static void gzip_release(void **);
-  
+
 /*
  * This is set up by the setup-routine at boot-time
  */
-static unsigned char *real_mode; /* Pointer to real-mode data */
-
-#define RM_EXT_MEM_K   (*(unsigned short *)(real_mode + 0x2))
-#ifndef STANDARD_MEMORY_BIOS_CALL
-#define RM_ALT_MEM_K   (*(unsigned long *)(real_mode + 0x1e0))
-#endif
-#define RM_SCREEN_INFO (*(struct screen_info *)(real_mode+0))
+static struct boot_params *real_mode;		/* Pointer to real-mode data */
+static int quiet;
 
 extern unsigned char input_data[];
 extern int input_len;
 
-static long bytes_out = 0;
-
-static void *malloc(int size);
-static void free(void *where);
+static long bytes_out;
 
 static void *memset(void *s, int c, unsigned n);
 static void *memcpy(void *dest, const void *src, unsigned n);
 
-static void putstr(const char *);
+static void __putstr(int, const char *);
+#define putstr(__x)  __putstr(0, __x)
 
 #ifdef CONFIG_X86_64
 #define memptr long
@@ -204,88 +209,52 @@ static void putstr(const char *);
 static memptr free_mem_ptr;
 static memptr free_mem_end_ptr;
 
-#ifdef CONFIG_X86_64
-#define HEAP_SIZE             0x7000
-#else
-#define HEAP_SIZE             0x4000
-#endif
-
-static char *vidmem = (char *)0xb8000;
+static char *vidmem;
 static int vidport;
 static int lines, cols;
 
-#ifdef CONFIG_X86_NUMAQ
-void *xquad_portio;
-#endif
-
 #include "../../../../lib/inflate.c"
 
-static void *malloc(int size)
-{
-	void *p;
-
-	if (size <0) error("Malloc error");
-	if (free_mem_ptr <= 0) error("Memory error");
-
-	free_mem_ptr = (free_mem_ptr + 3) & ~3;	/* Align */
-
-	p = (void *)free_mem_ptr;
-	free_mem_ptr += size;
-
-	if (free_mem_ptr >= free_mem_end_ptr)
-		error("Out of memory");
-
-	return p;
-}
-
-static void free(void *where)
-{	/* Don't care */
-}
-
-static void gzip_mark(void **ptr)
-{
-	*ptr = (void *) free_mem_ptr;
-}
-
-static void gzip_release(void **ptr)
-{
-	free_mem_ptr = (memptr) *ptr;
-}
- 
 static void scroll(void)
 {
 	int i;
 
-	memcpy ( vidmem, vidmem + cols * 2, ( lines - 1 ) * cols * 2 );
-	for ( i = ( lines - 1 ) * cols * 2; i < lines * cols * 2; i += 2 )
+	memcpy(vidmem, vidmem + cols * 2, (lines - 1) * cols * 2);
+	for (i = (lines - 1) * cols * 2; i < lines * cols * 2; i += 2)
 		vidmem[i] = ' ';
 }
 
-static void putstr(const char *s)
+static void __putstr(int error, const char *s)
 {
-	int x,y,pos;
+	int x, y, pos;
 	char c;
 
-#ifdef CONFIG_X86_32
-	if (RM_SCREEN_INFO.orig_video_mode == 0 && lines == 0 && cols == 0)
+#ifndef CONFIG_X86_VERBOSE_BOOTUP
+	if (!error)
 		return;
 #endif
 
-	x = RM_SCREEN_INFO.orig_x;
-	y = RM_SCREEN_INFO.orig_y;
+#ifdef CONFIG_X86_32
+	if (real_mode->screen_info.orig_video_mode == 0 &&
+	    lines == 0 && cols == 0)
+		return;
+#endif
 
-	while ( ( c = *s++ ) != '\0' ) {
-		if ( c == '\n' ) {
+	x = real_mode->screen_info.orig_x;
+	y = real_mode->screen_info.orig_y;
+
+	while ((c = *s++) != '\0') {
+		if (c == '\n') {
 			x = 0;
-			if ( ++y >= lines ) {
+			if (++y >= lines) {
 				scroll();
 				y--;
 			}
 		} else {
 			vidmem [(x + cols * y) * 2] = c;
-			if ( ++x >= cols ) {
+			if (++x >= cols) {
 				x = 0;
-				if ( ++y >= lines ) {
+				if (++y >= lines) {
 					scroll();
 					y--;
 				}
@@ -293,8 +262,8 @@ static void putstr(const char *s)
 		}
 	}
 
-	RM_SCREEN_INFO.orig_x = x;
-	RM_SCREEN_INFO.orig_y = y;
+	real_mode->screen_info.orig_x = x;
+	real_mode->screen_info.orig_y = y;
 
 	pos = (x + cols * y) * 2;	/* Update cursor position */
 	outb(14, vidport);
@@ -303,22 +272,22 @@ static void putstr(const char *s)
 	outb(0xff & (pos >> 1), vidport+1);
 }
 
-static void* memset(void* s, int c, unsigned n)
+static void *memset(void *s, int c, unsigned n)
 {
 	int i;
 	char *ss = s;
 
-	for (i=0;i<n;i++) ss[i] = c;
+	for (i = 0; i < n; i++) ss[i] = c;
 	return s;
 }
 
-static void* memcpy(void* dest, const void* src, unsigned n)
+static void *memcpy(void *dest, const void *src, unsigned n)
 {
 	int i;
 	const char *s = src;
 	char *d = dest;
 
-	for (i=0;i<n;i++) d[i] = s[i];
+	for (i = 0; i < n; i++) d[i] = s[i];
 	return dest;
 }
 
@@ -341,9 +310,9 @@ static void flush_window(void)
 	/* With my window equal to my output buffer
 	 * I only need to compute the crc here.
 	 */
-	ulg c = crc;         /* temporary variable */
+	unsigned long c = crc;         /* temporary variable */
 	unsigned n;
-	uch *in, ch;
+	unsigned char *in, ch;
 
 	in = window;
 	for (n = 0; n < outcnt; n++) {
@@ -351,27 +320,81 @@ static void flush_window(void)
 		c = crc_32_tab[((int)c ^ ch) & 0xff] ^ (c >> 8);
 	}
 	crc = c;
-	bytes_out += (ulg)outcnt;
+	bytes_out += (unsigned long)outcnt;
 	outcnt = 0;
 }
 
 static void error(char *x)
 {
-	putstr("\n\n");
-	putstr(x);
-	putstr("\n\n -- System halted");
+	__putstr(1, "\n\n");
+	__putstr(1, x);
+	__putstr(1, "\n\n -- System halted");
 
 	while (1)
 		asm("hlt");
 }
 
+static void parse_elf(void *output)
+{
+#ifdef CONFIG_X86_64
+	Elf64_Ehdr ehdr;
+	Elf64_Phdr *phdrs, *phdr;
+#else
+	Elf32_Ehdr ehdr;
+	Elf32_Phdr *phdrs, *phdr;
+#endif
+	void *dest;
+	int i;
+
+	memcpy(&ehdr, output, sizeof(ehdr));
+	if (ehdr.e_ident[EI_MAG0] != ELFMAG0 ||
+	   ehdr.e_ident[EI_MAG1] != ELFMAG1 ||
+	   ehdr.e_ident[EI_MAG2] != ELFMAG2 ||
+	   ehdr.e_ident[EI_MAG3] != ELFMAG3) {
+		error("Kernel is not a valid ELF file");
+		return;
+	}
+
+	if (!quiet)
+		putstr("Parsing ELF... ");
+
+	phdrs = malloc(sizeof(*phdrs) * ehdr.e_phnum);
+	if (!phdrs)
+		error("Failed to allocate space for phdrs");
+
+	memcpy(phdrs, output + ehdr.e_phoff, sizeof(*phdrs) * ehdr.e_phnum);
+
+	for (i = 0; i < ehdr.e_phnum; i++) {
+		phdr = &phdrs[i];
+
+		switch (phdr->p_type) {
+		case PT_LOAD:
+#ifdef CONFIG_RELOCATABLE
+			dest = output;
+			dest += (phdr->p_paddr - LOAD_PHYSICAL_ADDR);
+#else
+			dest = (void *)(phdr->p_paddr);
+#endif
+			memcpy(dest,
+			       output + phdr->p_offset,
+			       phdr->p_filesz);
+			break;
+		default: /* Ignore other PT_* */ break;
+		}
+	}
+}
+
 asmlinkage void decompress_kernel(void *rmode, memptr heap,
-				  uch *input_data, unsigned long input_len,
-				  uch *output)
+				  unsigned char *input_data,
+				  unsigned long input_len,
+				  unsigned char *output)
 {
 	real_mode = rmode;
 
-	if (RM_SCREEN_INFO.orig_video_mode == 7) {
+	if (real_mode->hdr.loadflags & QUIET_FLAG)
+		quiet = 1;
+
+	if (real_mode->screen_info.orig_video_mode == 7) {
 		vidmem = (char *) 0xb0000;
 		vidport = 0x3b4;
 	} else {
@@ -379,23 +402,23 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 		vidport = 0x3d4;
 	}
 
-	lines = RM_SCREEN_INFO.orig_video_lines;
-	cols = RM_SCREEN_INFO.orig_video_cols;
+	lines = real_mode->screen_info.orig_video_lines;
+	cols = real_mode->screen_info.orig_video_cols;
 
 	window = output;		/* Output buffer (Normally at 1M) */
 	free_mem_ptr     = heap;	/* Heap */
-	free_mem_end_ptr = heap + HEAP_SIZE;
+	free_mem_end_ptr = heap + BOOT_HEAP_SIZE;
 	inbuf  = input_data;		/* Input buffer */
 	insize = input_len;
 	inptr  = 0;
 
 #ifdef CONFIG_X86_64
-	if ((ulg)output & (__KERNEL_ALIGN - 1))
+	if ((unsigned long)output & (__KERNEL_ALIGN - 1))
 		error("Destination address not 2M aligned");
-	if ((ulg)output >= 0xffffffffffUL)
+	if ((unsigned long)output >= 0xffffffffffUL)
 		error("Destination address too large");
 #else
-	if ((u32)output & (CONFIG_PHYSICAL_ALIGN -1))
+	if ((u32)output & (CONFIG_PHYSICAL_ALIGN - 1))
 		error("Destination address not CONFIG_PHYSICAL_ALIGN aligned");
 	if (heap > ((-__PAGE_OFFSET-(512<<20)-1) & 0x7fffffff))
 		error("Destination address too large");
@@ -406,8 +429,11 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 #endif
 
 	makecrc();
-	putstr("\nDecompressing Linux... ");
+	if (!quiet)
+		putstr("\nDecompressing Linux... ");
 	gunzip();
-	putstr("done.\nBooting the kernel.\n");
+	parse_elf(output);
+	if (!quiet)
+		putstr("done.\nBooting the kernel.\n");
 	return;
 }

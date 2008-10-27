@@ -129,7 +129,7 @@ int mpc831x_usb_cfg(void)
 	if (immr_node && of_device_is_compatible(immr_node, "fsl,mpc8315-immr"))
 		clrsetbits_be32(immap + MPC83XX_SCCR_OFFS,
 		                MPC8315_SCCR_USB_MASK,
-		                MPC8315_SCCR_USB_DRCM_11);
+		                MPC8315_SCCR_USB_DRCM_01);
 	else
 		clrsetbits_be32(immap + MPC83XX_SCCR_OFFS,
 		                MPC83XX_SCCR_USB_MASK,
@@ -137,15 +137,21 @@ int mpc831x_usb_cfg(void)
 
 	/* Configure pin mux for ULPI.  There is no pin mux for UTMI */
 	if (prop && !strcmp(prop, "ulpi")) {
-		temp = in_be32(immap + MPC83XX_SICRL_OFFS);
-		temp &= ~MPC831X_SICRL_USB_MASK;
-		temp |= MPC831X_SICRL_USB_ULPI;
-		out_be32(immap + MPC83XX_SICRL_OFFS, temp);
-
-		temp = in_be32(immap + MPC83XX_SICRH_OFFS);
-		temp &= ~MPC831X_SICRH_USB_MASK;
-		temp |= MPC831X_SICRH_USB_ULPI;
-		out_be32(immap + MPC83XX_SICRH_OFFS, temp);
+		if (of_device_is_compatible(immr_node, "fsl,mpc8315-immr")) {
+			clrsetbits_be32(immap + MPC83XX_SICRL_OFFS,
+					MPC8315_SICRL_USB_MASK,
+					MPC8315_SICRL_USB_ULPI);
+			clrsetbits_be32(immap + MPC83XX_SICRH_OFFS,
+					MPC8315_SICRH_USB_MASK,
+					MPC8315_SICRH_USB_ULPI);
+		} else {
+			clrsetbits_be32(immap + MPC83XX_SICRL_OFFS,
+					MPC831X_SICRL_USB_MASK,
+					MPC831X_SICRL_USB_ULPI);
+			clrsetbits_be32(immap + MPC83XX_SICRH_OFFS,
+					MPC831X_SICRH_USB_MASK,
+					MPC831X_SICRH_USB_ULPI);
+		}
 	}
 
 	iounmap(immap);
@@ -164,9 +170,15 @@ int mpc831x_usb_cfg(void)
 	/* Using on-chip PHY */
 	if (prop && (!strcmp(prop, "utmi_wide") ||
 		     !strcmp(prop, "utmi"))) {
-		/* Set UTMI_PHY_EN, REFSEL to 48MHZ */
+		u32 refsel;
+
+		if (of_device_is_compatible(immr_node, "fsl,mpc8315-immr"))
+			refsel = CONTROL_REFSEL_24MHZ;
+		else
+			refsel = CONTROL_REFSEL_48MHZ;
+		/* Set UTMI_PHY_EN and REFSEL */
 		out_be32(usb_regs + FSL_USB2_CONTROL_OFFS,
-				CONTROL_UTMI_PHY_EN | CONTROL_REFSEL_48MHZ);
+				CONTROL_UTMI_PHY_EN | refsel);
 	/* Using external UPLI PHY */
 	} else if (prop && !strcmp(prop, "ulpi")) {
 		/* Set PHY_CLK_SEL to ULPI */

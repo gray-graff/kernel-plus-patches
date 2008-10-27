@@ -58,11 +58,6 @@ static int create_dir(struct kobject *kobj)
 	return error;
 }
 
-static inline struct kobject *to_kobj(struct list_head *entry)
-{
-	return container_of(entry, struct kobject, entry);
-}
-
 static int get_kobj_path_length(struct kobject *kobj)
 {
 	int length = 1;
@@ -95,7 +90,7 @@ static void fill_kobj_path(struct kobject *kobj, char *path, int length)
 	}
 
 	pr_debug("kobject: '%s' (%p): %s: path = '%s'\n", kobject_name(kobj),
-		 kobj, __FUNCTION__, path);
+		 kobj, __func__, path);
 }
 
 /**
@@ -169,9 +164,8 @@ static int kobject_add_internal(struct kobject *kobj)
 		return -ENOENT;
 
 	if (!kobj->name || !kobj->name[0]) {
-		pr_debug("kobject: (%p): attempted to be registered with empty "
+		WARN(1, "kobject: (%p): attempted to be registered with empty "
 			 "name!\n", kobj);
-		WARN_ON(1);
 		return -EINVAL;
 	}
 
@@ -186,7 +180,7 @@ static int kobject_add_internal(struct kobject *kobj)
 	}
 
 	pr_debug("kobject: '%s' (%p): %s: parent: '%s', set: '%s'\n",
-		 kobject_name(kobj), kobj, __FUNCTION__,
+		 kobject_name(kobj), kobj, __func__,
 		 parent ? kobject_name(parent) : "<NULL>",
 		 kobj->kset ? kobject_name(&kobj->kset->kobj) : "<NULL>");
 
@@ -201,10 +195,10 @@ static int kobject_add_internal(struct kobject *kobj)
 			printk(KERN_ERR "%s failed for %s with "
 			       "-EEXIST, don't try to register things with "
 			       "the same name in the same directory.\n",
-			       __FUNCTION__, kobject_name(kobj));
+			       __func__, kobject_name(kobj));
 		else
 			printk(KERN_ERR "%s failed for %s (%d)\n",
-			       __FUNCTION__, kobject_name(kobj), error);
+			       __func__, kobject_name(kobj), error);
 		dump_stack();
 	} else
 		kobj->state_in_sysfs = 1;
@@ -221,22 +215,18 @@ static int kobject_add_internal(struct kobject *kobj)
 static int kobject_set_name_vargs(struct kobject *kobj, const char *fmt,
 				  va_list vargs)
 {
-	va_list aq;
-	char *name;
+	const char *old_name = kobj->name;
+	char *s;
 
-	va_copy(aq, vargs);
-	name = kvasprintf(GFP_KERNEL, fmt, vargs);
-	va_end(aq);
-
-	if (!name)
+	kobj->name = kvasprintf(GFP_KERNEL, fmt, vargs);
+	if (!kobj->name)
 		return -ENOMEM;
 
-	/* Free the old name, if necessary. */
-	kfree(kobj->name);
+	/* ewww... some of these buggers have '/' in the name ... */
+	while ((s = strchr(kobj->name, '/')))
+		s[0] = '!';
 
-	/* Now, set the new name */
-	kobj->name = name;
-
+	kfree(old_name);
 	return 0;
 }
 
@@ -251,12 +241,12 @@ static int kobject_set_name_vargs(struct kobject *kobj, const char *fmt,
  */
 int kobject_set_name(struct kobject *kobj, const char *fmt, ...)
 {
-	va_list args;
+	va_list vargs;
 	int retval;
 
-	va_start(args, fmt);
-	retval = kobject_set_name_vargs(kobj, fmt, args);
-	va_end(args);
+	va_start(vargs, fmt);
+	retval = kobject_set_name_vargs(kobj, fmt, vargs);
+	va_end(vargs);
 
 	return retval;
 }
@@ -306,12 +296,9 @@ EXPORT_SYMBOL(kobject_init);
 static int kobject_add_varg(struct kobject *kobj, struct kobject *parent,
 			    const char *fmt, va_list vargs)
 {
-	va_list aq;
 	int retval;
 
-	va_copy(aq, vargs);
-	retval = kobject_set_name_vargs(kobj, fmt, aq);
-	va_end(aq);
+	retval = kobject_set_name_vargs(kobj, fmt, vargs);
 	if (retval) {
 		printk(KERN_ERR "kobject: can not set name properly!\n");
 		return retval;
@@ -456,6 +443,7 @@ out:
 
 	return error;
 }
+EXPORT_SYMBOL_GPL(kobject_rename);
 
 /**
  * kobject_move - move object to another parent
@@ -545,7 +533,7 @@ static void kobject_cleanup(struct kobject *kobj)
 	const char *name = kobj->name;
 
 	pr_debug("kobject: '%s' (%p): %s\n",
-		 kobject_name(kobj), kobj, __FUNCTION__);
+		 kobject_name(kobj), kobj, __func__);
 
 	if (t && !t->release)
 		pr_debug("kobject: '%s' (%p): does not have a release() "
@@ -592,13 +580,18 @@ static void kobject_release(struct kref *kref)
  */
 void kobject_put(struct kobject *kobj)
 {
-	if (kobj)
+	if (kobj) {
+		if (!kobj->state_initialized)
+			WARN(1, KERN_WARNING "kobject: '%s' (%p): is not "
+			       "initialized, yet kobject_put() is being "
+			       "called.\n", kobject_name(kobj), kobj);
 		kref_put(&kobj->kref, kobject_release);
+	}
 }
 
 static void dynamic_kobj_release(struct kobject *kobj)
 {
-	pr_debug("kobject: (%p): %s\n", kobj, __FUNCTION__);
+	pr_debug("kobject: (%p): %s\n", kobj, __func__);
 	kfree(kobj);
 }
 
@@ -655,7 +648,7 @@ struct kobject *kobject_create_and_add(const char *name, struct kobject *parent)
 	retval = kobject_add(kobj, parent, "%s", name);
 	if (retval) {
 		printk(KERN_WARNING "%s: kobject_add error: %d\n",
-		       __FUNCTION__, retval);
+		       __func__, retval);
 		kobject_put(kobj);
 		kobj = NULL;
 	}
@@ -745,12 +738,11 @@ void kset_unregister(struct kset *k)
  */
 struct kobject *kset_find_obj(struct kset *kset, const char *name)
 {
-	struct list_head *entry;
+	struct kobject *k;
 	struct kobject *ret = NULL;
 
 	spin_lock(&kset->list_lock);
-	list_for_each(entry, &kset->list) {
-		struct kobject *k = to_kobj(entry);
+	list_for_each_entry(k, &kset->list, entry) {
 		if (kobject_name(k) && !strcmp(kobject_name(k), name)) {
 			ret = kobject_get(k);
 			break;
@@ -764,7 +756,7 @@ static void kset_release(struct kobject *kobj)
 {
 	struct kset *kset = container_of(kobj, struct kset, kobj);
 	pr_debug("kobject: '%s' (%p): %s\n",
-		 kobject_name(kobj), kobj, __FUNCTION__);
+		 kobject_name(kobj), kobj, __func__);
 	kfree(kset);
 }
 

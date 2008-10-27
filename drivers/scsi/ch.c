@@ -22,6 +22,7 @@
 #include <linux/chio.h>			/* here are all the ioctls */
 #include <linux/mutex.h>
 #include <linux/idr.h>
+#include <linux/smp_lock.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -113,7 +114,7 @@ static const struct {
 	unsigned char  asc;
 	unsigned char  ascq;
 	int	       errno;
-} err[] = {
+} ch_err[] = {
 /* Just filled in what looks right. Hav'nt checked any standard paper for
    these errno assignments, so they may be wrong... */
 	{
@@ -155,11 +156,11 @@ static int ch_find_errno(struct scsi_sense_hdr *sshdr)
 	/* Check to see if additional sense information is available */
 	if (scsi_sense_valid(sshdr) &&
 	    sshdr->asc != 0) {
-		for (i = 0; err[i].errno != 0; i++) {
-			if (err[i].sense == sshdr->sense_key &&
-			    err[i].asc   == sshdr->asc &&
-			    err[i].ascq  == sshdr->ascq) {
-				errno = -err[i].errno;
+		for (i = 0; ch_err[i].errno != 0; i++) {
+			if (ch_err[i].sense == sshdr->sense_key &&
+			    ch_err[i].asc   == sshdr->asc &&
+			    ch_err[i].ascq  == sshdr->ascq) {
+				errno = -ch_err[i].errno;
 				break;
 			}
 		}
@@ -571,16 +572,19 @@ ch_open(struct inode *inode, struct file *file)
 	scsi_changer *ch;
 	int minor = iminor(inode);
 
+	lock_kernel();
 	spin_lock(&ch_index_lock);
 	ch = idr_find(&ch_index_idr, minor);
 
 	if (NULL == ch || scsi_device_get(ch->device)) {
 		spin_unlock(&ch_index_lock);
+		unlock_kernel();
 		return -ENXIO;
 	}
 	spin_unlock(&ch_index_lock);
 
 	file->private_data = ch;
+	unlock_kernel();
 	return 0;
 }
 
@@ -721,8 +725,8 @@ static long ch_ioctl(struct file *file,
 	case CHIOGELEM:
 	{
 		struct changer_get_element cge;
-		u_char  cmd[12];
-		u_char  *buffer;
+		u_char ch_cmd[12];
+		u_char *buffer;
 		unsigned int elem;
 		int     result,i;
 
@@ -739,17 +743,18 @@ static long ch_ioctl(struct file *file,
 		mutex_lock(&ch->lock);
 
 	voltag_retry:
-		memset(cmd,0,sizeof(cmd));
-		cmd[0] = READ_ELEMENT_STATUS;
-		cmd[1] = (ch->device->lun << 5) |
+		memset(ch_cmd, 0, sizeof(ch_cmd));
+		ch_cmd[0] = READ_ELEMENT_STATUS;
+		ch_cmd[1] = (ch->device->lun << 5) |
 			(ch->voltags ? 0x10 : 0) |
 			ch_elem_to_typecode(ch,elem);
-		cmd[2] = (elem >> 8) & 0xff;
-		cmd[3] = elem        & 0xff;
-		cmd[5] = 1;
-		cmd[9] = 255;
+		ch_cmd[2] = (elem >> 8) & 0xff;
+		ch_cmd[3] = elem        & 0xff;
+		ch_cmd[5] = 1;
+		ch_cmd[9] = 255;
 
-		if (0 == (result = ch_do_scsi(ch, cmd, buffer, 256, DMA_FROM_DEVICE))) {
+		result = ch_do_scsi(ch, ch_cmd, buffer, 256, DMA_FROM_DEVICE);
+		if (!result) {
 			cge.cge_status = buffer[18];
 			cge.cge_flags = 0;
 			if (buffer[18] & CESTATUS_EXCEPT) {
@@ -880,7 +885,7 @@ static long ch_ioctl_compat(struct file * file,
 static int ch_probe(struct device *dev)
 {
 	struct scsi_device *sd = to_scsi_device(dev);
-	struct class_device *class_dev;
+	struct device *class_dev;
 	int minor, ret = -ENOMEM;
 	scsi_changer *ch;
 
@@ -909,11 +914,11 @@ static int ch_probe(struct device *dev)
 	ch->minor = minor;
 	sprintf(ch->name,"ch%d",ch->minor);
 
-	class_dev = class_device_create(ch_sysfs_class, NULL,
-					MKDEV(SCSI_CHANGER_MAJOR, ch->minor),
-					dev, "s%s", ch->name);
+	class_dev = device_create_drvdata(ch_sysfs_class, dev,
+					  MKDEV(SCSI_CHANGER_MAJOR, ch->minor),
+					  ch, "s%s", ch->name);
 	if (IS_ERR(class_dev)) {
-		printk(KERN_WARNING "ch%d: class_device_create failed\n",
+		printk(KERN_WARNING "ch%d: device_create failed\n",
 		       ch->minor);
 		ret = PTR_ERR(class_dev);
 		goto remove_idr;
@@ -944,8 +949,7 @@ static int ch_remove(struct device *dev)
 	idr_remove(&ch_index_idr, ch->minor);
 	spin_unlock(&ch_index_lock);
 
-	class_device_destroy(ch_sysfs_class,
-			     MKDEV(SCSI_CHANGER_MAJOR,ch->minor));
+	device_destroy(ch_sysfs_class, MKDEV(SCSI_CHANGER_MAJOR,ch->minor));
 	kfree(ch->dt);
 	kfree(ch);
 	return 0;

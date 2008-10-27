@@ -33,6 +33,40 @@ enum fid_type {
 	 * 32 bit parent directory inode number.
 	 */
 	FILEID_INO32_GEN_PARENT = 2,
+
+	/*
+	 * 64 bit object ID, 64 bit root object ID,
+	 * 32 bit generation number.
+	 */
+	FILEID_BTRFS_WITHOUT_PARENT = 0x4d,
+
+	/*
+	 * 64 bit object ID, 64 bit root object ID,
+	 * 32 bit generation number,
+	 * 64 bit parent object ID, 32 bit parent generation.
+	 */
+	FILEID_BTRFS_WITH_PARENT = 0x4e,
+
+	/*
+	 * 64 bit object ID, 64 bit root object ID,
+	 * 32 bit generation number,
+	 * 64 bit parent object ID, 32 bit parent generation,
+	 * 64 bit parent root object ID.
+	 */
+	FILEID_BTRFS_WITH_PARENT_ROOT = 0x4f,
+
+	/*
+	 * 32 bit block number, 16 bit partition reference,
+	 * 16 bit unused, 32 bit generation number.
+	 */
+	FILEID_UDF_WITHOUT_PARENT = 0x51,
+
+	/*
+	 * 32 bit block number, 16 bit partition reference,
+	 * 16 bit unused, 32 bit generation number,
+	 * 32 bit parent block number, 32 bit parent generation number
+	 */
+	FILEID_UDF_WITH_PARENT = 0x52,
 };
 
 struct fid {
@@ -43,7 +77,15 @@ struct fid {
 			u32 parent_ino;
 			u32 parent_gen;
 		} i32;
-		__u32 raw[6];
+ 		struct {
+ 			u32 block;
+ 			u16 partref;
+ 			u16 parent_partref;
+ 			u32 generation;
+ 			u32 parent_block;
+ 			u32 parent_generation;
+ 		} udf;
+		__u32 raw[0];
 	};
 };
 

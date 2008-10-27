@@ -5,6 +5,8 @@
 *.css
 *.dvi
 *.eps
+*.fw.gen.S
+*.fw
 *.gif
 *.grep
 *.grp
@@ -47,7 +49,6 @@
 .mm
 53c700_d.h
 53c8xx_d.h*
-BitKeeper
 COPYING
 CREDITS
 CVS
@@ -142,6 +143,7 @@ mkprep
 mktables
 mktree
 modpost
+modules.order
 modversions.h*
 offset.h
 offsets.h
@@ -172,6 +174,7 @@ sm_tbl*
 split-include
 tags
 tftpboot.img
+timeconst.h
 times.h*
 tkparse
 trix_boot.h

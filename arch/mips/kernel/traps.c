@@ -22,6 +22,9 @@
 #include <linux/kallsyms.h>
 #include <linux/bootmem.h>
 #include <linux/interrupt.h>
+#include <linux/ptrace.h>
+#include <linux/kgdb.h>
+#include <linux/kdebug.h>
 
 #include <asm/bootinfo.h>
 #include <asm/branch.h>
@@ -43,6 +46,9 @@
 #include <asm/types.h>
 #include <asm/stacktrace.h>
 
+extern void check_wait(void);
+extern asmlinkage void r4k_wait(void);
+extern asmlinkage void rollback_handle_int(void);
 extern asmlinkage void handle_int(void);
 extern asmlinkage void handle_tlbm(void);
 extern asmlinkage void handle_tlbl(void);
@@ -70,7 +76,6 @@ extern asmlinkage void handle_reserved(void);
 extern int fpu_emulator_cop1Handler(struct pt_regs *xcp,
 	struct mips_fpu_struct *ctx, int has_fpu);
 
-void (*board_watchpoint_handler)(struct pt_regs *regs);
 void (*board_be_init)(void);
 int (*board_be_handler)(struct pt_regs *regs, int is_fixup);
 void (*board_nmi_handler_setup)(void);
@@ -80,7 +85,7 @@ void (*board_bind_eic_interrupt)(int irq, int regset);
 
 static void show_raw_backtrace(unsigned long reg29)
 {
-	unsigned long *sp = (unsigned long *)reg29;
+	unsigned long *sp = (unsigned long *)(reg29 & ~3);
 	unsigned long addr;
 
 	printk("Call Trace:");
@@ -88,7 +93,12 @@ static void show_raw_backtrace(unsigned long reg29)
 	printk("\n");
 #endif
 	while (!kstack_end(sp)) {
-		addr = *sp++;
+		unsigned long __user *p =
+			(unsigned long __user *)(unsigned long)sp++;
+		if (__get_user(addr, p)) {
+			printk(" (Bad stack address)");
+			break;
+		}
 		if (__kernel_text_address(addr))
 			print_ip_sym(addr);
 	}
@@ -192,16 +202,19 @@ EXPORT_SYMBOL(dump_stack);
 static void show_code(unsigned int __user *pc)
 {
 	long i;
+	unsigned short __user *pc16 = NULL;
 
 	printk("\nCode:");
 
+	if ((unsigned long)pc & 1)
+		pc16 = (unsigned short __user *)((unsigned long)pc & ~1);
 	for(i = -3 ; i < 6 ; i++) {
 		unsigned int insn;
-		if (__get_user(insn, pc + i)) {
+		if (pc16 ? __get_user(insn, pc16 + i) : __get_user(insn, pc + i)) {
 			printk(" (Bad address in epc)\n");
 			break;
 		}
-		printk("%c%08x%c", (i?' ':'<'), insn, (i?' ':'>'));
+		printk("%c%0*x%c", (i?' ':'<'), pc16 ? 4 : 8, insn, (i?' ':'>'));
 	}
 }
 
@@ -240,11 +253,11 @@ static void __show_regs(const struct pt_regs *regs)
 	/*
 	 * Saved cp0 registers
 	 */
-	printk("epc   : %0*lx ", field, regs->cp0_epc);
-	print_symbol("%s ", regs->cp0_epc);
+	printk("epc   : %0*lx %pS\n", field, regs->cp0_epc,
+	       (void *) regs->cp0_epc);
 	printk("    %s\n", print_tainted());
-	printk("ra    : %0*lx ", field, regs->regs[31]);
-	print_symbol("%s\n", regs->regs[31]);
+	printk("ra    : %0*lx %pS\n", field, regs->regs[31],
+	       (void *) regs->regs[31]);
 
 	printk("Status: %08x    ", (uint32_t) regs->cp0_status);
 
@@ -311,10 +324,21 @@ void show_regs(struct pt_regs *regs)
 
 void show_registers(const struct pt_regs *regs)
 {
+	const int field = 2 * sizeof(unsigned long);
+
 	__show_regs(regs);
 	print_modules();
-	printk("Process %s (pid: %d, threadinfo=%p, task=%p)\n",
-	        current->comm, task_pid_nr(current), current_thread_info(), current);
+	printk("Process %s (pid: %d, threadinfo=%p, task=%p, tls=%0*lx)\n",
+	       current->comm, current->pid, current_thread_info(), current,
+	      field, current_thread_info()->tp_value);
+	if (cpu_has_userlocal) {
+		unsigned long tls;
+
+		tls = read_c0_userlocal();
+		if (tls != current_thread_info()->tp_value)
+			printk("*HwTLS: %0*lx\n", field, tls);
+	}
+
 	show_stacktrace(current, regs);
 	show_code((unsigned int __user *) regs->cp0_epc);
 	printk("\n");
@@ -352,8 +376,8 @@ void __noreturn die(const char * str, const struct pt_regs * regs)
 	do_exit(SIGSEGV);
 }
 
-extern const struct exception_table_entry __start___dbe_table[];
-extern const struct exception_table_entry __stop___dbe_table[];
+extern struct exception_table_entry __start___dbe_table[];
+extern struct exception_table_entry __stop___dbe_table[];
 
 __asm__(
 "	.section	__dbe_table, \"a\"\n"
@@ -406,6 +430,10 @@ asmlinkage void do_be(struct pt_regs *regs)
 	printk(KERN_ALERT "%s bus error, epc == %0*lx, ra == %0*lx\n",
 	       data ? "Data" : "Instruction",
 	       field, regs->cp0_epc, field, regs->regs[31]);
+	if (notify_die(DIE_OOPS, "bus error", regs, SIGBUS, 0, 0)
+	    == NOTIFY_STOP)
+		return;
+
 	die_if_kernel("Oops", regs);
 	force_sig(SIGBUS, current);
 }
@@ -604,6 +632,9 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 {
 	siginfo_t info;
 
+	if (notify_die(DIE_FP, "FP exception", regs, SIGFPE, 0, 0)
+	    == NOTIFY_STOP)
+		return;
 	die_if_kernel("FP exception in kernel code", regs);
 
 	if (fcr31 & FPU_CSR_UNI_X) {
@@ -657,10 +688,49 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 	force_sig_info(SIGFPE, &info, current);
 }
 
+static void do_trap_or_bp(struct pt_regs *regs, unsigned int code,
+	const char *str)
+{
+	siginfo_t info;
+	char b[40];
+
+	if (notify_die(DIE_TRAP, str, regs, code, 0, 0) == NOTIFY_STOP)
+		return;
+
+	/*
+	 * A short test says that IRIX 5.3 sends SIGTRAP for all trap
+	 * insns, even for trap and break codes that indicate arithmetic
+	 * failures.  Weird ...
+	 * But should we continue the brokenness???  --macro
+	 */
+	switch (code) {
+	case BRK_OVERFLOW:
+	case BRK_DIVZERO:
+		scnprintf(b, sizeof(b), "%s instruction in kernel code", str);
+		die_if_kernel(b, regs);
+		if (code == BRK_DIVZERO)
+			info.si_code = FPE_INTDIV;
+		else
+			info.si_code = FPE_INTOVF;
+		info.si_signo = SIGFPE;
+		info.si_errno = 0;
+		info.si_addr = (void __user *) regs->cp0_epc;
+		force_sig_info(SIGFPE, &info, current);
+		break;
+	case BRK_BUG:
+		die_if_kernel("Kernel bug detected", regs);
+		force_sig(SIGTRAP, current);
+		break;
+	default:
+		scnprintf(b, sizeof(b), "%s instruction in kernel code", str);
+		die_if_kernel(b, regs);
+		force_sig(SIGTRAP, current);
+	}
+}
+
 asmlinkage void do_bp(struct pt_regs *regs)
 {
 	unsigned int opcode, bcode;
-	siginfo_t info;
 
 	if (__get_user(opcode, (unsigned int __user *) exception_epc(regs)))
 		goto out_sigsegv;
@@ -672,35 +742,10 @@ asmlinkage void do_bp(struct pt_regs *regs)
 	 * We handle both cases with a simple heuristics.  --macro
 	 */
 	bcode = ((opcode >> 6) & ((1 << 20) - 1));
-	if (bcode < (1 << 10))
-		bcode <<= 10;
+	if (bcode >= (1 << 10))
+		bcode >>= 10;
 
-	/*
-	 * (A short test says that IRIX 5.3 sends SIGTRAP for all break
-	 * insns, even for break codes that indicate arithmetic failures.
-	 * Weird ...)
-	 * But should we continue the brokenness???  --macro
-	 */
-	switch (bcode) {
-	case BRK_OVERFLOW << 10:
-	case BRK_DIVZERO << 10:
-		die_if_kernel("Break instruction in kernel code", regs);
-		if (bcode == (BRK_DIVZERO << 10))
-			info.si_code = FPE_INTDIV;
-		else
-			info.si_code = FPE_INTOVF;
-		info.si_signo = SIGFPE;
-		info.si_errno = 0;
-		info.si_addr = (void __user *) regs->cp0_epc;
-		force_sig_info(SIGFPE, &info, current);
-		break;
-	case BRK_BUG:
-		die("Kernel bug detected", regs);
-		break;
-	default:
-		die_if_kernel("Break instruction in kernel code", regs);
-		force_sig(SIGTRAP, current);
-	}
+	do_trap_or_bp(regs, bcode, "Break");
 	return;
 
 out_sigsegv:
@@ -710,7 +755,6 @@ out_sigsegv:
 asmlinkage void do_tr(struct pt_regs *regs)
 {
 	unsigned int opcode, tcode = 0;
-	siginfo_t info;
 
 	if (__get_user(opcode, (unsigned int __user *) exception_epc(regs)))
 		goto out_sigsegv;
@@ -719,32 +763,7 @@ asmlinkage void do_tr(struct pt_regs *regs)
 	if (!(opcode & OPCODE))
 		tcode = ((opcode >> 6) & ((1 << 10) - 1));
 
-	/*
-	 * (A short test says that IRIX 5.3 sends SIGTRAP for all trap
-	 * insns, even for trap codes that indicate arithmetic failures.
-	 * Weird ...)
-	 * But should we continue the brokenness???  --macro
-	 */
-	switch (tcode) {
-	case BRK_OVERFLOW:
-	case BRK_DIVZERO:
-		die_if_kernel("Trap instruction in kernel code", regs);
-		if (tcode == BRK_DIVZERO)
-			info.si_code = FPE_INTDIV;
-		else
-			info.si_code = FPE_INTOVF;
-		info.si_signo = SIGFPE;
-		info.si_errno = 0;
-		info.si_addr = (void __user *) regs->cp0_epc;
-		force_sig_info(SIGFPE, &info, current);
-		break;
-	case BRK_BUG:
-		die("Kernel bug detected", regs);
-		break;
-	default:
-		die_if_kernel("Trap instruction in kernel code", regs);
-		force_sig(SIGTRAP, current);
-	}
+	do_trap_or_bp(regs, tcode, "Trap");
 	return;
 
 out_sigsegv:
@@ -757,6 +776,10 @@ asmlinkage void do_ri(struct pt_regs *regs)
 	unsigned long old_epc = regs->cp0_epc;
 	unsigned int opcode = 0;
 	int status = -1;
+
+	if (notify_die(DIE_RI, "RI Fault", regs, SIGSEGV, 0, 0)
+	    == NOTIFY_STOP)
+		return;
 
 	die_if_kernel("Reserved instruction in kernel code", regs);
 
@@ -802,8 +825,10 @@ static void mt_ase_fp_affinity(void)
 		if (cpus_intersects(current->cpus_allowed, mt_fpu_cpumask)) {
 			cpumask_t tmask;
 
-			cpus_and(tmask, current->thread.user_cpus_allowed,
-			         mt_fpu_cpumask);
+			current->thread.user_cpus_allowed
+				= current->cpus_allowed;
+			cpus_and(tmask, current->cpus_allowed,
+				mt_fpu_cpumask);
 			set_cpus_allowed(current, tmask);
 			set_thread_flag(TIF_FPUBOUND);
 		}
@@ -887,11 +912,6 @@ asmlinkage void do_mdmx(struct pt_regs *regs)
 
 asmlinkage void do_watch(struct pt_regs *regs)
 {
-	if (board_watchpoint_handler) {
-		(*board_watchpoint_handler)(regs);
-		return;
-	}
-
 	/*
 	 * We use the watch exception where available to detect stack
 	 * overflows.
@@ -985,6 +1005,21 @@ asmlinkage void do_reserved(struct pt_regs *regs)
 	      (regs->cp0_cause & 0x7f) >> 2);
 }
 
+static int __initdata l1parity = 1;
+static int __init nol1parity(char *s)
+{
+	l1parity = 0;
+	return 1;
+}
+__setup("nol1par", nol1parity);
+static int __initdata l2parity = 1;
+static int __init nol2parity(char *s)
+{
+	l2parity = 0;
+	return 1;
+}
+__setup("nol2par", nol2parity);
+
 /*
  * Some MIPS CPUs can enable/disable for cache parity detection, but do
  * it different ways.
@@ -994,6 +1029,62 @@ static inline void parity_protection_init(void)
 	switch (current_cpu_type()) {
 	case CPU_24K:
 	case CPU_34K:
+	case CPU_74K:
+	case CPU_1004K:
+		{
+#define ERRCTL_PE	0x80000000
+#define ERRCTL_L2P	0x00800000
+			unsigned long errctl;
+			unsigned int l1parity_present, l2parity_present;
+
+			errctl = read_c0_ecc();
+			errctl &= ~(ERRCTL_PE|ERRCTL_L2P);
+
+			/* probe L1 parity support */
+			write_c0_ecc(errctl | ERRCTL_PE);
+			back_to_back_c0_hazard();
+			l1parity_present = (read_c0_ecc() & ERRCTL_PE);
+
+			/* probe L2 parity support */
+			write_c0_ecc(errctl|ERRCTL_L2P);
+			back_to_back_c0_hazard();
+			l2parity_present = (read_c0_ecc() & ERRCTL_L2P);
+
+			if (l1parity_present && l2parity_present) {
+				if (l1parity)
+					errctl |= ERRCTL_PE;
+				if (l1parity ^ l2parity)
+					errctl |= ERRCTL_L2P;
+			} else if (l1parity_present) {
+				if (l1parity)
+					errctl |= ERRCTL_PE;
+			} else if (l2parity_present) {
+				if (l2parity)
+					errctl |= ERRCTL_L2P;
+			} else {
+				/* No parity available */
+			}
+
+			printk(KERN_INFO "Writing ErrCtl register=%08lx\n", errctl);
+
+			write_c0_ecc(errctl);
+			back_to_back_c0_hazard();
+			errctl = read_c0_ecc();
+			printk(KERN_INFO "Readback ErrCtl register=%08lx\n", errctl);
+
+			if (l1parity_present)
+				printk(KERN_INFO "Cache parity protection %sabled\n",
+				       (errctl & ERRCTL_PE) ? "en" : "dis");
+
+			if (l2parity_present) {
+				if (l1parity_present && l1parity)
+					errctl ^= ERRCTL_L2P;
+				printk(KERN_INFO "L2 cache parity protection %sabled\n",
+				       (errctl & ERRCTL_L2P) ? "en" : "dis");
+			}
+		}
+		break;
+
 	case CPU_5KC:
 		write_c0_ecc(0x80000000);
 		back_to_back_c0_hazard();
@@ -1114,7 +1205,7 @@ void *set_except_vector(int n, void *addr)
 	if (n == 0 && cpu_has_divec) {
 		*(u32 *)(ebase + 0x200) = 0x08000000 |
 					  (0x03ffffff & (handler >> 2));
-		flush_icache_range(ebase + 0x200, ebase + 0x204);
+		local_flush_icache_range(ebase + 0x200, ebase + 0x204);
 	}
 	return (void *)old_handler;
 }
@@ -1165,6 +1256,9 @@ static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 
 		extern char except_vec_vi, except_vec_vi_lui;
 		extern char except_vec_vi_ori, except_vec_vi_end;
+		extern char rollback_except_vec_vi;
+		char *vec_start = (cpu_wait == r4k_wait) ?
+			&rollback_except_vec_vi : &except_vec_vi;
 #ifdef CONFIG_MIPS_MT_SMTC
 		/*
 		 * We need to provide the SMTC vectored interrupt handler
@@ -1172,11 +1266,11 @@ static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 		 * Status.IM bit to be masked before going there.
 		 */
 		extern char except_vec_vi_mori;
-		const int mori_offset = &except_vec_vi_mori - &except_vec_vi;
+		const int mori_offset = &except_vec_vi_mori - vec_start;
 #endif /* CONFIG_MIPS_MT_SMTC */
-		const int handler_len = &except_vec_vi_end - &except_vec_vi;
-		const int lui_offset = &except_vec_vi_lui - &except_vec_vi;
-		const int ori_offset = &except_vec_vi_ori - &except_vec_vi;
+		const int handler_len = &except_vec_vi_end - vec_start;
+		const int lui_offset = &except_vec_vi_lui - vec_start;
+		const int ori_offset = &except_vec_vi_ori - vec_start;
 
 		if (handler_len > VECTORSPACING) {
 			/*
@@ -1186,7 +1280,7 @@ static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 			panic("VECTORSPACING too small");
 		}
 
-		memcpy(b, &except_vec_vi, handler_len);
+		memcpy(b, vec_start, handler_len);
 #ifdef CONFIG_MIPS_MT_SMTC
 		BUG_ON(n > 7);	/* Vector index %d exceeds SMTC maximum. */
 
@@ -1197,7 +1291,8 @@ static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 		*w = (*w & 0xffff0000) | (((u32)handler >> 16) & 0xffff);
 		w = (u32 *)(b + ori_offset);
 		*w = (*w & 0xffff0000) | ((u32)handler & 0xffff);
-		flush_icache_range((unsigned long)b, (unsigned long)(b+handler_len));
+		local_flush_icache_range((unsigned long)b,
+					 (unsigned long)(b+handler_len));
 	}
 	else {
 		/*
@@ -1209,7 +1304,8 @@ static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 		w = (u32 *)b;
 		*w++ = 0x08000000 | (((u32)handler >> 2) & 0x03fffff); /* j handler */
 		*w = 0;
-		flush_icache_range((unsigned long)b, (unsigned long)(b+8));
+		local_flush_icache_range((unsigned long)b,
+					 (unsigned long)(b+8));
 	}
 
 	return (void *)old_handler;
@@ -1306,6 +1402,17 @@ int cp0_compare_irq;
 int cp0_perfcount_irq;
 EXPORT_SYMBOL_GPL(cp0_perfcount_irq);
 
+static int __cpuinitdata noulri;
+
+static int __init ulri_disable(char *s)
+{
+	pr_info("Disabling ulri\n");
+	noulri = 1;
+
+	return 1;
+}
+__setup("noulri", ulri_disable);
+
 void __cpuinit per_cpu_trap_init(void)
 {
 	unsigned int cpu = smp_processor_id();
@@ -1342,16 +1449,14 @@ void __cpuinit per_cpu_trap_init(void)
 	change_c0_status(ST0_CU|ST0_MX|ST0_RE|ST0_FR|ST0_BEV|ST0_TS|ST0_KX|ST0_SX|ST0_UX,
 			 status_set);
 
-#ifdef CONFIG_CPU_MIPSR2
 	if (cpu_has_mips_r2) {
 		unsigned int enable = 0x0000000f;
 
-		if (cpu_has_userlocal)
+		if (!noulri && cpu_has_userlocal)
 			enable |= (1 << 29);
 
 		write_c0_hwrena(enable);
 	}
-#endif
 
 #ifdef CONFIG_MIPS_MT_SMTC
 	if (!secondaryTC) {
@@ -1420,7 +1525,7 @@ void __cpuinit per_cpu_trap_init(void)
 void __init set_handler(unsigned long offset, void *addr, unsigned long size)
 {
 	memcpy((void *)(ebase + offset), addr, size);
-	flush_icache_range(ebase + offset, ebase + offset + size);
+	local_flush_icache_range(ebase + offset, ebase + offset + size);
 }
 
 static char panic_null_cerr[] __cpuinitdata =
@@ -1457,6 +1562,15 @@ void __init trap_init(void)
 	extern char except_vec3_generic, except_vec3_r4000;
 	extern char except_vec4;
 	unsigned long i;
+	int rollback;
+
+	check_wait();
+	rollback = (cpu_wait == r4k_wait);
+
+#if defined(CONFIG_KGDB)
+	if (kgdb_early_setup)
+		return;	/* Already done */
+#endif
 
 	if (cpu_has_veic || cpu_has_vint)
 		ebase = (unsigned long) alloc_bootmem_low_pages(0x200 + VECTORSPACING*64);
@@ -1516,7 +1630,7 @@ void __init trap_init(void)
 	if (board_be_init)
 		board_be_init();
 
-	set_except_vector(0, handle_int);
+	set_except_vector(0, rollback ? rollback_handle_int : handle_int);
 	set_except_vector(1, handle_tlbm);
 	set_except_vector(2, handle_tlbl);
 	set_except_vector(3, handle_tlbs);
@@ -1580,6 +1694,8 @@ void __init trap_init(void)
 	signal32_init();
 #endif
 
-	flush_icache_range(ebase, ebase + 0x400);
+	local_flush_icache_range(ebase, ebase + 0x400);
 	flush_tlb_handlers();
+
+	sort_extable(__start___dbe_table, __stop___dbe_table);
 }

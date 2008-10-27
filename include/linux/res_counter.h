@@ -9,6 +9,8 @@
  *
  * Author: Pavel Emelianov <xemul@openvz.org>
  *
+ * See Documentation/controllers/resource_counter.txt for more
+ * info about what this counter is.
  */
 
 #include <linux/cgroup.h>
@@ -25,6 +27,10 @@ struct res_counter {
 	 */
 	unsigned long long usage;
 	/*
+	 * the maximal value of the usage from the counter creation
+	 */
+	unsigned long long max_usage;
+	/*
 	 * the limit that usage cannot exceed
 	 */
 	unsigned long long limit;
@@ -39,8 +45,9 @@ struct res_counter {
 	spinlock_t lock;
 };
 
-/*
+/**
  * Helpers to interact with userspace
+ * res_counter_read_u64() - returns the value of the specified member.
  * res_counter_read/_write - put/get the specified fields from the
  * res_counter struct to/from the user
  *
@@ -51,12 +58,19 @@ struct res_counter {
  * @pos:     and the offset.
  */
 
+u64 res_counter_read_u64(struct res_counter *counter, int member);
+
 ssize_t res_counter_read(struct res_counter *counter, int member,
 		const char __user *buf, size_t nbytes, loff_t *pos,
 		int (*read_strategy)(unsigned long long val, char *s));
-ssize_t res_counter_write(struct res_counter *counter, int member,
-		const char __user *buf, size_t nbytes, loff_t *pos,
-		int (*write_strategy)(char *buf, unsigned long long *val));
+
+typedef int (*write_strategy_fn)(const char *buf, unsigned long long *val);
+
+int res_counter_memparse_write_strategy(const char *buf,
+					unsigned long long *res);
+
+int res_counter_write(struct res_counter *counter, int member,
+		      const char *buffer, write_strategy_fn write_strategy);
 
 /*
  * the field descriptors. one for each member of res_counter
@@ -64,6 +78,7 @@ ssize_t res_counter_write(struct res_counter *counter, int member,
 
 enum {
 	RES_USAGE,
+	RES_MAX_USAGE,
 	RES_LIMIT,
 	RES_FAILCNT,
 };
@@ -85,8 +100,10 @@ void res_counter_init(struct res_counter *counter);
  * counter->limit _locked call expects the counter->lock to be taken
  */
 
-int res_counter_charge_locked(struct res_counter *counter, unsigned long val);
-int res_counter_charge(struct res_counter *counter, unsigned long val);
+int __must_check res_counter_charge_locked(struct res_counter *counter,
+		unsigned long val);
+int __must_check res_counter_charge(struct res_counter *counter,
+		unsigned long val);
 
 /*
  * uncharge - tell that some portion of the resource is released
@@ -120,6 +137,39 @@ static inline bool res_counter_check_under_limit(struct res_counter *cnt)
 
 	spin_lock_irqsave(&cnt->lock, flags);
 	ret = res_counter_limit_check_locked(cnt);
+	spin_unlock_irqrestore(&cnt->lock, flags);
+	return ret;
+}
+
+static inline void res_counter_reset_max(struct res_counter *cnt)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&cnt->lock, flags);
+	cnt->max_usage = cnt->usage;
+	spin_unlock_irqrestore(&cnt->lock, flags);
+}
+
+static inline void res_counter_reset_failcnt(struct res_counter *cnt)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&cnt->lock, flags);
+	cnt->failcnt = 0;
+	spin_unlock_irqrestore(&cnt->lock, flags);
+}
+
+static inline int res_counter_set_limit(struct res_counter *cnt,
+		unsigned long long limit)
+{
+	unsigned long flags;
+	int ret = -EBUSY;
+
+	spin_lock_irqsave(&cnt->lock, flags);
+	if (cnt->usage <= limit) {
+		cnt->limit = limit;
+		ret = 0;
+	}
 	spin_unlock_irqrestore(&cnt->lock, flags);
 	return ret;
 }

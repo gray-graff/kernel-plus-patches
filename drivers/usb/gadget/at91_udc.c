@@ -40,16 +40,15 @@
 #include <linux/usb/gadget.h>
 
 #include <asm/byteorder.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/system.h>
-#include <asm/mach-types.h>
 #include <asm/gpio.h>
 
-#include <asm/arch/board.h>
-#include <asm/arch/cpu.h>
-#include <asm/arch/at91sam9261_matrix.h>
+#include <mach/board.h>
+#include <mach/cpu.h>
+#include <mach/at91sam9261_matrix.h>
 
 #include "at91_udc.h"
 
@@ -231,6 +230,7 @@ static int proc_udc_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations proc_ops = {
+	.owner		= THIS_MODULE,
 	.open		= proc_udc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -239,15 +239,7 @@ static const struct file_operations proc_ops = {
 
 static void create_debug_file(struct at91_udc *udc)
 {
-	struct proc_dir_entry *pde;
-
-	pde = create_proc_entry (debug_filename, 0, NULL);
-	udc->pde = pde;
-	if (pde == NULL)
-		return;
-
-	pde->proc_fops = &proc_ops;
-	pde->data = udc;
+	udc->pde = proc_create_data(debug_filename, 0, NULL, &proc_ops, udc);
 }
 
 static void remove_debug_file(struct at91_udc *udc)
@@ -389,6 +381,7 @@ static int write_fifo(struct at91_ep *ep, struct at91_request *req)
 	u32		csr = __raw_readl(creg);
 	u8 __iomem	*dreg = ep->creg + (AT91_UDP_FDR(0) - AT91_UDP_CSR(0));
 	unsigned	total, count, is_last;
+	u8		*buf;
 
 	/*
 	 * TODO: allow for writing two packets to the fifo ... that'll
@@ -413,6 +406,8 @@ static int write_fifo(struct at91_ep *ep, struct at91_request *req)
 			return 0;
 	}
 
+	buf = req->req.buf + req->req.actual;
+	prefetch(buf);
 	total = req->req.length - req->req.actual;
 	if (ep->ep.maxpacket < total) {
 		count = ep->ep.maxpacket;
@@ -435,7 +430,7 @@ static int write_fifo(struct at91_ep *ep, struct at91_request *req)
 	 * recover when the actual bytecount matters (e.g. for USB Test
 	 * and Measurement Class devices).
 	 */
-	__raw_writesb(dreg, req->req.buf + req->req.actual, count);
+	__raw_writesb(dreg, buf, count);
 	csr &= ~SET_FX;
 	csr |= CLR_FX | AT91_UDP_TXPKTRDY;
 	__raw_writel(csr, creg);
@@ -457,7 +452,7 @@ static void nuke(struct at91_ep *ep, int status)
 	if (list_empty(&ep->queue))
 		return;
 
-	VDBG("%s %s\n", __FUNCTION__, ep->ep.name);
+	VDBG("%s %s\n", __func__, ep->ep.name);
 	while (!list_empty(&ep->queue)) {
 		req = list_entry(ep->queue.next, struct at91_request, queue);
 		done(ep, req, status);
@@ -792,7 +787,7 @@ static int at91_wakeup(struct usb_gadget *gadget)
 	int		status = -EINVAL;
 	unsigned long	flags;
 
-	DBG("%s\n", __FUNCTION__ );
+	DBG("%s\n", __func__ );
 	local_irq_save(flags);
 
 	if (!udc->clocked || !udc->suspended)
@@ -892,7 +887,7 @@ static void pullup(struct at91_udc *udc, int is_on)
 		at91_udp_write(udc, AT91_UDP_TXVC, 0);
 		if (cpu_is_at91rm9200())
 			gpio_set_value(udc->board.pullup_pin, active);
-		else if (cpu_is_at91sam9260() || cpu_is_at91sam9263()) {
+		else if (cpu_is_at91sam9260() || cpu_is_at91sam9263() || cpu_is_at91sam9g20()) {
 			u32	txvc = at91_udp_read(udc, AT91_UDP_TXVC);
 
 			txvc |= AT91_UDP_TXVC_PUON;
@@ -910,7 +905,7 @@ static void pullup(struct at91_udc *udc, int is_on)
 		at91_udp_write(udc, AT91_UDP_TXVC, AT91_UDP_TXVC_TXVDIS);
 		if (cpu_is_at91rm9200())
 			gpio_set_value(udc->board.pullup_pin, !active);
-		else if (cpu_is_at91sam9260() || cpu_is_at91sam9263()) {
+		else if (cpu_is_at91sam9260() || cpu_is_at91sam9263() || cpu_is_at91sam9g20()) {
 			u32	txvc = at91_udp_read(udc, AT91_UDP_TXVC);
 
 			txvc &= ~AT91_UDP_TXVC_PUON;
@@ -1689,6 +1684,19 @@ static int __init at91udc_probe(struct platform_device *pdev)
 		}
 		gpio_direction_output(udc->board.pullup_pin,
 				udc->board.pullup_active_low);
+	}
+
+	/* newer chips have more FIFO memory than rm9200 */
+	if (cpu_is_at91sam9260()) {
+		udc->ep[0].maxpacket = 64;
+		udc->ep[3].maxpacket = 64;
+		udc->ep[4].maxpacket = 512;
+		udc->ep[5].maxpacket = 512;
+	} else if (cpu_is_at91sam9261()) {
+		udc->ep[3].maxpacket = 64;
+	} else if (cpu_is_at91sam9263()) {
+		udc->ep[0].maxpacket = 64;
+		udc->ep[3].maxpacket = 64;
 	}
 
 	udc->udp_baseaddr = ioremap(res->start, res->end - res->start + 1);

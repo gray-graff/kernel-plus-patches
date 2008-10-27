@@ -42,9 +42,9 @@
  *
  * Each device has a kref, which is initialized to 1 when the device is
  * registered. A kref_get is done for each device registered.  When the
- * device is released, the coresponding kref_put is done in the release
+ * device is released, the corresponding kref_put is done in the release
  * method. Every time one of the device's channels is allocated to a client,
- * a kref_get occurs.  When the channel is freed, the coresponding kref_put
+ * a kref_get occurs.  When the channel is freed, the corresponding kref_put
  * happens. The device's release function does a completion, so
  * unregister_device does a remove event, device_unregister, a kref_put
  * for the first reference, then waits on the completion for all other
@@ -53,7 +53,7 @@
  * Each channel has an open-coded implementation of Rusty Russell's "bigref,"
  * with a kref and a per_cpu local_t.  A dma_chan_get is called when a client
  * signals that it wants to use a channel, and dma_chan_put is called when
- * a channel is removed or a client using it is unregesitered.  A client can
+ * a channel is removed or a client using it is unregistered.  A client can
  * take extra references per outstanding transaction, as is the case with
  * the NET DMA client.  The release function does a kref_put on the device.
  *	-ChrisL, DanW
@@ -169,12 +169,18 @@ static void dma_client_chan_alloc(struct dma_client *client)
 	enum dma_state_client ack;
 
 	/* Find a channel */
-	list_for_each_entry(device, &dma_device_list, global_node)
+	list_for_each_entry(device, &dma_device_list, global_node) {
+		/* Does the client require a specific DMA controller? */
+		if (client->slave && client->slave->dma_dev
+				&& client->slave->dma_dev != device->dev)
+			continue;
+
 		list_for_each_entry(chan, &device->channels, device_node) {
 			if (!dma_chan_satisfies_mask(chan, client->cap_mask))
 				continue;
 
-			desc = chan->device->device_alloc_chan_resources(chan);
+			desc = chan->device->device_alloc_chan_resources(
+					chan, client);
 			if (desc >= 0) {
 				ack = client->event_callback(client,
 						chan,
@@ -183,12 +189,14 @@ static void dma_client_chan_alloc(struct dma_client *client)
 				/* we are done once this client rejects
 				 * an available resource
 				 */
-				if (ack == DMA_ACK)
+				if (ack == DMA_ACK) {
 					dma_chan_get(chan);
-				else if (ack == DMA_NAK)
+					chan->client_count++;
+				} else if (ack == DMA_NAK)
 					return;
 			}
 		}
+	}
 }
 
 enum dma_status dma_sync_wait(struct dma_chan *chan, dma_cookie_t cookie)
@@ -272,8 +280,10 @@ static void dma_clients_notify_removed(struct dma_chan *chan)
 		/* client was holding resources for this channel so
 		 * free it
 		 */
-		if (ack == DMA_ACK)
+		if (ack == DMA_ACK) {
 			dma_chan_put(chan);
+			chan->client_count--;
+		}
 	}
 
 	mutex_unlock(&dma_list_mutex);
@@ -285,6 +295,10 @@ static void dma_clients_notify_removed(struct dma_chan *chan)
  */
 void dma_async_client_register(struct dma_client *client)
 {
+	/* validate client data */
+	BUG_ON(dma_has_cap(DMA_SLAVE, client->cap_mask) &&
+		!client->slave);
+
 	mutex_lock(&dma_list_mutex);
 	list_add_tail(&client->global_node, &dma_client_list);
 	mutex_unlock(&dma_list_mutex);
@@ -313,8 +327,10 @@ void dma_async_client_unregister(struct dma_client *client)
 			ack = client->event_callback(client, chan,
 				DMA_RESOURCE_REMOVED);
 
-			if (ack == DMA_ACK)
+			if (ack == DMA_ACK) {
 				dma_chan_put(chan);
+				chan->client_count--;
+			}
 		}
 
 	list_del(&client->global_node);
@@ -359,10 +375,13 @@ int dma_async_device_register(struct dma_device *device)
 		!device->device_prep_dma_memset);
 	BUG_ON(dma_has_cap(DMA_INTERRUPT, device->cap_mask) &&
 		!device->device_prep_dma_interrupt);
+	BUG_ON(dma_has_cap(DMA_SLAVE, device->cap_mask) &&
+		!device->device_prep_slave_sg);
+	BUG_ON(dma_has_cap(DMA_SLAVE, device->cap_mask) &&
+		!device->device_terminate_all);
 
 	BUG_ON(!device->device_alloc_chan_resources);
 	BUG_ON(!device->device_free_chan_resources);
-	BUG_ON(!device->device_dependency_added);
 	BUG_ON(!device->device_is_tx_complete);
 	BUG_ON(!device->device_issue_pending);
 	BUG_ON(!device->dev);
@@ -379,7 +398,7 @@ int dma_async_device_register(struct dma_device *device)
 
 		chan->chan_id = chancnt++;
 		chan->dev.class = &dma_devclass;
-		chan->dev.parent = NULL;
+		chan->dev.parent = device->dev;
 		snprintf(chan->dev.bus_id, BUS_ID_SIZE, "dma%dchan%d",
 		         device->dev_id, chan->chan_id);
 
@@ -395,6 +414,7 @@ int dma_async_device_register(struct dma_device *device)
 		kref_get(&device->refcount);
 		kref_get(&device->refcount);
 		kref_init(&chan->refcount);
+		chan->client_count = 0;
 		chan->slow_ref = 0;
 		INIT_RCU_HEAD(&chan->rcu);
 	}
@@ -479,7 +499,8 @@ dma_async_memcpy_buf_to_buf(struct dma_chan *chan, void *dest,
 
 	dma_src = dma_map_single(dev->dev, src, len, DMA_TO_DEVICE);
 	dma_dest = dma_map_single(dev->dev, dest, len, DMA_FROM_DEVICE);
-	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len, 0);
+	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len,
+					 DMA_CTRL_ACK);
 
 	if (!tx) {
 		dma_unmap_single(dev->dev, dma_src, len, DMA_TO_DEVICE);
@@ -487,7 +508,6 @@ dma_async_memcpy_buf_to_buf(struct dma_chan *chan, void *dest,
 		return -ENOMEM;
 	}
 
-	tx->ack = 1;
 	tx->callback = NULL;
 	cookie = tx->tx_submit(tx);
 
@@ -525,7 +545,8 @@ dma_async_memcpy_buf_to_pg(struct dma_chan *chan, struct page *page,
 
 	dma_src = dma_map_single(dev->dev, kdata, len, DMA_TO_DEVICE);
 	dma_dest = dma_map_page(dev->dev, page, offset, len, DMA_FROM_DEVICE);
-	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len, 0);
+	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len,
+					 DMA_CTRL_ACK);
 
 	if (!tx) {
 		dma_unmap_single(dev->dev, dma_src, len, DMA_TO_DEVICE);
@@ -533,7 +554,6 @@ dma_async_memcpy_buf_to_pg(struct dma_chan *chan, struct page *page,
 		return -ENOMEM;
 	}
 
-	tx->ack = 1;
 	tx->callback = NULL;
 	cookie = tx->tx_submit(tx);
 
@@ -574,7 +594,8 @@ dma_async_memcpy_pg_to_pg(struct dma_chan *chan, struct page *dest_pg,
 	dma_src = dma_map_page(dev->dev, src_pg, src_off, len, DMA_TO_DEVICE);
 	dma_dest = dma_map_page(dev->dev, dest_pg, dest_off, len,
 				DMA_FROM_DEVICE);
-	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len, 0);
+	tx = dev->device_prep_dma_memcpy(chan, dma_dest, dma_src, len,
+					 DMA_CTRL_ACK);
 
 	if (!tx) {
 		dma_unmap_page(dev->dev, dma_src, len, DMA_TO_DEVICE);
@@ -582,7 +603,6 @@ dma_async_memcpy_pg_to_pg(struct dma_chan *chan, struct page *dest_pg,
 		return -ENOMEM;
 	}
 
-	tx->ack = 1;
 	tx->callback = NULL;
 	cookie = tx->tx_submit(tx);
 
@@ -600,8 +620,6 @@ void dma_async_tx_descriptor_init(struct dma_async_tx_descriptor *tx,
 {
 	tx->chan = chan;
 	spin_lock_init(&tx->lock);
-	INIT_LIST_HEAD(&tx->depend_node);
-	INIT_LIST_HEAD(&tx->depend_list);
 }
 EXPORT_SYMBOL(dma_async_tx_descriptor_init);
 

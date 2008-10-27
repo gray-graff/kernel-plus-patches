@@ -29,6 +29,7 @@
 #include <net/inet_sock.h>
 #include <net/sock.h>
 #include <net/tcp_states.h>
+#include <net/netns/hash.h>
 
 #include <asm/atomic.h>
 #include <asm/byteorder.h>
@@ -201,46 +202,28 @@ extern struct inet_bind_bucket *
 extern void inet_bind_bucket_destroy(struct kmem_cache *cachep,
 				     struct inet_bind_bucket *tb);
 
-static inline int inet_bhashfn(const __u16 lport, const int bhash_size)
+static inline int inet_bhashfn(struct net *net,
+		const __u16 lport, const int bhash_size)
 {
-	return lport & (bhash_size - 1);
+	return (lport + net_hash_mix(net)) & (bhash_size - 1);
 }
 
 extern void inet_bind_hash(struct sock *sk, struct inet_bind_bucket *tb,
 			   const unsigned short snum);
 
 /* These can have wildcards, don't try too hard. */
-static inline int inet_lhashfn(const unsigned short num)
+static inline int inet_lhashfn(struct net *net, const unsigned short num)
 {
-	return num & (INET_LHTABLE_SIZE - 1);
+	return (num + net_hash_mix(net)) & (INET_LHTABLE_SIZE - 1);
 }
 
 static inline int inet_sk_listen_hashfn(const struct sock *sk)
 {
-	return inet_lhashfn(inet_sk(sk)->num);
+	return inet_lhashfn(sock_net(sk), inet_sk(sk)->num);
 }
 
 /* Caller must disable local BH processing. */
-static inline void __inet_inherit_port(struct sock *sk, struct sock *child)
-{
-	struct inet_hashinfo *table = sk->sk_prot->hashinfo;
-	const int bhash = inet_bhashfn(inet_sk(child)->num, table->bhash_size);
-	struct inet_bind_hashbucket *head = &table->bhash[bhash];
-	struct inet_bind_bucket *tb;
-
-	spin_lock(&head->lock);
-	tb = inet_csk(sk)->icsk_bind_hash;
-	sk_add_bind_node(child, &tb->owners);
-	inet_csk(child)->icsk_bind_hash = tb;
-	spin_unlock(&head->lock);
-}
-
-static inline void inet_inherit_port(struct sock *sk, struct sock *child)
-{
-	local_bh_disable();
-	__inet_inherit_port(sk, child);
-	local_bh_enable();
-}
+extern void __inet_inherit_port(struct sock *sk, struct sock *child);
 
 extern void inet_put_port(struct sock *sk);
 
@@ -314,25 +297,25 @@ typedef __u64 __bitwise __addrpair;
 				   ((__force __u64)(__be32)(__saddr)));
 #endif /* __BIG_ENDIAN */
 #define INET_MATCH(__sk, __net, __hash, __cookie, __saddr, __daddr, __ports, __dif)\
-	(((__sk)->sk_hash == (__hash)) && ((__sk)->sk_net == (__net))	&&	\
+	(((__sk)->sk_hash == (__hash)) && sock_net((__sk)) == (__net)	&&	\
 	 ((*((__addrpair *)&(inet_sk(__sk)->daddr))) == (__cookie))	&&	\
 	 ((*((__portpair *)&(inet_sk(__sk)->dport))) == (__ports))	&&	\
 	 (!((__sk)->sk_bound_dev_if) || ((__sk)->sk_bound_dev_if == (__dif))))
 #define INET_TW_MATCH(__sk, __net, __hash, __cookie, __saddr, __daddr, __ports, __dif)\
-	(((__sk)->sk_hash == (__hash)) && ((__sk)->sk_net == (__net))	&&	\
+	(((__sk)->sk_hash == (__hash)) && sock_net((__sk)) == (__net)	&&	\
 	 ((*((__addrpair *)&(inet_twsk(__sk)->tw_daddr))) == (__cookie)) &&	\
 	 ((*((__portpair *)&(inet_twsk(__sk)->tw_dport))) == (__ports)) &&	\
 	 (!((__sk)->sk_bound_dev_if) || ((__sk)->sk_bound_dev_if == (__dif))))
 #else /* 32-bit arch */
 #define INET_ADDR_COOKIE(__name, __saddr, __daddr)
 #define INET_MATCH(__sk, __net, __hash, __cookie, __saddr, __daddr, __ports, __dif)	\
-	(((__sk)->sk_hash == (__hash)) && ((__sk)->sk_net == (__net))	&&	\
+	(((__sk)->sk_hash == (__hash)) && sock_net((__sk)) == (__net)	&&	\
 	 (inet_sk(__sk)->daddr		== (__saddr))		&&	\
 	 (inet_sk(__sk)->rcv_saddr	== (__daddr))		&&	\
 	 ((*((__portpair *)&(inet_sk(__sk)->dport))) == (__ports))	&&	\
 	 (!((__sk)->sk_bound_dev_if) || ((__sk)->sk_bound_dev_if == (__dif))))
 #define INET_TW_MATCH(__sk, __net, __hash,__cookie, __saddr, __daddr, __ports, __dif)	\
-	(((__sk)->sk_hash == (__hash)) && ((__sk)->sk_net == (__net))	&&	\
+	(((__sk)->sk_hash == (__hash)) && sock_net((__sk)) == (__net)	&&	\
 	 (inet_twsk(__sk)->tw_daddr	== (__saddr))		&&	\
 	 (inet_twsk(__sk)->tw_rcv_saddr	== (__daddr))		&&	\
 	 ((*((__portpair *)&(inet_twsk(__sk)->tw_dport))) == (__ports)) &&	\

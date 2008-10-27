@@ -34,7 +34,6 @@
 #include <linux/platform_device.h>
 #include <linux/sysdev.h>
 #include <linux/workqueue.h>
-#include <linux/version.h>
 
 #define EDAC_MC_LABEL_LEN	31
 #define EDAC_DEVICE_NAME_LEN	31
@@ -97,7 +96,7 @@ extern int edac_debug_level;
 #define PCI_VEND_DEV(vend, dev) PCI_VENDOR_ID_ ## vend, \
 	PCI_DEVICE_ID_ ## vend ## _ ## dev
 
-#define dev_name(dev) (dev)->dev_name
+#define edac_dev_name(dev) (dev)->dev_name
 
 /* memory devices */
 enum dev_type {

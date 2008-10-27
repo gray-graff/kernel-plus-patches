@@ -33,6 +33,7 @@
 #include <linux/device.h>
 #include <linux/firmware.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <media/cx2341x.h>
 
 #include "cx88.h"
@@ -45,7 +46,7 @@ static unsigned int mpegbufs = 32;
 module_param(mpegbufs,int,0644);
 MODULE_PARM_DESC(mpegbufs,"number of mpeg buffers, range 2-32");
 
-static unsigned int debug = 0;
+static unsigned int debug;
 module_param(debug,int,0644);
 MODULE_PARM_DESC(debug,"enable debug messages [blackbird]");
 
@@ -314,7 +315,7 @@ static int blackbird_mbox_func(void *priv, u32 command, int in, int out, u32 dat
 	u32 value, flag, retval;
 	int i;
 
-	dprintk(1,"%s: 0x%X\n", __FUNCTION__, command);
+	dprintk(1,"%s: 0x%X\n", __func__, command);
 
 	/* this may not be 100% safe if we can't read any memory location
 	   without side effects */
@@ -546,9 +547,11 @@ static int blackbird_initialize_codec(struct cx8802_dev *dev)
 		if (retval < 0)
 			return retval;
 
-		dev->mailbox = blackbird_find_mailbox(dev);
-		if (dev->mailbox < 0)
+		retval = blackbird_find_mailbox(dev);
+		if (retval < 0)
 			return -1;
+
+		dev->mailbox = retval;
 
 		retval = blackbird_api_cmd(dev, CX2341X_ENC_PING_FW, 0, 0); /* ping */
 		if (retval < 0) {
@@ -693,7 +696,7 @@ static int blackbird_queryctrl(struct cx8802_dev *dev, struct v4l2_queryctrl *qc
 		return -EINVAL;
 
 	/* Standard V4L2 controls */
-	if (cx8800_ctrl_query(qctrl) == 0)
+	if (cx8800_ctrl_query(dev->core, qctrl) == 0)
 		return 0;
 
 	/* MPEG V4L2 controls */
@@ -713,7 +716,8 @@ static int vidioc_querymenu (struct file *file, void *priv,
 
 	qctrl.id = qmenu->id;
 	blackbird_queryctrl(dev, &qctrl);
-	return v4l2_ctrl_query_menu(qmenu, &qctrl, cx2341x_ctrl_get_menu(qmenu->id));
+	return v4l2_ctrl_query_menu(qmenu, &qctrl,
+			cx2341x_ctrl_get_menu(&dev->params, qmenu->id));
 }
 
 static int vidioc_querycap (struct file *file, void  *priv,
@@ -735,7 +739,7 @@ static int vidioc_querycap (struct file *file, void  *priv,
 	return 0;
 }
 
-static int vidioc_enum_fmt_cap (struct file *file, void  *priv,
+static int vidioc_enum_fmt_vid_cap (struct file *file, void  *priv,
 					struct v4l2_fmtdesc *f)
 {
 	if (f->index != 0)
@@ -747,7 +751,7 @@ static int vidioc_enum_fmt_cap (struct file *file, void  *priv,
 	return 0;
 }
 
-static int vidioc_g_fmt_cap (struct file *file, void *priv,
+static int vidioc_g_fmt_vid_cap (struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct cx8802_fh  *fh   = priv;
@@ -766,7 +770,7 @@ static int vidioc_g_fmt_cap (struct file *file, void *priv,
 	return 0;
 }
 
-static int vidioc_try_fmt_cap (struct file *file, void *priv,
+static int vidioc_try_fmt_vid_cap (struct file *file, void *priv,
 			struct v4l2_format *f)
 {
 	struct cx8802_fh  *fh   = priv;
@@ -782,7 +786,7 @@ static int vidioc_try_fmt_cap (struct file *file, void *priv,
 	return 0;
 }
 
-static int vidioc_s_fmt_cap (struct file *file, void *priv,
+static int vidioc_s_fmt_vid_cap (struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct cx8802_fh  *fh   = priv;
@@ -933,7 +937,7 @@ static int vidioc_queryctrl (struct file *file, void *priv,
 	qctrl->id = v4l2_ctrl_next(ctrl_classes, qctrl->id);
 	if (unlikely(qctrl->id == 0))
 		return -EINVAL;
-	return cx8800_ctrl_query(qctrl);
+	return cx8800_ctrl_query(dev->core, qctrl);
 }
 
 static int vidioc_enum_input (struct file *file, void *priv,
@@ -1055,7 +1059,7 @@ static int mpeg_open(struct inode *inode, struct file *file)
 
 	dev = cx8802_get_device(inode);
 
-	dprintk( 1, "%s\n", __FUNCTION__);
+	dprintk( 1, "%s\n", __func__);
 
 	if (dev == NULL)
 		return -ENODEV;
@@ -1065,7 +1069,7 @@ static int mpeg_open(struct inode *inode, struct file *file)
 	if (drv) {
 		err = drv->request_acquire(drv);
 		if(err != 0) {
-			dprintk(1,"%s: Unable to acquire hardware, %d\n", __FUNCTION__, err);
+			dprintk(1,"%s: Unable to acquire hardware, %d\n", __func__, err);
 			return err;
 		}
 	}
@@ -1087,8 +1091,8 @@ static int mpeg_open(struct inode *inode, struct file *file)
 	file->private_data = fh;
 	fh->dev      = dev;
 
-	videobuf_queue_pci_init(&fh->mpegq, &blackbird_qops,
-			    dev->pci, &dev->slock,
+	videobuf_queue_sg_init(&fh->mpegq, &blackbird_qops,
+			    &dev->pci->dev, &dev->slock,
 			    V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			    V4L2_FIELD_INTERLACED,
 			    sizeof(struct cx88_buffer),
@@ -1171,18 +1175,13 @@ static const struct file_operations mpeg_fops =
 	.llseek        = no_llseek,
 };
 
-static struct video_device cx8802_mpeg_template =
-{
-	.name                 = "cx8802",
-	.type                 = VID_TYPE_CAPTURE|VID_TYPE_TUNER|VID_TYPE_SCALES|VID_TYPE_MPEG_ENCODER,
-	.fops                 = &mpeg_fops,
-	.minor                = -1,
+static const struct v4l2_ioctl_ops mpeg_ioctl_ops = {
 	.vidioc_querymenu     = vidioc_querymenu,
 	.vidioc_querycap      = vidioc_querycap,
-	.vidioc_enum_fmt_cap  = vidioc_enum_fmt_cap,
-	.vidioc_g_fmt_cap     = vidioc_g_fmt_cap,
-	.vidioc_try_fmt_cap   = vidioc_try_fmt_cap,
-	.vidioc_s_fmt_cap     = vidioc_s_fmt_cap,
+	.vidioc_enum_fmt_vid_cap  = vidioc_enum_fmt_vid_cap,
+	.vidioc_g_fmt_vid_cap     = vidioc_g_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap   = vidioc_try_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap     = vidioc_s_fmt_vid_cap,
 	.vidioc_reqbufs       = vidioc_reqbufs,
 	.vidioc_querybuf      = vidioc_querybuf,
 	.vidioc_qbuf          = vidioc_qbuf,
@@ -1204,6 +1203,13 @@ static struct video_device cx8802_mpeg_template =
 	.vidioc_g_tuner       = vidioc_g_tuner,
 	.vidioc_s_tuner       = vidioc_s_tuner,
 	.vidioc_s_std         = vidioc_s_std,
+};
+
+static struct video_device cx8802_mpeg_template = {
+	.name                 = "cx8802",
+	.fops                 = &mpeg_fops,
+	.ioctl_ops 	      = &mpeg_ioctl_ops,
+	.minor                = -1,
 	.tvnorms              = CX88_NORMS,
 	.current_norm         = V4L2_STD_NTSC_M,
 };
@@ -1284,7 +1290,7 @@ static int cx8802_blackbird_probe(struct cx8802_driver *drv)
 	struct cx8802_dev *dev = core->dvbdev;
 	int err;
 
-	dprintk( 1, "%s\n", __FUNCTION__);
+	dprintk( 1, "%s\n", __func__);
 	dprintk( 1, " ->being probed by Card=%d Name=%s, PCI %02x:%02x\n",
 		core->boardnr,
 		core->name,

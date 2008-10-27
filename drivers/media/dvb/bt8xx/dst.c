@@ -1244,7 +1244,7 @@ static int dst_command(struct dst_state *state, u8 *data, u8 len)
 		goto error;
 	}
 	if (state->type_flags & DST_TYPE_HAS_FW_1)
-		udelay(3000);
+		mdelay(3);
 	if (read_dst(state, &reply, GET_ACK)) {
 		dprintk(verbose, DST_DEBUG, 1, "Trying to recover.. ");
 		if ((dst_error_recovery(state)) < 0) {
@@ -1260,7 +1260,7 @@ static int dst_command(struct dst_state *state, u8 *data, u8 len)
 	if (len >= 2 && data[0] == 0 && (data[1] == 1 || data[1] == 3))
 		goto error;
 	if (state->type_flags & DST_TYPE_HAS_FW_1)
-		udelay(3000);
+		mdelay(3);
 	else
 		udelay(2000);
 	if (!dst_wait_dst_ready(state, NO_DELAY))
@@ -1290,7 +1290,7 @@ static int dst_get_signal(struct dst_state *state)
 {
 	int retval;
 	u8 get_signal[] = { 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfb };
-	//dprintk("%s: Getting Signal strength and other parameters\n", __FUNCTION__);
+	//dprintk("%s: Getting Signal strength and other parameters\n", __func__);
 	if ((state->diseq_flags & ATTEMPT_TUNE) == 0) {
 		state->decode_lock = state->decode_strength = state->decode_snr = 0;
 		return 0;
@@ -1714,7 +1714,7 @@ static void dst_release(struct dvb_frontend *fe)
 	struct dst_state *state = fe->demodulator_priv;
 	if (state->dst_ca) {
 		dvb_unregister_device(state->dst_ca);
-#ifdef CONFIG_DVB_CORE_ATTACH
+#ifdef CONFIG_MEDIA_ATTACH
 		symbol_put(dst_ca_attach);
 #endif
 	}

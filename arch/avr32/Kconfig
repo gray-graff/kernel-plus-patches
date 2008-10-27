@@ -10,6 +10,7 @@ config AVR32
 	# With EMBEDDED=n, we get lots of stuff automatically selected
 	# that we usually don't need on AVR32.
 	select EMBEDDED
+	select HAVE_CLK
 	select HAVE_OPROFILE
 	select HAVE_KPROBES
 	help
@@ -47,6 +48,9 @@ config RWSEM_GENERIC_SPINLOCK
 config GENERIC_TIME
 	def_bool y
 
+config GENERIC_CLOCKEVENTS
+	def_bool y
+
 config RWSEM_XCHGADD_ALGORITHM
 	def_bool n
 
@@ -70,6 +74,8 @@ source "init/Kconfig"
 
 menu "System Type and features"
 
+source "kernel/time/Kconfig"
+
 config SUBARCH_AVR32B
 	bool
 config MMU
@@ -82,7 +88,8 @@ config PLATFORM_AT32AP
 	select SUBARCH_AVR32B
 	select MMU
 	select PERFORMANCE_COUNTERS
-	select HAVE_GPIO_LIB
+	select ARCH_REQUIRE_GPIOLIB
+	select GENERIC_ALLOCATOR
 
 #
 # CPU types
@@ -142,6 +149,9 @@ config PHYS_OFFSET
 
 source "kernel/Kconfig.preempt"
 
+config QUICKLIST
+	def_bool y
+
 config HAVE_ARCH_BOOTMEM_NODE
 	def_bool n
 
@@ -195,6 +205,11 @@ config CMDLINE
 endmenu
 
 menu "Power management options"
+
+source "kernel/power/Kconfig"
+
+config ARCH_SUSPEND_POSSIBLE
+	def_bool y
 
 menu "CPU Frequency scaling"
 

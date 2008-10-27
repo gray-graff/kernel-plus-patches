@@ -55,7 +55,7 @@
 /* tmp - will replace with SCSI logging stuff */
 #define eprintk(fmt, args...)					\
 do {								\
-	printk("%s(%d) " fmt, __FUNCTION__, __LINE__, ##args);	\
+	printk("%s(%d) " fmt, __func__, __LINE__, ##args);	\
 } while (0)
 /* #define dprintk eprintk */
 #define dprintk(fmt, args...)
@@ -564,7 +564,7 @@ static int crq_queue_create(struct crq_queue *queue, struct srp_target *target)
 					  queue->size * sizeof(*queue->msgs),
 					  DMA_BIDIRECTIONAL);
 
-	if (dma_mapping_error(queue->msg_token))
+	if (dma_mapping_error(target->dev, queue->msg_token))
 		goto map_failed;
 
 	err = h_reg_crq(vport->dma_dev->unit_address, queue->msg_token,
@@ -780,32 +780,35 @@ static int ibmvstgt_it_nexus_response(struct Scsi_Host *shost, u64 itn_id,
 	return 0;
 }
 
-static ssize_t system_id_show(struct class_device *cdev, char *buf)
+static ssize_t system_id_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%s\n", system_id);
 }
 
-static ssize_t partition_number_show(struct class_device *cdev, char *buf)
+static ssize_t partition_number_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%x\n", partition_number);
 }
 
-static ssize_t unit_address_show(struct class_device *cdev, char *buf)
+static ssize_t unit_address_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct srp_target *target = host_to_srp_target(shost);
 	struct vio_port *vport = target_to_port(target);
 	return snprintf(buf, PAGE_SIZE, "%x\n", vport->dma_dev->unit_address);
 }
 
-static CLASS_DEVICE_ATTR(system_id, S_IRUGO, system_id_show, NULL);
-static CLASS_DEVICE_ATTR(partition_number, S_IRUGO, partition_number_show, NULL);
-static CLASS_DEVICE_ATTR(unit_address, S_IRUGO, unit_address_show, NULL);
+static DEVICE_ATTR(system_id, S_IRUGO, system_id_show, NULL);
+static DEVICE_ATTR(partition_number, S_IRUGO, partition_number_show, NULL);
+static DEVICE_ATTR(unit_address, S_IRUGO, unit_address_show, NULL);
 
-static struct class_device_attribute *ibmvstgt_attrs[] = {
-	&class_device_attr_system_id,
-	&class_device_attr_partition_number,
-	&class_device_attr_unit_address,
+static struct device_attribute *ibmvstgt_attrs[] = {
+	&dev_attr_system_id,
+	&dev_attr_partition_number,
+	&dev_attr_unit_address,
 	NULL,
 };
 

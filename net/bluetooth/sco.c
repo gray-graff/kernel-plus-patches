@@ -53,7 +53,9 @@
 #define BT_DBG(D...)
 #endif
 
-#define VERSION "0.5"
+#define VERSION "0.6"
+
+static int disable_esco = 0;
 
 static const struct proto_ops sco_sock_ops;
 
@@ -193,9 +195,12 @@ static int sco_connect(struct sock *sk)
 
 	err = -ENOMEM;
 
-	type = lmp_esco_capable(hdev) ? ESCO_LINK : SCO_LINK;
+	if (lmp_esco_capable(hdev) && !disable_esco)
+		type = ESCO_LINK;
+	else
+		type = SCO_LINK;
 
-	hcon = hci_connect(hdev, type, dst);
+	hcon = hci_connect(hdev, type, dst, HCI_AT_NO_BONDING);
 	if (!hcon)
 		goto done;
 
@@ -803,7 +808,7 @@ static void sco_conn_ready(struct sco_conn *conn)
 
 		bh_lock_sock(parent);
 
-		sk = sco_sock_alloc(parent->sk_net, NULL, BTPROTO_SCO, GFP_ATOMIC);
+		sk = sco_sock_alloc(sock_net(parent), NULL, BTPROTO_SCO, GFP_ATOMIC);
 		if (!sk) {
 			bh_unlock_sock(parent);
 			goto done;
@@ -921,7 +926,7 @@ static const struct proto_ops sco_sock_ops = {
 	.sendmsg	= sco_sock_sendmsg,
 	.recvmsg	= bt_sock_recvmsg,
 	.poll		= bt_sock_poll,
-	.ioctl		= sock_no_ioctl,
+	.ioctl		= bt_sock_ioctl,
 	.mmap		= sock_no_mmap,
 	.socketpair	= sock_no_socketpair,
 	.shutdown	= sock_no_shutdown,
@@ -994,7 +999,10 @@ static void __exit sco_exit(void)
 module_init(sco_init);
 module_exit(sco_exit);
 
-MODULE_AUTHOR("Maxim Krasnyansky <maxk@qualcomm.com>, Marcel Holtmann <marcel@holtmann.org>");
+module_param(disable_esco, bool, 0644);
+MODULE_PARM_DESC(disable_esco, "Disable eSCO connection creation");
+
+MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Bluetooth SCO ver " VERSION);
 MODULE_VERSION(VERSION);
 MODULE_LICENSE("GPL");

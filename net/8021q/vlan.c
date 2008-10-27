@@ -18,20 +18,20 @@
  *		2 of the License, or (at your option) any later version.
  */
 
-#include <asm/uaccess.h> /* for copy_from_user */
 #include <linux/capability.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <net/datalink.h>
-#include <linux/mm.h>
-#include <linux/in.h>
 #include <linux/init.h>
+#include <linux/rculist.h>
 #include <net/p8022.h>
 #include <net/arp.h>
 #include <linux/rtnetlink.h>
 #include <linux/notifier.h>
+#include <net/rtnetlink.h>
 #include <net/net_namespace.h>
+#include <net/netns/generic.h>
+#include <asm/uaccess.h>
 
 #include <linux/if_vlan.h>
 #include "vlan.h"
@@ -41,6 +41,8 @@
 
 /* Global VLAN variables */
 
+int vlan_net_id;
+
 /* Our listing of VLAN group(s) */
 static struct hlist_head vlan_group_hash[VLAN_GRP_HASH_SIZE];
 
@@ -48,9 +50,6 @@ static char vlan_fullname[] = "802.1Q VLAN Support";
 static char vlan_version[] = DRV_VERSION;
 static char vlan_copyright[] = "Ben Greear <greearb@candelatech.com>";
 static char vlan_buggyright[] = "David S. Miller <davem@redhat.com>";
-
-/* Determines interface naming scheme. */
-unsigned short vlan_name_type = VLAN_NAME_TYPE_RAW_PLUS_VID_NO_PAD;
 
 static struct packet_type vlan_packet_type = {
 	.type = __constant_htons(ETH_P_8021Q),
@@ -65,14 +64,14 @@ static inline unsigned int vlan_grp_hashfn(unsigned int idx)
 }
 
 /* Must be invoked with RCU read lock (no preempt) */
-static struct vlan_group *__vlan_find_group(int real_dev_ifindex)
+static struct vlan_group *__vlan_find_group(struct net_device *real_dev)
 {
 	struct vlan_group *grp;
 	struct hlist_node *n;
-	int hash = vlan_grp_hashfn(real_dev_ifindex);
+	int hash = vlan_grp_hashfn(real_dev->ifindex);
 
 	hlist_for_each_entry_rcu(grp, n, &vlan_group_hash[hash], hlist) {
-		if (grp->real_dev_ifindex == real_dev_ifindex)
+		if (grp->real_dev == real_dev)
 			return grp;
 	}
 
@@ -83,13 +82,12 @@ static struct vlan_group *__vlan_find_group(int real_dev_ifindex)
  *
  * Must be invoked with RCU read lock (no preempt)
  */
-struct net_device *__find_vlan_dev(struct net_device *real_dev,
-				   unsigned short VID)
+struct net_device *__find_vlan_dev(struct net_device *real_dev, u16 vlan_id)
 {
-	struct vlan_group *grp = __vlan_find_group(real_dev->ifindex);
+	struct vlan_group *grp = __vlan_find_group(real_dev);
 
 	if (grp)
-		return vlan_group_get_device(grp, VID);
+		return vlan_group_get_device(grp, vlan_id);
 
 	return NULL;
 }
@@ -103,32 +101,38 @@ static void vlan_group_free(struct vlan_group *grp)
 	kfree(grp);
 }
 
-static struct vlan_group *vlan_group_alloc(int ifindex)
+static struct vlan_group *vlan_group_alloc(struct net_device *real_dev)
 {
 	struct vlan_group *grp;
-	unsigned int size;
-	unsigned int i;
 
 	grp = kzalloc(sizeof(struct vlan_group), GFP_KERNEL);
 	if (!grp)
 		return NULL;
 
-	size = sizeof(struct net_device *) * VLAN_GROUP_ARRAY_PART_LEN;
-
-	for (i = 0; i < VLAN_GROUP_ARRAY_SPLIT_PARTS; i++) {
-		grp->vlan_devices_arrays[i] = kzalloc(size, GFP_KERNEL);
-		if (!grp->vlan_devices_arrays[i])
-			goto err;
-	}
-
-	grp->real_dev_ifindex = ifindex;
+	grp->real_dev = real_dev;
 	hlist_add_head_rcu(&grp->hlist,
-			   &vlan_group_hash[vlan_grp_hashfn(ifindex)]);
+			&vlan_group_hash[vlan_grp_hashfn(real_dev->ifindex)]);
 	return grp;
+}
 
-err:
-	vlan_group_free(grp);
-	return NULL;
+static int vlan_group_prealloc_vid(struct vlan_group *vg, u16 vlan_id)
+{
+	struct net_device **array;
+	unsigned int size;
+
+	ASSERT_RTNL();
+
+	array = vg->vlan_devices_arrays[vlan_id / VLAN_GROUP_ARRAY_PART_LEN];
+	if (array != NULL)
+		return 0;
+
+	size = sizeof(struct net_device *) * VLAN_GROUP_ARRAY_PART_LEN;
+	array = kzalloc(size, GFP_KERNEL);
+	if (array == NULL)
+		return -ENOBUFS;
+
+	vg->vlan_devices_arrays[vlan_id / VLAN_GROUP_ARRAY_PART_LEN] = array;
+	return 0;
 }
 
 static void vlan_rcu_free(struct rcu_head *rcu)
@@ -141,14 +145,12 @@ void unregister_vlan_dev(struct net_device *dev)
 	struct vlan_dev_info *vlan = vlan_dev_info(dev);
 	struct net_device *real_dev = vlan->real_dev;
 	struct vlan_group *grp;
-	unsigned short vlan_id = vlan->vlan_id;
+	u16 vlan_id = vlan->vlan_id;
 
 	ASSERT_RTNL();
 
-	grp = __vlan_find_group(real_dev->ifindex);
+	grp = __vlan_find_group(real_dev);
 	BUG_ON(!grp);
-
-	vlan_proc_rem_dev(dev);
 
 	/* Take it out of our own structures, but be sure to interlock with
 	 * HW accelerating devices or SW vlan input packet processing.
@@ -161,8 +163,12 @@ void unregister_vlan_dev(struct net_device *dev)
 
 	synchronize_net();
 
+	unregister_netdevice(dev);
+
 	/* If the group is now empty, kill off the group. */
 	if (grp->nr_vlans == 0) {
+		vlan_gvrp_uninit_applicant(real_dev);
+
 		if (real_dev->features & NETIF_F_HW_VLAN_RX)
 			real_dev->vlan_rx_register(real_dev, NULL);
 
@@ -174,8 +180,6 @@ void unregister_vlan_dev(struct net_device *dev)
 
 	/* Get rid of the vlan's reference to real_dev */
 	dev_put(real_dev);
-
-	unregister_netdevice(dev);
 }
 
 static void vlan_transfer_operstate(const struct net_device *dev,
@@ -199,7 +203,7 @@ static void vlan_transfer_operstate(const struct net_device *dev,
 	}
 }
 
-int vlan_check_real_dev(struct net_device *real_dev, unsigned short vlan_id)
+int vlan_check_real_dev(struct net_device *real_dev, u16 vlan_id)
 {
 	char *name = real_dev->name;
 
@@ -236,20 +240,27 @@ int register_vlan_dev(struct net_device *dev)
 {
 	struct vlan_dev_info *vlan = vlan_dev_info(dev);
 	struct net_device *real_dev = vlan->real_dev;
-	unsigned short vlan_id = vlan->vlan_id;
+	u16 vlan_id = vlan->vlan_id;
 	struct vlan_group *grp, *ngrp = NULL;
 	int err;
 
-	grp = __vlan_find_group(real_dev->ifindex);
+	grp = __vlan_find_group(real_dev);
 	if (!grp) {
-		ngrp = grp = vlan_group_alloc(real_dev->ifindex);
+		ngrp = grp = vlan_group_alloc(real_dev);
 		if (!grp)
 			return -ENOBUFS;
+		err = vlan_gvrp_init_applicant(real_dev);
+		if (err < 0)
+			goto out_free_group;
 	}
+
+	err = vlan_group_prealloc_vid(grp, vlan_id);
+	if (err < 0)
+		goto out_uninit_applicant;
 
 	err = register_netdevice(dev);
 	if (err < 0)
-		goto out_free_group;
+		goto out_uninit_applicant;
 
 	/* Account for reference in struct vlan_dev_info */
 	dev_hold(real_dev);
@@ -268,11 +279,11 @@ int register_vlan_dev(struct net_device *dev)
 	if (real_dev->features & NETIF_F_HW_VLAN_FILTER)
 		real_dev->vlan_rx_add_vid(real_dev, vlan_id);
 
-	if (vlan_proc_add_dev(dev) < 0)
-		pr_warning("8021q: failed to add proc entry for %s\n",
-			   dev->name);
 	return 0;
 
+out_uninit_applicant:
+	if (ngrp)
+		vlan_gvrp_uninit_applicant(real_dev);
 out_free_group:
 	if (ngrp)
 		vlan_group_free(ngrp);
@@ -282,44 +293,45 @@ out_free_group:
 /*  Attach a VLAN device to a mac address (ie Ethernet Card).
  *  Returns 0 if the device was created or a negative error code otherwise.
  */
-static int register_vlan_device(struct net_device *real_dev,
-				unsigned short VLAN_ID)
+static int register_vlan_device(struct net_device *real_dev, u16 vlan_id)
 {
 	struct net_device *new_dev;
+	struct net *net = dev_net(real_dev);
+	struct vlan_net *vn = net_generic(net, vlan_net_id);
 	char name[IFNAMSIZ];
 	int err;
 
-	if (VLAN_ID >= VLAN_VID_MASK)
+	if (vlan_id >= VLAN_VID_MASK)
 		return -ERANGE;
 
-	err = vlan_check_real_dev(real_dev, VLAN_ID);
+	err = vlan_check_real_dev(real_dev, vlan_id);
 	if (err < 0)
 		return err;
 
 	/* Gotta set up the fields for the device. */
-	switch (vlan_name_type) {
+	switch (vn->name_type) {
 	case VLAN_NAME_TYPE_RAW_PLUS_VID:
 		/* name will look like:	 eth1.0005 */
-		snprintf(name, IFNAMSIZ, "%s.%.4i", real_dev->name, VLAN_ID);
+		snprintf(name, IFNAMSIZ, "%s.%.4i", real_dev->name, vlan_id);
 		break;
 	case VLAN_NAME_TYPE_PLUS_VID_NO_PAD:
 		/* Put our vlan.VID in the name.
 		 * Name will look like:	 vlan5
 		 */
-		snprintf(name, IFNAMSIZ, "vlan%i", VLAN_ID);
+		snprintf(name, IFNAMSIZ, "vlan%i", vlan_id);
 		break;
 	case VLAN_NAME_TYPE_RAW_PLUS_VID_NO_PAD:
 		/* Put our vlan.VID in the name.
 		 * Name will look like:	 eth0.5
 		 */
-		snprintf(name, IFNAMSIZ, "%s.%i", real_dev->name, VLAN_ID);
+		snprintf(name, IFNAMSIZ, "%s.%i", real_dev->name, vlan_id);
 		break;
 	case VLAN_NAME_TYPE_PLUS_VID:
 		/* Put our vlan.VID in the name.
 		 * Name will look like:	 vlan0005
 		 */
 	default:
-		snprintf(name, IFNAMSIZ, "vlan%.4i", VLAN_ID);
+		snprintf(name, IFNAMSIZ, "vlan%.4i", vlan_id);
 	}
 
 	new_dev = alloc_netdev(sizeof(struct vlan_dev_info), name,
@@ -328,12 +340,13 @@ static int register_vlan_device(struct net_device *real_dev,
 	if (new_dev == NULL)
 		return -ENOBUFS;
 
+	dev_net_set(new_dev, net);
 	/* need 4 bytes for extra VLAN header info,
 	 * hope the underlying device can handle it.
 	 */
 	new_dev->mtu = real_dev->mtu;
 
-	vlan_dev_info(new_dev)->vlan_id = VLAN_ID; /* 1 through VLAN_VID_MASK */
+	vlan_dev_info(new_dev)->vlan_id = vlan_id;
 	vlan_dev_info(new_dev)->real_dev = real_dev;
 	vlan_dev_info(new_dev)->dent = NULL;
 	vlan_dev_info(new_dev)->flags = VLAN_FLAG_REORDER_HDR;
@@ -374,6 +387,18 @@ static void vlan_sync_address(struct net_device *dev,
 	memcpy(vlan->real_dev_addr, dev->dev_addr, ETH_ALEN);
 }
 
+static void vlan_transfer_features(struct net_device *dev,
+				   struct net_device *vlandev)
+{
+	unsigned long old_features = vlandev->features;
+
+	vlandev->features &= ~dev->vlan_features;
+	vlandev->features |= dev->features & dev->vlan_features;
+
+	if (old_features != vlandev->features)
+		netdev_features_change(vlandev);
+}
+
 static void __vlan_device_event(struct net_device *dev, unsigned long event)
 {
 	switch (event) {
@@ -382,6 +407,14 @@ static void __vlan_device_event(struct net_device *dev, unsigned long event)
 		if (vlan_proc_add_dev(dev) < 0)
 			pr_warning("8021q: failed to change proc name for %s\n",
 					dev->name);
+		break;
+	case NETDEV_REGISTER:
+		if (vlan_proc_add_dev(dev) < 0)
+			pr_warning("8021q: failed to add proc entry for %s\n",
+					dev->name);
+		break;
+	case NETDEV_UNREGISTER:
+		vlan_proc_rem_dev(dev);
 		break;
 	}
 }
@@ -394,15 +427,10 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	int i, flgs;
 	struct net_device *vlandev;
 
-	if (dev->nd_net != &init_net)
-		return NOTIFY_DONE;
-
-	if (is_vlan_dev(dev)) {
+	if (is_vlan_dev(dev))
 		__vlan_device_event(dev, event);
-		goto out;
-	}
 
-	grp = __vlan_find_group(dev->ifindex);
+	grp = __vlan_find_group(dev);
 	if (!grp)
 		goto out;
 
@@ -435,6 +463,18 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 			vlan_sync_address(dev, vlandev);
 		}
+		break;
+
+	case NETDEV_FEAT_CHANGE:
+		/* Propagate device features to underlying device */
+		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			vlandev = vlan_group_get_device(grp, i);
+			if (!vlandev)
+				continue;
+
+			vlan_transfer_features(dev, vlandev);
+		}
+
 		break;
 
 	case NETDEV_DOWN:
@@ -500,7 +540,6 @@ static struct notifier_block vlan_notifier_block __read_mostly = {
 static int vlan_ioctl_handler(struct net *net, void __user *arg)
 {
 	int err;
-	unsigned short vid = 0;
 	struct vlan_ioctl_args args;
 	struct net_device *dev = NULL;
 
@@ -522,13 +561,12 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 	case GET_VLAN_REALDEV_NAME_CMD:
 	case GET_VLAN_VID_CMD:
 		err = -ENODEV;
-		dev = __dev_get_by_name(&init_net, args.device1);
+		dev = __dev_get_by_name(net, args.device1);
 		if (!dev)
 			goto out;
 
 		err = -EINVAL;
-		if (args.cmd != ADD_VLAN_CMD &&
-		    !(dev->priv_flags & IFF_802_1Q_VLAN))
+		if (args.cmd != ADD_VLAN_CMD && !is_vlan_dev(dev))
 			goto out;
 	}
 
@@ -556,9 +594,9 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 		err = -EPERM;
 		if (!capable(CAP_NET_ADMIN))
 			break;
-		err = vlan_dev_set_vlan_flag(dev,
-					     args.u.flag,
-					     args.vlan_qos);
+		err = vlan_dev_change_flags(dev,
+					    args.vlan_qos ? args.u.flag : 0,
+					    args.u.flag);
 		break;
 
 	case SET_VLAN_NAME_TYPE_CMD:
@@ -567,7 +605,10 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 			break;
 		if ((args.u.name_type >= 0) &&
 		    (args.u.name_type < VLAN_NAME_TYPE_HIGHEST)) {
-			vlan_name_type = args.u.name_type;
+			struct vlan_net *vn;
+
+			vn = net_generic(net, vlan_net_id);
+			vn->name_type = args.u.name_type;
 			err = 0;
 		} else {
 			err = -EINVAL;
@@ -599,8 +640,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 
 	case GET_VLAN_VID_CMD:
 		err = 0;
-		vlan_dev_get_vid(dev, &vid);
-		args.u.VID = vid;
+		args.u.VID = vlan_dev_vlan_id(dev);
 		if (copy_to_user(arg, &args,
 				 sizeof(struct vlan_ioctl_args)))
 		      err = -EFAULT;
@@ -615,6 +655,51 @@ out:
 	return err;
 }
 
+static int vlan_init_net(struct net *net)
+{
+	int err;
+	struct vlan_net *vn;
+
+	err = -ENOMEM;
+	vn = kzalloc(sizeof(struct vlan_net), GFP_KERNEL);
+	if (vn == NULL)
+		goto err_alloc;
+
+	err = net_assign_generic(net, vlan_net_id, vn);
+	if (err < 0)
+		goto err_assign;
+
+	vn->name_type = VLAN_NAME_TYPE_RAW_PLUS_VID_NO_PAD;
+
+	err = vlan_proc_init(net);
+	if (err < 0)
+		goto err_proc;
+
+	return 0;
+
+err_proc:
+	/* nothing */
+err_assign:
+	kfree(vn);
+err_alloc:
+	return err;
+}
+
+static void vlan_exit_net(struct net *net)
+{
+	struct vlan_net *vn;
+
+	vn = net_generic(net, vlan_net_id);
+	rtnl_kill_links(net, &vlan_link_ops);
+	vlan_proc_cleanup(net);
+	kfree(vn);
+}
+
+static struct pernet_operations vlan_net_ops = {
+	.init = vlan_init_net,
+	.exit = vlan_exit_net,
+};
+
 static int __init vlan_proto_init(void)
 {
 	int err;
@@ -622,27 +707,33 @@ static int __init vlan_proto_init(void)
 	pr_info("%s v%s %s\n", vlan_fullname, vlan_version, vlan_copyright);
 	pr_info("All bugs added by %s\n", vlan_buggyright);
 
-	err = vlan_proc_init();
+	err = register_pernet_gen_device(&vlan_net_id, &vlan_net_ops);
 	if (err < 0)
-		goto err1;
+		goto err0;
 
 	err = register_netdevice_notifier(&vlan_notifier_block);
 	if (err < 0)
 		goto err2;
 
-	err = vlan_netlink_init();
+	err = vlan_gvrp_init();
 	if (err < 0)
 		goto err3;
+
+	err = vlan_netlink_init();
+	if (err < 0)
+		goto err4;
 
 	dev_add_pack(&vlan_packet_type);
 	vlan_ioctl_set(vlan_ioctl_handler);
 	return 0;
 
+err4:
+	vlan_gvrp_uninit();
 err3:
 	unregister_netdevice_notifier(&vlan_notifier_block);
 err2:
-	vlan_proc_cleanup();
-err1:
+	unregister_pernet_gen_device(vlan_net_id, &vlan_net_ops);
+err0:
 	return err;
 }
 
@@ -661,9 +752,10 @@ static void __exit vlan_cleanup_module(void)
 	for (i = 0; i < VLAN_GRP_HASH_SIZE; i++)
 		BUG_ON(!hlist_empty(&vlan_group_hash[i]));
 
-	vlan_proc_cleanup();
-
+	unregister_pernet_gen_device(vlan_net_id, &vlan_net_ops);
 	synchronize_net();
+
+	vlan_gvrp_uninit();
 }
 
 module_init(vlan_proto_init);

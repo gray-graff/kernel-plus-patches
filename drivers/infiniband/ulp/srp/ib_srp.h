@@ -28,8 +28,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: ib_srp.h 3932 2005-11-01 17:19:29Z roland $
  */
 
 #ifndef IB_SRP_H
@@ -97,9 +95,9 @@ struct srp_device {
 };
 
 struct srp_host {
-	struct srp_device      *dev;
+	struct srp_device      *srp_dev;
 	u8			port;
-	struct class_device	class_dev;
+	struct device		dev;
 	struct list_head	target_list;
 	spinlock_t		target_lock;
 	struct completion	released;

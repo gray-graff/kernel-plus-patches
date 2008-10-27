@@ -45,7 +45,6 @@
 #ifdef CONFIG_PPC64
 #include <asm/hvcall.h>
 #include <asm/paca.h>
-#include <asm/iseries/it_lp_reg_save.h>
 #endif
 
 #include "nonstdio.h"
@@ -55,7 +54,7 @@
 #define skipbl	xmon_skipbl
 
 #ifdef CONFIG_SMP
-cpumask_t cpus_in_xmon = CPU_MASK_NONE;
+static cpumask_t cpus_in_xmon = CPU_MASK_NONE;
 static unsigned long xmon_taken = 1;
 static int xmon_owner;
 static int xmon_gate;
@@ -155,7 +154,7 @@ static int do_spu_cmd(void);
 static void dump_tlb_44x(void);
 #endif
 
-int xmon_no_auto_backtrace;
+static int xmon_no_auto_backtrace;
 
 extern void xmon_enter(void);
 extern void xmon_leave(void);
@@ -327,6 +326,11 @@ static void get_output_lock(void)
 static void release_output_lock(void)
 {
 	xmon_speaker = 0;
+}
+
+int cpus_are_in_xmon(void)
+{
+	return !cpus_empty(cpus_in_xmon);
 }
 #endif
 
@@ -594,7 +598,7 @@ static int xmon_iabr_match(struct pt_regs *regs)
 {
 	if ((regs->msr & (MSR_IR|MSR_PR|MSR_SF)) != (MSR_IR|MSR_SF))
 		return 0;
-	if (iabr == 0)
+	if (iabr == NULL)
 		return 0;
 	xmon_core(regs, 0);
 	return 1;
@@ -1143,7 +1147,7 @@ bpt_cmds(void)
 		} else {
 			/* assume a breakpoint address */
 			bp = at_breakpoint(a);
-			if (bp == 0) {
+			if (bp == NULL) {
 				printf("No breakpoint at %x\n", a);
 				break;
 			}
@@ -1244,15 +1248,12 @@ static void get_function_bounds(unsigned long pc, unsigned long *startp,
 
 static int xmon_depth_to_print = 64;
 
-#ifdef CONFIG_PPC64
-#define LRSAVE_OFFSET		0x10
-#define REG_FRAME_MARKER	0x7265677368657265ul	/* "regshere" */
-#define MARKER_OFFSET		0x60
+#define LRSAVE_OFFSET		(STACK_FRAME_LR_SAVE * sizeof(unsigned long))
+#define MARKER_OFFSET		(STACK_FRAME_MARKER * sizeof(unsigned long))
+
+#ifdef __powerpc64__
 #define REGS_OFFSET		0x70
 #else
-#define LRSAVE_OFFSET		4
-#define REG_FRAME_MARKER	0x72656773
-#define MARKER_OFFSET		8
 #define REGS_OFFSET		16
 #endif
 
@@ -1318,7 +1319,7 @@ static void xmon_show_stack(unsigned long sp, unsigned long lr,
 		/* Look for "regshere" marker to see if this is
 		   an exception frame. */
 		if (mread(sp + MARKER_OFFSET, &marker, sizeof(unsigned long))
-		    && marker == REG_FRAME_MARKER) {
+		    && marker == STACK_FRAME_REGS_MARKER) {
 			if (mread(sp + REGS_OFFSET, &regs, sizeof(regs))
 			    != sizeof(regs)) {
 				printf("Couldn't read registers at %lx\n",
@@ -1374,7 +1375,7 @@ static void print_bug_trap(struct pt_regs *regs)
 #endif
 }
 
-void excprint(struct pt_regs *fp)
+static void excprint(struct pt_regs *fp)
 {
 	unsigned long trap;
 
@@ -1412,7 +1413,7 @@ void excprint(struct pt_regs *fp)
 		print_bug_trap(fp);
 }
 
-void prregs(struct pt_regs *fp)
+static void prregs(struct pt_regs *fp)
 {
 	int n, trap;
 	unsigned long base;
@@ -1467,7 +1468,7 @@ void prregs(struct pt_regs *fp)
 		printf("dar = "REG"   dsisr = %.8lx\n", fp->dar, fp->dsisr);
 }
 
-void cacheflush(void)
+static void cacheflush(void)
 {
 	int cmd;
 	unsigned long nflush;
@@ -1499,7 +1500,7 @@ void cacheflush(void)
 	catch_memory_errors = 0;
 }
 
-unsigned long
+static unsigned long
 read_spr(int n)
 {
 	unsigned int instrs[2];
@@ -1537,7 +1538,7 @@ read_spr(int n)
 	return ret;
 }
 
-void
+static void
 write_spr(int n, unsigned long val)
 {
 	unsigned int instrs[2];
@@ -1575,7 +1576,7 @@ static unsigned long regno;
 extern char exc_prolog;
 extern char dec_exc;
 
-void super_regs(void)
+static void super_regs(void)
 {
 	int cmd;
 	unsigned long val;
@@ -1598,7 +1599,6 @@ void super_regs(void)
 		if (firmware_has_feature(FW_FEATURE_ISERIES)) {
 			struct paca_struct *ptrPaca;
 			struct lppaca *ptrLpPaca;
-			struct ItLpRegSave *ptrLpRegSave;
 
 			/* Dump out relevant Paca data areas. */
 			printf("Paca: \n");
@@ -1611,15 +1611,6 @@ void super_regs(void)
 			printf("    Saved Gpr3=%.16lx  Saved Gpr4=%.16lx \n",
 			       ptrLpPaca->saved_gpr3, ptrLpPaca->saved_gpr4);
 			printf("    Saved Gpr5=%.16lx \n", ptrLpPaca->saved_gpr5);
-
-			printf("  Local Processor Register Save Area (LpRegSave): \n");
-			ptrLpRegSave = ptrPaca->reg_save_ptr;
-			printf("    Saved Sprg0=%.16lx  Saved Sprg1=%.16lx \n",
-			       ptrLpRegSave->xSPRG0, ptrLpRegSave->xSPRG0);
-			printf("    Saved Sprg2=%.16lx  Saved Sprg3=%.16lx \n",
-			       ptrLpRegSave->xSPRG2, ptrLpRegSave->xSPRG3);
-			printf("    Saved Msr  =%.16lx  Saved Nia  =%.16lx \n",
-			       ptrLpRegSave->xMSR, ptrLpRegSave->xNIA);
 		}
 #endif
 
@@ -1643,7 +1634,7 @@ void super_regs(void)
 /*
  * Stuff for reading and writing memory safely
  */
-int
+static int
 mread(unsigned long adrs, void *buf, int size)
 {
 	volatile int n;
@@ -1680,7 +1671,7 @@ mread(unsigned long adrs, void *buf, int size)
 	return n;
 }
 
-int
+static int
 mwrite(unsigned long adrs, void *buf, int size)
 {
 	volatile int n;
@@ -1745,7 +1736,7 @@ static int handle_fault(struct pt_regs *regs)
 
 #define SWAP(a, b, t)	((t) = (a), (a) = (b), (b) = (t))
 
-void
+static void
 byterev(unsigned char *val, int size)
 {
 	int t;
@@ -1807,7 +1798,7 @@ static char *memex_subcmd_help_string =
     "  x        exit this mode\n"
     "";
 
-void
+static void
 memex(void)
 {
 	int cmd, inc, i, nslash;
@@ -1958,7 +1949,7 @@ memex(void)
 	}
 }
 
-int
+static int
 bsesc(void)
 {
 	int c;
@@ -1998,7 +1989,7 @@ static void xmon_rawdump (unsigned long adrs, long ndump)
 #define isxdigit(c)	(('0' <= (c) && (c) <= '9') \
 			 || ('a' <= (c) && (c) <= 'f') \
 			 || ('A' <= (c) && (c) <= 'F'))
-void
+static void
 dump(void)
 {
 	int c;
@@ -2036,7 +2027,7 @@ dump(void)
 	}
 }
 
-void
+static void
 prdump(unsigned long adrs, long ndump)
 {
 	long n, m, c, r, nr;
@@ -2080,7 +2071,7 @@ prdump(unsigned long adrs, long ndump)
 
 typedef int (*instruction_dump_func)(unsigned long inst, unsigned long addr);
 
-int
+static int
 generic_inst_dump(unsigned long adr, long count, int praddr,
 			instruction_dump_func dump_func)
 {
@@ -2118,7 +2109,7 @@ generic_inst_dump(unsigned long adr, long count, int praddr,
 	return adr - first_adr;
 }
 
-int
+static int
 ppc_inst_dump(unsigned long adr, long count, int praddr)
 {
 	return generic_inst_dump(adr, count, praddr, print_insn_powerpc);
@@ -2140,7 +2131,7 @@ static unsigned long mval;		/* byte value to set memory to */
 static unsigned long mcount;		/* # bytes to affect */
 static unsigned long mdiffs;		/* max # differences to print */
 
-void
+static void
 memops(int cmd)
 {
 	scanhex((void *)&mdest);
@@ -2166,7 +2157,7 @@ memops(int cmd)
 	}
 }
 
-void
+static void
 memdiffs(unsigned char *p1, unsigned char *p2, unsigned nb, unsigned maxpr)
 {
 	unsigned n, prt;
@@ -2184,7 +2175,7 @@ memdiffs(unsigned char *p1, unsigned char *p2, unsigned nb, unsigned maxpr)
 static unsigned mend;
 static unsigned mask;
 
-void
+static void
 memlocate(void)
 {
 	unsigned a, n;
@@ -2217,7 +2208,7 @@ memlocate(void)
 static unsigned long mskip = 0x1000;
 static unsigned long mlim = 0xffffffff;
 
-void
+static void
 memzcan(void)
 {
 	unsigned char v;
@@ -2244,7 +2235,7 @@ memzcan(void)
 		printf("%.8x\n", a - mskip);
 }
 
-void proccall(void)
+static void proccall(void)
 {
 	unsigned long args[8];
 	unsigned long ret;
@@ -2402,7 +2393,7 @@ scanhex(unsigned long *vp)
 	return 1;
 }
 
-void
+static void
 scannl(void)
 {
 	int c;
@@ -2413,7 +2404,7 @@ scannl(void)
 		c = inchar();
 }
 
-int hexdigit(int c)
+static int hexdigit(int c)
 {
 	if( '0' <= c && c <= '9' )
 		return c - '0';
@@ -2444,13 +2435,13 @@ getstring(char *s, int size)
 static char line[256];
 static char *lineptr;
 
-void
+static void
 flush_input(void)
 {
 	lineptr = NULL;
 }
 
-int
+static int
 inchar(void)
 {
 	if (lineptr == NULL || *lineptr == 0) {
@@ -2463,7 +2454,7 @@ inchar(void)
 	return *lineptr++;
 }
 
-void
+static void
 take_input(char *str)
 {
 	lineptr = str;
@@ -2632,7 +2623,8 @@ static void dump_tlb_44x(void)
 	}
 }
 #endif /* CONFIG_44x */
-void xmon_init(int enable)
+
+static void xmon_init(int enable)
 {
 #ifdef CONFIG_PPC_ISERIES
 	if (firmware_has_feature(FW_FEATURE_ISERIES))
@@ -2856,9 +2848,10 @@ static void dump_spu_fields(struct spu *spu)
 	DUMP_FIELD(spu, "0x%lx", ls_size);
 	DUMP_FIELD(spu, "0x%x", node);
 	DUMP_FIELD(spu, "0x%lx", flags);
-	DUMP_FIELD(spu, "0x%lx", dar);
-	DUMP_FIELD(spu, "0x%lx", dsisr);
 	DUMP_FIELD(spu, "%d", class_0_pending);
+	DUMP_FIELD(spu, "0x%lx", class_0_dar);
+	DUMP_FIELD(spu, "0x%lx", class_1_dar);
+	DUMP_FIELD(spu, "0x%lx", class_1_dsisr);
 	DUMP_FIELD(spu, "0x%lx", irqs[0]);
 	DUMP_FIELD(spu, "0x%lx", irqs[1]);
 	DUMP_FIELD(spu, "0x%lx", irqs[2]);

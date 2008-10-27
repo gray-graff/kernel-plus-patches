@@ -33,7 +33,6 @@
 
 #include <asm/uaccess.h>
 #include <linux/module.h>
-#include <linux/version.h>
 
 #include "gianfar.h"
 
@@ -103,10 +102,10 @@ static ssize_t gfar_set_rx_stash_size(struct device *dev,
 
 	spin_lock_irqsave(&priv->rxlock, flags);
 	if (length > priv->rx_buffer_size)
-		return count;
+		goto out;
 
 	if (length == priv->rx_stash_size)
-		return count;
+		goto out;
 
 	priv->rx_stash_size = length;
 
@@ -125,6 +124,7 @@ static ssize_t gfar_set_rx_stash_size(struct device *dev,
 
 	gfar_write(&priv->regs->attr, temp);
 
+out:
 	spin_unlock_irqrestore(&priv->rxlock, flags);
 
 	return count;
@@ -154,10 +154,10 @@ static ssize_t gfar_set_rx_stash_index(struct device *dev,
 
 	spin_lock_irqsave(&priv->rxlock, flags);
 	if (index > priv->rx_stash_size)
-		return count;
+		goto out;
 
 	if (index == priv->rx_stash_index)
-		return count;
+		goto out;
 
 	priv->rx_stash_index = index;
 
@@ -166,6 +166,7 @@ static ssize_t gfar_set_rx_stash_index(struct device *dev,
 	temp |= ATTRELI_EI(index);
 	gfar_write(&priv->regs->attreli, flags);
 
+out:
 	spin_unlock_irqrestore(&priv->rxlock, flags);
 
 	return count;

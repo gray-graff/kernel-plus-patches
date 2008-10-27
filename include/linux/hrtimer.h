@@ -47,14 +47,22 @@ enum hrtimer_restart {
  *	HRTIMER_CB_IRQSAFE:		Callback may run in hardirq context
  *	HRTIMER_CB_IRQSAFE_NO_RESTART:	Callback may run in hardirq context and
  *					does not restart the timer
- *	HRTIMER_CB_IRQSAFE_NO_SOFTIRQ:	Callback must run in hardirq context
- *					Special mode for tick emultation
+ *	HRTIMER_CB_IRQSAFE_PERCPU:	Callback must run in hardirq context
+ *					Special mode for tick emulation and
+ *					scheduler timer. Such timers are per
+ *					cpu and not allowed to be migrated on
+ *					cpu unplug.
+ *	HRTIMER_CB_IRQSAFE_UNLOCKED:	Callback should run in hardirq context
+ *					with timer->base lock unlocked
+ *					used for timers which call wakeup to
+ *					avoid lock order problems with rq->lock
  */
 enum hrtimer_cb_mode {
 	HRTIMER_CB_SOFTIRQ,
 	HRTIMER_CB_IRQSAFE,
 	HRTIMER_CB_IRQSAFE_NO_RESTART,
-	HRTIMER_CB_IRQSAFE_NO_SOFTIRQ,
+	HRTIMER_CB_IRQSAFE_PERCPU,
+	HRTIMER_CB_IRQSAFE_UNLOCKED,
 };
 
 /*
@@ -67,9 +75,10 @@ enum hrtimer_cb_mode {
  * 0x02		callback function running
  * 0x04		callback pending (high resolution mode)
  *
- * Special case:
+ * Special cases:
  * 0x03		callback function running and enqueued
  *		(was requeued on another CPU)
+ * 0x09		timer was migrated on CPU hotunplug
  * The "callback function running and enqueued" status is only possible on
  * SMP. It happens for example when a posix timer expired and the callback
  * queued a signal. Between dropping the lock which protects the posix timer
@@ -87,6 +96,7 @@ enum hrtimer_cb_mode {
 #define HRTIMER_STATE_ENQUEUED	0x01
 #define HRTIMER_STATE_CALLBACK	0x02
 #define HRTIMER_STATE_PENDING	0x04
+#define HRTIMER_STATE_MIGRATE	0x08
 
 /**
  * struct hrtimer - the basic hrtimer structure
@@ -173,7 +183,6 @@ struct hrtimer_clock_base {
  * struct hrtimer_cpu_base - the per cpu clock bases
  * @lock:		lock protecting the base and associated clock bases
  *			and timers
- * @lock_key:		the lock_class_key for use with lockdep
  * @clock_base:		array of clock bases for this cpu
  * @curr_timer:		the timer which is executing a callback right now
  * @expires_next:	absolute time of the next event which was scheduled
@@ -189,7 +198,6 @@ struct hrtimer_clock_base {
  */
 struct hrtimer_cpu_base {
 	spinlock_t			lock;
-	struct lock_class_key		lock_key;
 	struct hrtimer_clock_base	clock_base[HRTIMER_MAX_CLOCK_BASES];
 	struct list_head		cb_pending;
 #ifdef CONFIG_HIGH_RES_TIMERS
@@ -268,6 +276,21 @@ extern ktime_t ktime_get_real(void);
 extern void hrtimer_init(struct hrtimer *timer, clockid_t which_clock,
 			 enum hrtimer_mode mode);
 
+#ifdef CONFIG_DEBUG_OBJECTS_TIMERS
+extern void hrtimer_init_on_stack(struct hrtimer *timer, clockid_t which_clock,
+				  enum hrtimer_mode mode);
+
+extern void destroy_hrtimer_on_stack(struct hrtimer *timer);
+#else
+static inline void hrtimer_init_on_stack(struct hrtimer *timer,
+					 clockid_t which_clock,
+					 enum hrtimer_mode mode)
+{
+	hrtimer_init(timer, which_clock, mode);
+}
+static inline void destroy_hrtimer_on_stack(struct hrtimer *timer) { }
+#endif
+
 /* Basic timer operations: */
 extern int hrtimer_start(struct hrtimer *timer, ktime_t tim,
 			 const enum hrtimer_mode mode);
@@ -301,6 +324,15 @@ static inline int hrtimer_is_queued(struct hrtimer *timer)
 {
 	return timer->state &
 		(HRTIMER_STATE_ENQUEUED | HRTIMER_STATE_PENDING);
+}
+
+/*
+ * Helper function to check, whether the timer is running the callback
+ * function
+ */
+static inline int hrtimer_callback_running(struct hrtimer *timer)
+{
+	return timer->state & HRTIMER_STATE_CALLBACK;
 }
 
 /* Forward a hrtimer so it expires after now: */

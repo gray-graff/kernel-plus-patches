@@ -47,11 +47,28 @@
 #define SCHED_TIMEOUT	10
 #define MAXPOLLWADDR	2
 
+/**
+ * struct p9_fd_opts - per-transport options
+ * @rfd: file descriptor for reading (trans=fd)
+ * @wfd: file descriptor for writing (trans=fd)
+ * @port: port to connect to (trans=tcp)
+ *
+ */
+
 struct p9_fd_opts {
 	int rfd;
 	int wfd;
 	u16 port;
 };
+
+
+/**
+ * struct p9_trans_fd - transport state
+ * @rd: reference to file to read from
+ * @wr: reference of file to write to
+ * @conn: connection state reference
+ *
+ */
 
 struct p9_trans_fd {
 	struct file *rd;
@@ -90,10 +107,24 @@ enum {
 };
 
 struct p9_req;
-
 typedef void (*p9_conn_req_callback)(struct p9_req *req, void *a);
+
+/**
+ * struct p9_req - fd mux encoding of an rpc transaction
+ * @lock: protects req_list
+ * @tag: numeric tag for rpc transaction
+ * @tcall: request &p9_fcall structure
+ * @rcall: response &p9_fcall structure
+ * @err: error state
+ * @cb: callback for when response is received
+ * @cba: argument to pass to callback
+ * @flush: flag to indicate RPC has been flushed
+ * @req_list: list link for higher level objects to chain requests
+ *
+ */
+
 struct p9_req {
-	spinlock_t lock; /* protect request structure */
+	spinlock_t lock;
 	int tag;
 	struct p9_fcall *tcall;
 	struct p9_fcall *rcall;
@@ -104,7 +135,38 @@ struct p9_req {
 	struct list_head req_list;
 };
 
-struct p9_mux_poll_task;
+struct p9_mux_poll_task {
+	struct task_struct *task;
+	struct list_head mux_list;
+	int muxnum;
+};
+
+/**
+ * struct p9_conn - fd mux connection state information
+ * @lock: protects mux_list (?)
+ * @mux_list: list link for mux to manage multiple connections (?)
+ * @poll_task: task polling on this connection
+ * @msize: maximum size for connection (dup)
+ * @extended: 9p2000.u flag (dup)
+ * @trans: reference to transport instance for this connection
+ * @tagpool: id accounting for transactions
+ * @err: error state
+ * @req_list: accounting for requests which have been sent
+ * @unsent_req_list: accounting for requests that haven't been sent
+ * @rcall: current response &p9_fcall structure
+ * @rpos: read position in current frame
+ * @rbuf: current read buffer
+ * @wpos: write position for current frame
+ * @wsize: amount of data to write for current frame
+ * @wbuf: current write buffer
+ * @poll_wait: array of wait_q's for various worker threads
+ * @poll_waddr: ????
+ * @pt: poll state
+ * @rq: current read work
+ * @wq: current write work
+ * @wsched: ????
+ *
+ */
 
 struct p9_conn {
 	spinlock_t lock; /* protect lock structure */
@@ -115,7 +177,6 @@ struct p9_conn {
 	struct p9_trans *trans;
 	struct p9_idpool *tagpool;
 	int err;
-	wait_queue_head_t equeue;
 	struct list_head req_list;
 	struct list_head unsent_req_list;
 	struct p9_fcall *rcall;
@@ -132,11 +193,16 @@ struct p9_conn {
 	unsigned long wsched;
 };
 
-struct p9_mux_poll_task {
-	struct task_struct *task;
-	struct list_head mux_list;
-	int muxnum;
-};
+/**
+ * struct p9_mux_rpc - fd mux rpc accounting structure
+ * @m: connection this request was issued on
+ * @err: error state
+ * @tcall: request &p9_fcall
+ * @rcall: response &p9_fcall
+ * @wqueue: wait queue that client is blocked on for this rpc
+ *
+ * Bug: isn't this information duplicated elsewhere like &p9_req
+ */
 
 struct p9_mux_rpc {
 	struct p9_conn *m;
@@ -172,22 +238,6 @@ static int p9_conn_rpcnb(struct p9_conn *m, struct p9_fcall *tc,
 
 static void p9_conn_cancel(struct p9_conn *m, int err);
 
-static int p9_mux_global_init(void)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(p9_mux_poll_tasks); i++)
-		p9_mux_poll_tasks[i].task = NULL;
-
-	p9_mux_wq = create_workqueue("v9fs");
-	if (!p9_mux_wq) {
-		printk(KERN_WARNING "v9fs: mux: creating workqueue failed\n");
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
 static u16 p9_mux_get_tag(struct p9_conn *m)
 {
 	int tag;
@@ -207,10 +257,12 @@ static void p9_mux_put_tag(struct p9_conn *m, u16 tag)
 
 /**
  * p9_mux_calc_poll_procs - calculates the number of polling procs
- * based on the number of mounted v9fs filesystems.
+ * @muxnum: number of mounts
  *
+ * Calculation is based on the number of mounted v9fs filesystems.
  * The current implementation returns sqrt of the number of mounts.
  */
+
 static int p9_mux_calc_poll_procs(int muxnum)
 {
 	int n;
@@ -331,20 +383,19 @@ static void p9_mux_poll_stop(struct p9_conn *m)
 
 /**
  * p9_conn_create - allocate and initialize the per-session mux data
- * Creates the polling task if this is the first session.
+ * @trans: transport structure
  *
- * @trans - transport structure
- * @msize - maximum message size
- * @extended - extended flag
+ * Note: Creates the polling task if this is the first session.
  */
+
 static struct p9_conn *p9_conn_create(struct p9_trans *trans)
 {
 	int i, n;
-	struct p9_conn *m, *mtmp;
+	struct p9_conn *m;
 
 	P9_DPRINTK(P9_DEBUG_MUX, "transport %p msize %d\n", trans,
 								trans->msize);
-	m = kmalloc(sizeof(struct p9_conn), GFP_KERNEL);
+	m = kzalloc(sizeof(struct p9_conn), GFP_KERNEL);
 	if (!m)
 		return ERR_PTR(-ENOMEM);
 
@@ -355,25 +406,14 @@ static struct p9_conn *p9_conn_create(struct p9_trans *trans)
 	m->trans = trans;
 	m->tagpool = p9_idpool_create();
 	if (IS_ERR(m->tagpool)) {
-		mtmp = ERR_PTR(-ENOMEM);
 		kfree(m);
-		return mtmp;
+		return ERR_PTR(-ENOMEM);
 	}
 
-	m->err = 0;
-	init_waitqueue_head(&m->equeue);
 	INIT_LIST_HEAD(&m->req_list);
 	INIT_LIST_HEAD(&m->unsent_req_list);
-	m->rcall = NULL;
-	m->rpos = 0;
-	m->rbuf = NULL;
-	m->wpos = m->wsize = 0;
-	m->wbuf = NULL;
 	INIT_WORK(&m->rq, p9_read_work);
 	INIT_WORK(&m->wq, p9_write_work);
-	m->wsched = 0;
-	memset(&m->poll_waddr, 0, sizeof(m->poll_waddr));
-	m->poll_task = NULL;
 	n = p9_mux_poll_start(m);
 	if (n) {
 		kfree(m);
@@ -394,10 +434,8 @@ static struct p9_conn *p9_conn_create(struct p9_trans *trans)
 	for (i = 0; i < ARRAY_SIZE(m->poll_waddr); i++) {
 		if (IS_ERR(m->poll_waddr[i])) {
 			p9_mux_poll_stop(m);
-			mtmp = (void *)m->poll_waddr;	/* the error code */
 			kfree(m);
-			m = mtmp;
-			break;
+			return (void *)m->poll_waddr;	/* the error code */
 		}
 	}
 
@@ -406,32 +444,35 @@ static struct p9_conn *p9_conn_create(struct p9_trans *trans)
 
 /**
  * p9_mux_destroy - cancels all pending requests and frees mux resources
+ * @m: mux to destroy
+ *
  */
+
 static void p9_conn_destroy(struct p9_conn *m)
 {
 	P9_DPRINTK(P9_DEBUG_MUX, "mux %p prev %p next %p\n", m,
 		m->mux_list.prev, m->mux_list.next);
-	p9_conn_cancel(m, -ECONNRESET);
-
-	if (!list_empty(&m->req_list)) {
-		/* wait until all processes waiting on this session exit */
-		P9_DPRINTK(P9_DEBUG_MUX,
-			"mux %p waiting for empty request queue\n", m);
-		wait_event_timeout(m->equeue, (list_empty(&m->req_list)), 5000);
-		P9_DPRINTK(P9_DEBUG_MUX, "mux %p request queue empty: %d\n", m,
-			list_empty(&m->req_list));
-	}
 
 	p9_mux_poll_stop(m);
+	cancel_work_sync(&m->rq);
+	cancel_work_sync(&m->wq);
+
+	p9_conn_cancel(m, -ECONNRESET);
+
 	m->trans = NULL;
 	p9_idpool_destroy(m->tagpool);
 	kfree(m);
 }
 
 /**
- * p9_pollwait - called by files poll operation to add v9fs-poll task
- * 	to files wait queue
+ * p9_pollwait - add poll task to the wait queue
+ * @filp: file pointer being polled
+ * @wait_address: wait_q to block on
+ * @p: poll state
+ *
+ * called by files poll operation to add v9fs-poll task to files wait queue
  */
+
 static void
 p9_pollwait(struct file *filp, wait_queue_head_t *wait_address, poll_table *p)
 {
@@ -462,7 +503,10 @@ p9_pollwait(struct file *filp, wait_queue_head_t *wait_address, poll_table *p)
 
 /**
  * p9_poll_mux - polls a mux and schedules read or write works if necessary
+ * @m: connection to poll
+ *
  */
+
 static void p9_poll_mux(struct p9_conn *m)
 {
 	int n;
@@ -499,9 +543,14 @@ static void p9_poll_mux(struct p9_conn *m)
 }
 
 /**
- * p9_poll_proc - polls all v9fs transports for new events and queues
- * 	the appropriate work to the work queue
+ * p9_poll_proc - poll worker thread
+ * @a: thread state and arguments
+ *
+ * polls all v9fs transports for new events and queues the appropriate
+ * work to the work queue
+ *
  */
+
 static int p9_poll_proc(void *a)
 {
 	struct p9_conn *m, *mtmp;
@@ -527,7 +576,10 @@ static int p9_poll_proc(void *a)
 
 /**
  * p9_write_work - called when a transport can send some data
+ * @work: container for work to be done
+ *
  */
+
 static void p9_write_work(struct work_struct *work)
 {
 	int n, err;
@@ -638,7 +690,10 @@ static void process_request(struct p9_conn *m, struct p9_req *req)
 
 /**
  * p9_read_work - called when there is some data to be read from a transport
+ * @work: container of work to be done
+ *
  */
+
 static void p9_read_work(struct work_struct *work)
 {
 	int n, err;
@@ -749,8 +804,6 @@ static void p9_read_work(struct work_struct *work)
 					(*req->cb) (req, req->cba);
 				else
 					kfree(req->rcall);
-
-				wake_up(&m->equeue);
 			}
 		} else {
 			if (err >= 0 && rcall->id != P9_RFLUSH)
@@ -793,7 +846,9 @@ error:
  * @tc: request to be sent
  * @cb: callback function to call when response is received
  * @cba: parameter to pass to the callback function
+ *
  */
+
 static struct p9_req *p9_send_request(struct p9_conn *m,
 					  struct p9_fcall *tc,
 					  p9_conn_req_callback cb, void *cba)
@@ -815,8 +870,10 @@ static struct p9_req *p9_send_request(struct p9_conn *m,
 	else
 		n = p9_mux_get_tag(m);
 
-	if (n < 0)
+	if (n < 0) {
+		kfree(req);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	p9_set_tag(tc, n);
 
@@ -891,8 +948,6 @@ static void p9_mux_flush_cb(struct p9_req *freq, void *a)
 			(*req->cb) (req, req->cba);
 		else
 			kfree(req->rcall);
-
-		wake_up(&m->equeue);
 	}
 
 	kfree(freq->tcall);
@@ -961,10 +1016,12 @@ p9_conn_rpc_cb(struct p9_req *req, void *a)
 /**
  * p9_fd_rpc- sends 9P request and waits until a response is available.
  *	The function can be interrupted.
- * @m: mux data
+ * @t: transport data
  * @tc: request to be sent
  * @rc: pointer where a pointer to the response is stored
+ *
  */
+
 int
 p9_fd_rpc(struct p9_trans *t, struct p9_fcall *tc, struct p9_fcall **rc)
 {
@@ -1041,8 +1098,10 @@ p9_fd_rpc(struct p9_trans *t, struct p9_fcall *tc, struct p9_fcall **rc)
  * @m: mux data
  * @tc: request to be sent
  * @cb: callback function to be called when response arrives
- * @cba: value to pass to the callback function
+ * @a: value to pass to the callback function
+ *
  */
+
 int p9_conn_rpcnb(struct p9_conn *m, struct p9_fcall *tc,
 		   p9_conn_req_callback cb, void *a)
 {
@@ -1065,7 +1124,9 @@ int p9_conn_rpcnb(struct p9_conn *m, struct p9_fcall *tc,
  * p9_conn_cancel - cancel all pending requests with error
  * @m: mux data
  * @err: error code
+ *
  */
+
 void p9_conn_cancel(struct p9_conn *m, int err)
 {
 	struct p9_req *req, *rtmp;
@@ -1092,40 +1153,49 @@ void p9_conn_cancel(struct p9_conn *m, int err)
 		else
 			kfree(req->rcall);
 	}
-
-	wake_up(&m->equeue);
 }
 
 /**
- * v9fs_parse_options - parse mount options into session structure
+ * parse_options - parse mount options into session structure
  * @options: options string passed from mount
- * @v9ses: existing v9fs session information
+ * @opts: transport-specific structure to parse options into
  *
+ * Returns 0 upon success, -ERRNO upon failure
  */
 
-static void parse_opts(char *options, struct p9_fd_opts *opts)
+static int parse_opts(char *params, struct p9_fd_opts *opts)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	int option;
+	char *options;
 	int ret;
 
 	opts->port = P9_PORT;
 	opts->rfd = ~0;
 	opts->wfd = ~0;
 
-	if (!options)
-		return;
+	if (!params)
+		return 0;
+
+	options = kstrdup(params, GFP_KERNEL);
+	if (!options) {
+		P9_DPRINTK(P9_DEBUG_ERROR,
+				"failed to allocate copy of option string\n");
+		return -ENOMEM;
+	}
 
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token;
+		int r;
 		if (!*p)
 			continue;
 		token = match_token(p, tokens, args);
-		ret = match_int(&args[0], &option);
-		if (ret < 0) {
+		r = match_int(&args[0], &option);
+		if (r < 0) {
 			P9_DPRINTK(P9_DEBUG_ERROR,
 			 "integer field, but no integer?\n");
+			ret = r;
 			continue;
 		}
 		switch (token) {
@@ -1142,6 +1212,8 @@ static void parse_opts(char *options, struct p9_fd_opts *opts)
 			continue;
 		}
 	}
+	kfree(options);
+	return 0;
 }
 
 static int p9_fd_open(struct p9_trans *trans, int rfd, int wfd)
@@ -1173,7 +1245,7 @@ static int p9_socket_open(struct p9_trans *trans, struct socket *csocket)
 	int fd, ret;
 
 	csocket->sk->sk_allocation = GFP_NOIO;
-	fd = sock_map_fd(csocket);
+	fd = sock_map_fd(csocket, 0);
 	if (fd < 0) {
 		P9_EPRINTK(KERN_ERR, "p9_socket_open: failed to map fd\n");
 		return fd;
@@ -1193,11 +1265,12 @@ static int p9_socket_open(struct p9_trans *trans, struct socket *csocket)
 
 /**
  * p9_fd_read- read from a fd
- * @v9ses: session information
+ * @trans: transport instance state
  * @v: buffer to receive data into
  * @len: size of receive buffer
  *
  */
+
 static int p9_fd_read(struct p9_trans *trans, void *v, int len)
 {
 	int ret;
@@ -1220,11 +1293,12 @@ static int p9_fd_read(struct p9_trans *trans, void *v, int len)
 
 /**
  * p9_fd_write - write to a socket
- * @v9ses: session information
+ * @trans: transport instance state
  * @v: buffer to send data from
  * @len: size of send buffer
  *
  */
+
 static int p9_fd_write(struct p9_trans *trans, void *v, int len)
 {
 	int ret;
@@ -1256,7 +1330,6 @@ p9_fd_poll(struct p9_trans *trans, struct poll_table_struct *pt)
 {
 	int ret, n;
 	struct p9_trans_fd *ts = NULL;
-	mm_segment_t oldfs;
 
 	if (trans && trans->status == Connected)
 		ts = trans->priv;
@@ -1270,24 +1343,17 @@ p9_fd_poll(struct p9_trans *trans, struct poll_table_struct *pt)
 	if (!ts->wr->f_op || !ts->wr->f_op->poll)
 		return -EIO;
 
-	oldfs = get_fs();
-	set_fs(get_ds());
-
 	ret = ts->rd->f_op->poll(ts->rd, pt);
 	if (ret < 0)
-		goto end;
+		return ret;
 
 	if (ts->rd != ts->wr) {
 		n = ts->wr->f_op->poll(ts->wr, pt);
-		if (n < 0) {
-			ret = n;
-			goto end;
-		}
+		if (n < 0)
+			return n;
 		ret = (ret & ~POLLOUT) | (n & ~POLLIN);
 	}
 
-end:
-	set_fs(oldfs);
 	return ret;
 }
 
@@ -1296,6 +1362,7 @@ end:
  * @trans: private socket structure
  *
  */
+
 static void p9_fd_close(struct p9_trans *trans)
 {
 	struct p9_trans_fd *ts;
@@ -1318,6 +1385,23 @@ static void p9_fd_close(struct p9_trans *trans)
 	kfree(ts);
 }
 
+/*
+ * stolen from NFS - maybe should be made a generic function?
+ */
+static inline int valid_ipaddr4(const char *buf)
+{
+	int rc, count, in[4];
+
+	rc = sscanf(buf, "%d.%d.%d.%d", &in[0], &in[1], &in[2], &in[3]);
+	if (rc != 4)
+		return -EINVAL;
+	for (count = 0; count < 4; count++) {
+		if (in[count] > 255)
+			return -EINVAL;
+	}
+	return 0;
+}
+
 static struct p9_trans *
 p9_trans_create_tcp(const char *addr, char *args, int msize, unsigned char dotu)
 {
@@ -1328,7 +1412,12 @@ p9_trans_create_tcp(const char *addr, char *args, int msize, unsigned char dotu)
 	struct p9_fd_opts opts;
 	struct p9_trans_fd *p;
 
-	parse_opts(args, &opts);
+	err = parse_opts(args, &opts);
+	if (err < 0)
+		return ERR_PTR(err);
+
+	if (valid_ipaddr4(addr) < 0)
+		return ERR_PTR(-EINVAL);
 
 	csocket = NULL;
 	trans = kmalloc(sizeof(struct p9_trans), GFP_KERNEL);
@@ -1492,6 +1581,7 @@ static struct p9_trans_module p9_tcp_trans = {
 	.maxsize = MAX_SOCK_BUF,
 	.def = 1,
 	.create = p9_trans_create_tcp,
+	.owner = THIS_MODULE,
 };
 
 static struct p9_trans_module p9_unix_trans = {
@@ -1499,6 +1589,7 @@ static struct p9_trans_module p9_unix_trans = {
 	.maxsize = MAX_SOCK_BUF,
 	.def = 0,
 	.create = p9_trans_create_unix,
+	.owner = THIS_MODULE,
 };
 
 static struct p9_trans_module p9_fd_trans = {
@@ -1506,14 +1597,20 @@ static struct p9_trans_module p9_fd_trans = {
 	.maxsize = MAX_SOCK_BUF,
 	.def = 0,
 	.create = p9_trans_create_fd,
+	.owner = THIS_MODULE,
 };
 
-static int __init p9_trans_fd_init(void)
+int p9_trans_fd_init(void)
 {
-	int ret = p9_mux_global_init();
-	if (ret) {
-		printk(KERN_WARNING "9p: starting mux failed\n");
-		return ret;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(p9_mux_poll_tasks); i++)
+		p9_mux_poll_tasks[i].task = NULL;
+
+	p9_mux_wq = create_workqueue("v9fs");
+	if (!p9_mux_wq) {
+		printk(KERN_WARNING "v9fs: mux: creating workqueue failed\n");
+		return -ENOMEM;
 	}
 
 	v9fs_register_trans(&p9_tcp_trans);
@@ -1523,8 +1620,11 @@ static int __init p9_trans_fd_init(void)
 	return 0;
 }
 
-module_init(p9_trans_fd_init);
+void p9_trans_fd_exit(void)
+{
+	v9fs_unregister_trans(&p9_tcp_trans);
+	v9fs_unregister_trans(&p9_unix_trans);
+	v9fs_unregister_trans(&p9_fd_trans);
 
-MODULE_AUTHOR("Latchesar Ionkov <lucho@ionkov.net>");
-MODULE_AUTHOR("Eric Van Hensbergen <ericvh@gmail.com>");
-MODULE_LICENSE("GPL");
+	destroy_workqueue(p9_mux_wq);
+}

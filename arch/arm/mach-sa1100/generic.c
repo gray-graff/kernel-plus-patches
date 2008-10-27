@@ -18,10 +18,10 @@
 #include <linux/ioport.h>
 #include <linux/sched.h>	/* just for sched_clock() - funny that */
 #include <linux/platform_device.h>
+#include <linux/cnt32_to_63.h>
 
 #include <asm/div64.h>
-#include <asm/cnt32_to_63.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/mach/map.h>
@@ -30,6 +30,9 @@
 #include <asm/gpio.h>
 
 #include "generic.h"
+
+unsigned int reset_status;
+EXPORT_SYMBOL(reset_status);
 
 #define NR_FREQS	16
 
@@ -138,37 +141,6 @@ unsigned long long sched_clock(void)
 
 	return v;
 }
-
-int gpio_direction_input(unsigned gpio)
-{
-	unsigned long flags;
-
-	if (gpio > GPIO_MAX)
-		return -EINVAL;
-
-	local_irq_save(flags);
-	GPDR &= ~GPIO_GPIO(gpio);
-	local_irq_restore(flags);
-	return 0;
-}
-
-EXPORT_SYMBOL(gpio_direction_input);
-
-int gpio_direction_output(unsigned gpio, int value)
-{
-	unsigned long flags;
-
-	if (gpio > GPIO_MAX)
-		return -EINVAL;
-
-	local_irq_save(flags);
-	gpio_set_value(gpio, value);
-	GPDR |= GPIO_GPIO(gpio);
-	local_irq_restore(flags);
-	return 0;
-}
-
-EXPORT_SYMBOL(gpio_direction_output);
 
 /*
  * Default power-off for SA1100

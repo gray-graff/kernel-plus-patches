@@ -37,6 +37,7 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_extend.h>
+#include <net/netfilter/nf_conntrack_acct.h>
 
 #define NF_CONNTRACK_VERSION	"0.5.0"
 
@@ -94,7 +95,7 @@ static inline u_int32_t hash_conntrack(const struct nf_conntrack_tuple *tuple)
 				nf_conntrack_hash_rnd);
 }
 
-int
+bool
 nf_ct_get_tuple(const struct sk_buff *skb,
 		unsigned int nhoff,
 		unsigned int dataoff,
@@ -104,11 +105,11 @@ nf_ct_get_tuple(const struct sk_buff *skb,
 		const struct nf_conntrack_l3proto *l3proto,
 		const struct nf_conntrack_l4proto *l4proto)
 {
-	NF_CT_TUPLE_U_BLANK(tuple);
+	memset(tuple, 0, sizeof(*tuple));
 
 	tuple->src.l3num = l3num;
 	if (l3proto->pkt_to_tuple(skb, nhoff, tuple) == 0)
-		return 0;
+		return false;
 
 	tuple->dst.protonum = protonum;
 	tuple->dst.dir = IP_CT_DIR_ORIGINAL;
@@ -117,10 +118,8 @@ nf_ct_get_tuple(const struct sk_buff *skb,
 }
 EXPORT_SYMBOL_GPL(nf_ct_get_tuple);
 
-int nf_ct_get_tuplepr(const struct sk_buff *skb,
-		      unsigned int nhoff,
-		      u_int16_t l3num,
-		      struct nf_conntrack_tuple *tuple)
+bool nf_ct_get_tuplepr(const struct sk_buff *skb, unsigned int nhoff,
+		       u_int16_t l3num, struct nf_conntrack_tuple *tuple)
 {
 	struct nf_conntrack_l3proto *l3proto;
 	struct nf_conntrack_l4proto *l4proto;
@@ -134,7 +133,7 @@ int nf_ct_get_tuplepr(const struct sk_buff *skb,
 	ret = l3proto->get_l4proto(skb, nhoff, &protoff, &protonum);
 	if (ret != NF_ACCEPT) {
 		rcu_read_unlock();
-		return 0;
+		return false;
 	}
 
 	l4proto = __nf_ct_l4proto_find(l3num, protonum);
@@ -147,17 +146,17 @@ int nf_ct_get_tuplepr(const struct sk_buff *skb,
 }
 EXPORT_SYMBOL_GPL(nf_ct_get_tuplepr);
 
-int
+bool
 nf_ct_invert_tuple(struct nf_conntrack_tuple *inverse,
 		   const struct nf_conntrack_tuple *orig,
 		   const struct nf_conntrack_l3proto *l3proto,
 		   const struct nf_conntrack_l4proto *l4proto)
 {
-	NF_CT_TUPLE_U_BLANK(inverse);
+	memset(inverse, 0, sizeof(*inverse));
 
 	inverse->src.l3num = orig->src.l3num;
 	if (l3proto->invert_tuple(inverse, orig) == 0)
-		return 0;
+		return false;
 
 	inverse->dst.dir = !orig->dst.dir;
 
@@ -194,12 +193,9 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	 * destroy_conntrack() MUST NOT be called with a write lock
 	 * to nf_conntrack_lock!!! -HW */
 	rcu_read_lock();
-	l4proto = __nf_ct_l4proto_find(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.l3num,
-				       ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.protonum);
+	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
 	if (l4proto && l4proto->destroy)
 		l4proto->destroy(ct);
-
-	nf_ct_ext_destroy(ct);
 
 	rcu_read_unlock();
 
@@ -469,7 +465,8 @@ static noinline int early_drop(unsigned int hash)
 }
 
 struct nf_conn *nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
-				   const struct nf_conntrack_tuple *repl)
+				   const struct nf_conntrack_tuple *repl,
+				   gfp_t gfp)
 {
 	struct nf_conn *ct = NULL;
 
@@ -494,7 +491,7 @@ struct nf_conn *nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
 		}
 	}
 
-	ct = kmem_cache_zalloc(nf_conntrack_cachep, GFP_ATOMIC);
+	ct = kmem_cache_zalloc(nf_conntrack_cachep, gfp);
 	if (ct == NULL) {
 		pr_debug("nf_conntrack_alloc: Can't alloc conntrack.\n");
 		atomic_dec(&nf_conntrack_count);
@@ -523,6 +520,7 @@ static void nf_conntrack_free_rcu(struct rcu_head *head)
 
 void nf_conntrack_free(struct nf_conn *ct)
 {
+	nf_ct_ext_destroy(ct);
 	call_rcu(&ct->rcu, nf_conntrack_free_rcu);
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_free);
@@ -546,7 +544,7 @@ init_conntrack(const struct nf_conntrack_tuple *tuple,
 		return NULL;
 	}
 
-	ct = nf_conntrack_alloc(tuple, &repl_tuple);
+	ct = nf_conntrack_alloc(tuple, &repl_tuple, GFP_ATOMIC);
 	if (ct == NULL || IS_ERR(ct)) {
 		pr_debug("Can't allocate conntrack.\n");
 		return (struct nf_conntrack_tuple_hash *)ct;
@@ -557,6 +555,8 @@ init_conntrack(const struct nf_conntrack_tuple *tuple,
 		pr_debug("init conntrack: can't track with proto module\n");
 		return NULL;
 	}
+
+	nf_ct_acct_ext_add(ct, GFP_ATOMIC);
 
 	spin_lock_bh(&nf_conntrack_lock);
 	exp = nf_ct_find_expectation(tuple);
@@ -739,10 +739,10 @@ nf_conntrack_in(int pf, unsigned int hooknum, struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_in);
 
-int nf_ct_invert_tuplepr(struct nf_conntrack_tuple *inverse,
-			 const struct nf_conntrack_tuple *orig)
+bool nf_ct_invert_tuplepr(struct nf_conntrack_tuple *inverse,
+			  const struct nf_conntrack_tuple *orig)
 {
-	int ret;
+	bool ret;
 
 	rcu_read_lock();
 	ret = nf_ct_invert_tuple(inverse, orig,
@@ -766,10 +766,10 @@ void nf_conntrack_alter_reply(struct nf_conn *ct,
 	NF_CT_ASSERT(!nf_ct_is_confirmed(ct));
 
 	pr_debug("Altering reply tuple of %p to ", ct);
-	NF_CT_DUMP_TUPLE(newreply);
+	nf_ct_dump_tuple(newreply);
 
 	ct->tuplehash[IP_CT_DIR_REPLY].tuple = *newreply;
-	if (ct->master || (help && help->expecting != 0))
+	if (ct->master || (help && !hlist_empty(&help->expectations)))
 		return;
 
 	rcu_read_lock();
@@ -831,17 +831,16 @@ void __nf_ct_refresh_acct(struct nf_conn *ct,
 	}
 
 acct:
-#ifdef CONFIG_NF_CT_ACCT
 	if (do_acct) {
-		ct->counters[CTINFO2DIR(ctinfo)].packets++;
-		ct->counters[CTINFO2DIR(ctinfo)].bytes +=
-			skb->len - skb_network_offset(skb);
+		struct nf_conn_counter *acct;
 
-		if ((ct->counters[CTINFO2DIR(ctinfo)].packets & 0x80000000)
-		    || (ct->counters[CTINFO2DIR(ctinfo)].bytes & 0x80000000))
-			event |= IPCT_COUNTER_FILLING;
+		acct = nf_conn_acct_find(ct);
+		if (acct) {
+			acct[CTINFO2DIR(ctinfo)].packets++;
+			acct[CTINFO2DIR(ctinfo)].bytes +=
+				skb->len - skb_network_offset(skb);
+		}
 	}
-#endif
 
 	spin_unlock_bh(&nf_conntrack_lock);
 
@@ -850,6 +849,32 @@ acct:
 		nf_conntrack_event_cache(event, skb);
 }
 EXPORT_SYMBOL_GPL(__nf_ct_refresh_acct);
+
+bool __nf_ct_kill_acct(struct nf_conn *ct,
+		       enum ip_conntrack_info ctinfo,
+		       const struct sk_buff *skb,
+		       int do_acct)
+{
+	if (do_acct) {
+		struct nf_conn_counter *acct;
+
+		spin_lock_bh(&nf_conntrack_lock);
+		acct = nf_conn_acct_find(ct);
+		if (acct) {
+			acct[CTINFO2DIR(ctinfo)].packets++;
+			acct[CTINFO2DIR(ctinfo)].bytes +=
+				skb->len - skb_network_offset(skb);
+		}
+		spin_unlock_bh(&nf_conntrack_lock);
+	}
+
+	if (del_timer(&ct->timeout)) {
+		ct->timeout.function((unsigned long)ct);
+		return true;
+	}
+	return false;
+}
+EXPORT_SYMBOL_GPL(__nf_ct_kill_acct);
 
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 
@@ -1007,9 +1032,10 @@ void nf_conntrack_cleanup(void)
 	nf_ct_free_hashtable(nf_conntrack_hash, nf_conntrack_vmalloc,
 			     nf_conntrack_htable_size);
 
-	nf_conntrack_proto_fini();
-	nf_conntrack_helper_fini();
+	nf_conntrack_acct_fini();
 	nf_conntrack_expect_fini();
+	nf_conntrack_helper_fini();
+	nf_conntrack_proto_fini();
 }
 
 struct hlist_head *nf_ct_alloc_hashtable(unsigned int *sizep, int *vmalloced)
@@ -1149,6 +1175,10 @@ int __init nf_conntrack_init(void)
 	if (ret < 0)
 		goto out_fini_expect;
 
+	ret = nf_conntrack_acct_init();
+	if (ret < 0)
+		goto out_fini_helper;
+
 	/* For use by REJECT target */
 	rcu_assign_pointer(ip_ct_attach, nf_conntrack_attach);
 	rcu_assign_pointer(nf_ct_destroy, destroy_conntrack);
@@ -1161,6 +1191,8 @@ int __init nf_conntrack_init(void)
 
 	return ret;
 
+out_fini_helper:
+	nf_conntrack_helper_fini();
 out_fini_expect:
 	nf_conntrack_expect_fini();
 out_fini_proto:

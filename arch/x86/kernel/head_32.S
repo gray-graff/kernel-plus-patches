@@ -1,5 +1,4 @@
 /*
- *  linux/arch/i386/kernel/head.S -- the 32-bit startup code.
  *
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
@@ -190,11 +189,12 @@ default_entry:
 	 * this stage.
 	 */
 
-#define KPMDS ((0x100000000-__PAGE_OFFSET) >> 30) /* Number of kernel PMDs */
+#define KPMDS (((-__PAGE_OFFSET) >> 30) & 3) /* Number of kernel PMDs */
 
 	xorl %ebx,%ebx				/* %ebx is kept at zero */
 
 	movl $pa(pg0), %edi
+	movl %edi, pa(init_pg_tables_start)
 	movl $pa(swapper_pg_pmd), %edx
 	movl $PTE_ATTR, %eax
 10:
@@ -220,6 +220,8 @@ default_entry:
 	jb 10b
 1:
 	movl %edi,pa(init_pg_tables_end)
+	shrl $12, %eax
+	movl %eax, pa(max_pfn_mapped)
 
 	/* Do early initialization of the fixmap area */
 	movl $pa(swapper_pg_fixmap)+PDE_ATTR,%eax
@@ -229,6 +231,7 @@ default_entry:
 page_pde_offset = (__PAGE_OFFSET >> 20);
 
 	movl $pa(pg0), %edi
+	movl %edi, pa(init_pg_tables_start)
 	movl $pa(swapper_pg_dir), %edx
 	movl $PTE_ATTR, %eax
 10:
@@ -250,6 +253,8 @@ page_pde_offset = (__PAGE_OFFSET >> 20);
 	cmpl %ebp,%eax
 	jb 10b
 	movl %edi,pa(init_pg_tables_end)
+	shrl $12, %eax
+	movl %eax, pa(max_pfn_mapped)
 
 	/* Do early initialization of the fixmap area */
 	movl $pa(swapper_pg_fixmap)+PDE_ATTR,%eax
@@ -447,10 +452,10 @@ is386:	movl $2,%ecx		# set MP
 	je   1f
 	movl $(__KERNEL_PERCPU), %eax
 	movl %eax,%fs		# set this cpu's percpu
-	jmp initialize_secondary # all other CPUs call initialize_secondary
+	movl (stack_start), %esp
 1:
 #endif /* CONFIG_SMP */
-	jmp start_kernel
+	jmp *(initial_code)
 
 /*
  * We depend on ET to be correct. This checks for 287/387.
@@ -593,6 +598,11 @@ ignore_int:
 #endif
 	iret
 
+.section .cpuinit.data,"wa"
+.align 4
+ENTRY(initial_code)
+	.long i386_start_kernel
+
 .section .text
 /*
  * Real beginning of normal "text" segment
@@ -657,15 +667,16 @@ int_msg:
 	.asciz "Unknown interrupt or fault at EIP %p %p %p\n"
 
 fault_msg:
-	.asciz								\
-/* fault info: */	"BUG: Int %d: CR2 %p\n"				\
-/* pusha regs: */	"     EDI %p  ESI %p  EBP %p  ESP %p\n"		\
-			"     EBX %p  EDX %p  ECX %p  EAX %p\n"		\
-/* fault frame: */	"     err %p  EIP %p   CS %p  flg %p\n"		\
-									\
-			"Stack: %p %p %p %p %p %p %p %p\n"		\
-			"       %p %p %p %p %p %p %p %p\n"		\
-			"       %p %p %p %p %p %p %p %p\n"
+/* fault info: */
+	.ascii "BUG: Int %d: CR2 %p\n"
+/* pusha regs: */
+	.ascii "     EDI %p  ESI %p  EBP %p  ESP %p\n"
+	.ascii "     EBX %p  EDX %p  ECX %p  EAX %p\n"
+/* fault frame: */
+	.ascii "     err %p  EIP %p   CS %p  flg %p\n"
+	.ascii "Stack: %p %p %p %p %p %p %p %p\n"
+	.ascii "       %p %p %p %p %p %p %p %p\n"
+	.asciz "       %p %p %p %p %p %p %p %p\n"
 
 #include "../../x86/xen/xen-head.S"
 

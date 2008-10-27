@@ -20,28 +20,29 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
+#include <linux/smc91x.h>
 
 #include <asm/types.h>
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/mfp-pxa300.h>
-#include <asm/arch/gpio.h>
-#include <asm/arch/pxafb.h>
-#include <asm/arch/ssp.h>
-#include <asm/arch/littleton.h>
+#include <mach/pxa-regs.h>
+#include <mach/mfp-pxa300.h>
+#include <mach/gpio.h>
+#include <mach/pxafb.h>
+#include <mach/ssp.h>
+#include <mach/pxa27x_keypad.h>
+#include <mach/pxa3xx_nand.h>
+#include <mach/littleton.h>
 
 #include "generic.h"
-
-#define ARRAY_AND_SIZE(x)	(x), ARRAY_SIZE(x)
 
 /* Littleton MFP configurations */
 static mfp_cfg_t littleton_mfp_cfg[] __initdata = {
@@ -76,6 +77,21 @@ static mfp_cfg_t littleton_mfp_cfg[] __initdata = {
 
 	/* Debug Ethernet */
 	GPIO90_GPIO,
+
+	/* Keypad */
+	GPIO107_KP_DKIN_0,
+	GPIO108_KP_DKIN_1,
+	GPIO115_KP_MKIN_0,
+	GPIO116_KP_MKIN_1,
+	GPIO117_KP_MKIN_2,
+	GPIO118_KP_MKIN_3,
+	GPIO119_KP_MKIN_4,
+	GPIO120_KP_MKIN_5,
+	GPIO121_KP_MKOUT_0,
+	GPIO122_KP_MKOUT_1,
+	GPIO123_KP_MKOUT_2,
+	GPIO124_KP_MKOUT_3,
+	GPIO125_KP_MKOUT_4,
 };
 
 static struct resource smc91x_resources[] = {
@@ -87,8 +103,13 @@ static struct resource smc91x_resources[] = {
 	[1] = {
 		.start	= IRQ_GPIO(mfp_to_gpio(MFP_PIN_GPIO90)),
 		.end	= IRQ_GPIO(mfp_to_gpio(MFP_PIN_GPIO90)),
-		.flags	= IORESOURCE_IRQ | IRQF_TRIGGER_FALLING,
+		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_LOWEDGE,
 	}
+};
+
+static struct smc91x_platdata littleton_smc91x_info = {
+	.flags	= SMC91X_USE_8BIT | SMC91X_USE_16BIT |
+		  SMC91X_NOWAIT | SMC91X_USE_DMA,
 };
 
 static struct platform_device smc91x_device = {
@@ -96,9 +117,12 @@ static struct platform_device smc91x_device = {
 	.id		= 0,
 	.num_resources	= ARRAY_SIZE(smc91x_resources),
 	.resource	= smc91x_resources,
+	.dev		= {
+		.platform_data = &littleton_smc91x_info,
+	},
 };
 
-#if defined(CONFIG_FB_PXA) || defined(CONFIG_FB_PXA_MODULES)
+#if defined(CONFIG_FB_PXA) || defined(CONFIG_FB_PXA_MODULE)
 /* use bit 30, 31 as the indicator of command parameter number */
 #define CMD0(x)		((0x00000000) | ((x) << 9))
 #define CMD1(x, x1)	((0x40000000) | ((x) << 9) | 0x100 | (x1))
@@ -287,8 +311,7 @@ static struct pxafb_mode_info tpo_tdo24mtea1_modes[] = {
 static struct pxafb_mach_info littleton_lcd_info = {
 	.modes			= tpo_tdo24mtea1_modes,
 	.num_modes		= 2,
-	.lccr0			= LCCR0_Act,
-	.lccr3			= LCCR3_HSP | LCCR3_VSP,
+	.lcd_conn		= LCD_COLOR_TFT_16BPP,
 	.pxafb_lcd_power	= littleton_lcd_power,
 };
 
@@ -298,7 +321,106 @@ static void littleton_init_lcd(void)
 }
 #else
 static inline void littleton_init_lcd(void) {};
-#endif /* CONFIG_FB_PXA || CONFIG_FB_PXA_MODULES */
+#endif /* CONFIG_FB_PXA || CONFIG_FB_PXA_MODULE */
+
+#if defined(CONFIG_KEYBOARD_PXA27x) || defined(CONFIG_KEYBOARD_PXA27x_MODULE)
+static unsigned int littleton_matrix_key_map[] = {
+	/* KEY(row, col, key_code) */
+	KEY(1, 3, KEY_0), KEY(0, 0, KEY_1), KEY(1, 0, KEY_2), KEY(2, 0, KEY_3),
+	KEY(0, 1, KEY_4), KEY(1, 1, KEY_5), KEY(2, 1, KEY_6), KEY(0, 2, KEY_7),
+	KEY(1, 2, KEY_8), KEY(2, 2, KEY_9),
+
+	KEY(0, 3, KEY_KPASTERISK), 	/* * */
+	KEY(2, 3, KEY_KPDOT), 		/* # */
+
+	KEY(5, 4, KEY_ENTER),
+
+	KEY(5, 0, KEY_UP),
+	KEY(5, 1, KEY_DOWN),
+	KEY(5, 2, KEY_LEFT),
+	KEY(5, 3, KEY_RIGHT),
+	KEY(3, 2, KEY_HOME),
+	KEY(4, 1, KEY_END),
+	KEY(3, 3, KEY_BACK),
+
+	KEY(4, 0, KEY_SEND),
+	KEY(4, 2, KEY_VOLUMEUP),
+	KEY(4, 3, KEY_VOLUMEDOWN),
+
+	KEY(3, 0, KEY_F22),	/* soft1 */
+	KEY(3, 1, KEY_F23),	/* soft2 */
+};
+
+static struct pxa27x_keypad_platform_data littleton_keypad_info = {
+	.matrix_key_rows	= 6,
+	.matrix_key_cols	= 5,
+	.matrix_key_map		= littleton_matrix_key_map,
+	.matrix_key_map_size	= ARRAY_SIZE(littleton_matrix_key_map),
+
+	.enable_rotary0		= 1,
+	.rotary0_up_key		= KEY_UP,
+	.rotary0_down_key	= KEY_DOWN,
+
+	.debounce_interval	= 30,
+};
+static void __init littleton_init_keypad(void)
+{
+	pxa_set_keypad_info(&littleton_keypad_info);
+}
+#else
+static inline void littleton_init_keypad(void) {}
+#endif
+
+#if defined(CONFIG_MTD_NAND_PXA3xx) || defined(CONFIG_MTD_NAND_PXA3xx_MODULE)
+static struct mtd_partition littleton_nand_partitions[] = {
+	[0] = {
+		.name        = "Bootloader",
+		.offset      = 0,
+		.size        = 0x060000,
+		.mask_flags  = MTD_WRITEABLE, /* force read-only */
+	},
+	[1] = {
+		.name        = "Kernel",
+		.offset      = 0x060000,
+		.size        = 0x200000,
+		.mask_flags  = MTD_WRITEABLE, /* force read-only */
+	},
+	[2] = {
+		.name        = "Filesystem",
+		.offset      = 0x0260000,
+		.size        = 0x3000000,     /* 48M - rootfs */
+	},
+	[3] = {
+		.name        = "MassStorage",
+		.offset      = 0x3260000,
+		.size        = 0x3d40000,
+	},
+	[4] = {
+		.name        = "BBT",
+		.offset      = 0x6FA0000,
+		.size        = 0x80000,
+		.mask_flags  = MTD_WRITEABLE,  /* force read-only */
+	},
+	/* NOTE: we reserve some blocks at the end of the NAND flash for
+	 * bad block management, and the max number of relocation blocks
+	 * differs on different platforms. Please take care with it when
+	 * defining the partition table.
+	 */
+};
+
+static struct pxa3xx_nand_platform_data littleton_nand_info = {
+	.enable_arbiter	= 1,
+	.parts		= littleton_nand_partitions,
+	.nr_parts	= ARRAY_SIZE(littleton_nand_partitions),
+};
+
+static void __init littleton_init_nand(void)
+{
+	pxa3xx_set_nand_info(&littleton_nand_info);
+}
+#else
+static inline void littleton_init_nand(void) {}
+#endif /* CONFIG_MTD_NAND_PXA3xx || CONFIG_MTD_NAND_PXA3xx_MODULE */
 
 static void __init littleton_init(void)
 {
@@ -312,6 +434,8 @@ static void __init littleton_init(void)
 	platform_device_register(&smc91x_device);
 
 	littleton_init_lcd();
+	littleton_init_keypad();
+	littleton_init_nand();
 }
 
 MACHINE_START(LITTLETON, "Marvell Form Factor Development Platform (aka Littleton)")

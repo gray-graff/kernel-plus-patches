@@ -55,6 +55,13 @@ int inet_csk_bind_conflict(const struct sock *sk,
 	struct hlist_node *node;
 	int reuse = sk->sk_reuse;
 
+	/*
+	 * Unlike other sk lookup places we do not check
+	 * for sk_net here, since _all_ the socks listed
+	 * in tb->owners list belong to the same net - the
+	 * one this bucket belongs to.
+	 */
+
 	sk_for_each_bound(sk2, node, &tb->owners) {
 		if (sk != sk2 &&
 		    !inet_v6_ipv6only(sk2) &&
@@ -80,12 +87,12 @@ EXPORT_SYMBOL_GPL(inet_csk_bind_conflict);
  */
 int inet_csk_get_port(struct sock *sk, unsigned short snum)
 {
-	struct inet_hashinfo *hashinfo = sk->sk_prot->hashinfo;
+	struct inet_hashinfo *hashinfo = sk->sk_prot->h.hashinfo;
 	struct inet_bind_hashbucket *head;
 	struct hlist_node *node;
 	struct inet_bind_bucket *tb;
 	int ret;
-	struct net *net = sk->sk_net;
+	struct net *net = sock_net(sk);
 
 	local_bh_disable();
 	if (!snum) {
@@ -96,7 +103,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 		rover = net_random() % remaining + low;
 
 		do {
-			head = &hashinfo->bhash[inet_bhashfn(rover, hashinfo->bhash_size)];
+			head = &hashinfo->bhash[inet_bhashfn(net, rover,
+					hashinfo->bhash_size)];
 			spin_lock(&head->lock);
 			inet_bind_bucket_for_each(tb, node, &head->chain)
 				if (tb->ib_net == net && tb->port == rover)
@@ -123,7 +131,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 		 */
 		snum = rover;
 	} else {
-		head = &hashinfo->bhash[inet_bhashfn(snum, hashinfo->bhash_size)];
+		head = &hashinfo->bhash[inet_bhashfn(net, snum,
+				hashinfo->bhash_size)];
 		spin_lock(&head->lock);
 		inet_bind_bucket_for_each(tb, node, &head->chain)
 			if (tb->ib_net == net && tb->port == snum)
@@ -133,8 +142,6 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 	goto tb_not_found;
 tb_found:
 	if (!hlist_empty(&tb->owners)) {
-		if (sk->sk_reuse > 1)
-			goto success;
 		if (tb->fastreuse > 0 &&
 		    sk->sk_reuse && sk->sk_state != TCP_LISTEN) {
 			goto success;
@@ -160,7 +167,7 @@ tb_not_found:
 success:
 	if (!inet_csk(sk)->icsk_bind_hash)
 		inet_bind_hash(sk, tb, snum);
-	BUG_TRAP(inet_csk(sk)->icsk_bind_hash == tb);
+	WARN_ON(inet_csk(sk)->icsk_bind_hash != tb);
 	ret = 0;
 
 fail_unlock:
@@ -253,7 +260,7 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err)
 	}
 
 	newsk = reqsk_queue_get_child(&icsk->icsk_accept_queue, sk);
-	BUG_TRAP(newsk->sk_state != TCP_SYN_RECV);
+	WARN_ON(newsk->sk_state == TCP_SYN_RECV);
 out:
 	release_sock(sk);
 	return newsk;
@@ -331,15 +338,16 @@ struct dst_entry* inet_csk_route_req(struct sock *sk,
 			    .uli_u = { .ports =
 				       { .sport = inet_sk(sk)->sport,
 					 .dport = ireq->rmt_port } } };
+	struct net *net = sock_net(sk);
 
 	security_req_classify_flow(req, &fl);
-	if (ip_route_output_flow(&init_net, &rt, &fl, sk, 0)) {
-		IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+	if (ip_route_output_flow(net, &rt, &fl, sk, 0)) {
+		IP_INC_STATS_BH(net, IPSTATS_MIB_OUTNOROUTES);
 		return NULL;
 	}
 	if (opt && opt->is_strictroute && rt->rt_dst != rt->rt_gateway) {
 		ip_rt_put(rt);
-		IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+		IP_INC_STATS_BH(net, IPSTATS_MIB_OUTNOROUTES);
 		return NULL;
 	}
 	return &rt->u.dst;
@@ -378,7 +386,7 @@ struct request_sock *inet_csk_search_req(const struct sock *sk,
 		    ireq->rmt_addr == raddr &&
 		    ireq->loc_addr == laddr &&
 		    AF_INET_FAMILY(req->rsk_ops->family)) {
-			BUG_TRAP(!req->sk);
+			WARN_ON(req->sk);
 			*prevp = prev;
 			break;
 		}
@@ -463,7 +471,7 @@ void inet_csk_reqsk_queue_prune(struct sock *parent,
 			if (time_after_eq(now, req->expires)) {
 				if ((req->retrans < thresh ||
 				     (inet_rsk(req)->acked && req->retrans < max_retries))
-				    && !req->rsk_ops->rtx_syn_ack(parent, req, NULL)) {
+				    && !req->rsk_ops->rtx_syn_ack(parent, req)) {
 					unsigned long timeo;
 
 					if (req->retrans++ == 0)
@@ -531,14 +539,14 @@ EXPORT_SYMBOL_GPL(inet_csk_clone);
  */
 void inet_csk_destroy_sock(struct sock *sk)
 {
-	BUG_TRAP(sk->sk_state == TCP_CLOSE);
-	BUG_TRAP(sock_flag(sk, SOCK_DEAD));
+	WARN_ON(sk->sk_state != TCP_CLOSE);
+	WARN_ON(!sock_flag(sk, SOCK_DEAD));
 
 	/* It cannot be in hash table! */
-	BUG_TRAP(sk_unhashed(sk));
+	WARN_ON(!sk_unhashed(sk));
 
 	/* If it has not 0 inet_sk(sk)->num, it must be bound */
-	BUG_TRAP(!inet_sk(sk)->num || inet_csk(sk)->icsk_bind_hash);
+	WARN_ON(inet_sk(sk)->num && !inet_csk(sk)->icsk_bind_hash);
 
 	sk->sk_prot->destroy(sk);
 
@@ -621,7 +629,7 @@ void inet_csk_listen_stop(struct sock *sk)
 
 		local_bh_disable();
 		bh_lock_sock(child);
-		BUG_TRAP(!sock_owned_by_user(child));
+		WARN_ON(sock_owned_by_user(child));
 		sock_hold(child);
 
 		sk->sk_prot->disconnect(child, O_NONBLOCK);
@@ -639,7 +647,7 @@ void inet_csk_listen_stop(struct sock *sk)
 		sk_acceptq_removed(sk);
 		__reqsk_free(req);
 	}
-	BUG_TRAP(!sk->sk_ack_backlog);
+	WARN_ON(sk->sk_ack_backlog);
 }
 
 EXPORT_SYMBOL_GPL(inet_csk_listen_stop);
@@ -655,25 +663,6 @@ void inet_csk_addr2sockaddr(struct sock *sk, struct sockaddr *uaddr)
 }
 
 EXPORT_SYMBOL_GPL(inet_csk_addr2sockaddr);
-
-int inet_csk_ctl_sock_create(struct socket **sock, unsigned short family,
-			     unsigned short type, unsigned char protocol)
-{
-	int rc = sock_create_kern(family, type, protocol, sock);
-
-	if (rc == 0) {
-		(*sock)->sk->sk_allocation = GFP_ATOMIC;
-		inet_sk((*sock)->sk)->uc_ttl = -1;
-		/*
-		 * Unhash it so that IP input processing does not even see it,
-		 * we do not wish this socket to see incoming packets.
-		 */
-		(*sock)->sk->sk_prot->unhash((*sock)->sk);
-	}
-	return rc;
-}
-
-EXPORT_SYMBOL_GPL(inet_csk_ctl_sock_create);
 
 #ifdef CONFIG_COMPAT
 int inet_csk_compat_getsockopt(struct sock *sk, int level, int optname,

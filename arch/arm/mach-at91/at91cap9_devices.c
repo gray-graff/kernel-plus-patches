@@ -16,15 +16,15 @@
 
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
-#include <linux/mtd/physmap.h>
+#include <linux/i2c-gpio.h>
 
 #include <video/atmel_lcdc.h>
 
-#include <asm/arch/board.h>
-#include <asm/arch/gpio.h>
-#include <asm/arch/at91cap9.h>
-#include <asm/arch/at91sam926x_mc.h>
-#include <asm/arch/at91cap9_matrix.h>
+#include <mach/board.h>
+#include <mach/gpio.h>
+#include <mach/at91cap9.h>
+#include <mach/at91cap9_matrix.h>
+#include <mach/at91sam9_smc.h>
 
 #include "generic.h"
 
@@ -80,6 +80,105 @@ void __init at91_add_device_usbh(struct at91_usbh_data *data)
 }
 #else
 void __init at91_add_device_usbh(struct at91_usbh_data *data) {}
+#endif
+
+
+/* --------------------------------------------------------------------
+ *  USB HS Device (Gadget)
+ * -------------------------------------------------------------------- */
+
+#if defined(CONFIG_USB_GADGET_ATMEL_USBA) || defined(CONFIG_USB_GADGET_ATMEL_USBA_MODULE)
+
+static struct resource usba_udc_resources[] = {
+	[0] = {
+		.start	= AT91CAP9_UDPHS_FIFO,
+		.end	= AT91CAP9_UDPHS_FIFO + SZ_512K - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91CAP9_BASE_UDPHS,
+		.end	= AT91CAP9_BASE_UDPHS + SZ_1K - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[2] = {
+		.start	= AT91CAP9_ID_UDPHS,
+		.end	= AT91CAP9_ID_UDPHS,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+#define EP(nam, idx, maxpkt, maxbk, dma, isoc)			\
+	[idx] = {						\
+		.name		= nam,				\
+		.index		= idx,				\
+		.fifo_size	= maxpkt,			\
+		.nr_banks	= maxbk,			\
+		.can_dma	= dma,				\
+		.can_isoc	= isoc,				\
+	}
+
+static struct usba_ep_data usba_udc_ep[] = {
+	EP("ep0", 0,   64, 1, 0, 0),
+	EP("ep1", 1, 1024, 3, 1, 1),
+	EP("ep2", 2, 1024, 3, 1, 1),
+	EP("ep3", 3, 1024, 2, 1, 1),
+	EP("ep4", 4, 1024, 2, 1, 1),
+	EP("ep5", 5, 1024, 2, 1, 0),
+	EP("ep6", 6, 1024, 2, 1, 0),
+	EP("ep7", 7, 1024, 2, 0, 0),
+};
+
+#undef EP
+
+/*
+ * pdata doesn't have room for any endpoints, so we need to
+ * append room for the ones we need right after it.
+ */
+static struct {
+	struct usba_platform_data pdata;
+	struct usba_ep_data ep[8];
+} usba_udc_data;
+
+static struct platform_device at91_usba_udc_device = {
+	.name		= "atmel_usba_udc",
+	.id		= -1,
+	.dev		= {
+				.platform_data	= &usba_udc_data.pdata,
+	},
+	.resource	= usba_udc_resources,
+	.num_resources	= ARRAY_SIZE(usba_udc_resources),
+};
+
+void __init at91_add_device_usba(struct usba_platform_data *data)
+{
+	at91_sys_write(AT91_MATRIX_UDPHS, AT91_MATRIX_SELECT_UDPHS |
+					  AT91_MATRIX_UDPHS_BYPASS_LOCK);
+
+	/*
+	 * Invalid pins are 0 on AT91, but the usba driver is shared
+	 * with AVR32, which use negative values instead. Once/if
+	 * gpio_is_valid() is ported to AT91, revisit this code.
+	 */
+	usba_udc_data.pdata.vbus_pin = -EINVAL;
+	usba_udc_data.pdata.num_ep = ARRAY_SIZE(usba_udc_ep);
+	memcpy(usba_udc_data.ep, usba_udc_ep, sizeof(usba_udc_ep));;
+
+	if (data && data->vbus_pin > 0) {
+		at91_set_gpio_input(data->vbus_pin, 0);
+		at91_set_deglitch(data->vbus_pin, 1);
+		usba_udc_data.pdata.vbus_pin = data->vbus_pin;
+	}
+
+	/* Pullup pin is handled internally by USB device peripheral */
+
+	/* Clocks */
+	at91_clock_associate("utmi_clk", &at91_usba_udc_device.dev, "hclk");
+	at91_clock_associate("udphs_clk", &at91_usba_udc_device.dev, "pclk");
+
+	platform_device_register(&at91_usba_udc_device);
+}
+#else
+void __init at91_add_device_usba(struct usba_platform_data *data) {}
 #endif
 
 
@@ -246,7 +345,7 @@ void __init at91_add_device_mmc(short mmc_id, struct at91_mmc_data *data)
 		}
 
 		mmc0_data = *data;
-		at91_clock_associate("mci0_clk", &at91cap9_mmc1_device.dev, "mci_clk");
+		at91_clock_associate("mci0_clk", &at91cap9_mmc0_device.dev, "mci_clk");
 		platform_device_register(&at91cap9_mmc0_device);
 	} else {			/* MCI1 */
 		/* CLK */
@@ -277,21 +376,26 @@ void __init at91_add_device_mmc(short mmc_id, struct at91_mmc_data *data) {}
  *  NAND / SmartMedia
  * -------------------------------------------------------------------- */
 
-#if defined(CONFIG_MTD_NAND_AT91) || defined(CONFIG_MTD_NAND_AT91_MODULE)
-static struct at91_nand_data nand_data;
+#if defined(CONFIG_MTD_NAND_ATMEL) || defined(CONFIG_MTD_NAND_ATMEL_MODULE)
+static struct atmel_nand_data nand_data;
 
 #define NAND_BASE	AT91_CHIPSELECT_3
 
 static struct resource nand_resources[] = {
-	{
+	[0] = {
 		.start	= NAND_BASE,
 		.end	= NAND_BASE + SZ_256M - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91_BASE_SYS + AT91_ECC,
+		.end	= AT91_BASE_SYS + AT91_ECC + SZ_512 - 1,
 		.flags	= IORESOURCE_MEM,
 	}
 };
 
 static struct platform_device at91cap9_nand_device = {
-	.name		= "at91_nand",
+	.name		= "atmel_nand",
 	.id		= -1,
 	.dev		= {
 				.platform_data	= &nand_data,
@@ -300,7 +404,7 @@ static struct platform_device at91cap9_nand_device = {
 	.num_resources	= ARRAY_SIZE(nand_resources),
 };
 
-void __init at91_add_device_nand(struct at91_nand_data *data)
+void __init at91_add_device_nand(struct atmel_nand_data *data)
 {
 	unsigned long csa, mode;
 
@@ -341,8 +445,9 @@ void __init at91_add_device_nand(struct at91_nand_data *data)
 	platform_device_register(&at91cap9_nand_device);
 }
 #else
-void __init at91_add_device_nand(struct at91_nand_data *data) {}
+void __init at91_add_device_nand(struct atmel_nand_data *data) {}
 #endif
+
 
 /* --------------------------------------------------------------------
  *  TWI (i2c)
@@ -532,13 +637,59 @@ void __init at91_add_device_spi(struct spi_board_info *devices, int nr_devices) 
 
 
 /* --------------------------------------------------------------------
+ *  Timer/Counter block
+ * -------------------------------------------------------------------- */
+
+#ifdef CONFIG_ATMEL_TCLIB
+
+static struct resource tcb_resources[] = {
+	[0] = {
+		.start	= AT91CAP9_BASE_TCB0,
+		.end	= AT91CAP9_BASE_TCB0 + SZ_16K - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91CAP9_ID_TCB,
+		.end	= AT91CAP9_ID_TCB,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device at91cap9_tcb_device = {
+	.name		= "atmel_tcb",
+	.id		= 0,
+	.resource	= tcb_resources,
+	.num_resources	= ARRAY_SIZE(tcb_resources),
+};
+
+static void __init at91_add_device_tc(void)
+{
+	/* this chip has one clock and irq for all three TC channels */
+	at91_clock_associate("tcb_clk", &at91cap9_tcb_device.dev, "t0_clk");
+	platform_device_register(&at91cap9_tcb_device);
+}
+#else
+static void __init at91_add_device_tc(void) { }
+#endif
+
+
+/* --------------------------------------------------------------------
  *  RTT
  * -------------------------------------------------------------------- */
 
+static struct resource rtt_resources[] = {
+	{
+		.start	= AT91_BASE_SYS + AT91_RTT,
+		.end	= AT91_BASE_SYS + AT91_RTT + SZ_16 - 1,
+		.flags	= IORESOURCE_MEM,
+	}
+};
+
 static struct platform_device at91cap9_rtt_device = {
 	.name		= "at91_rtt",
-	.id		= -1,
-	.num_resources	= 0,
+	.id		= 0,
+	.resource	= rtt_resources,
+	.num_resources	= ARRAY_SIZE(rtt_resources),
 };
 
 static void __init at91_add_device_rtt(void)
@@ -990,7 +1141,7 @@ static inline void configure_usart2_pins(unsigned pins)
 		at91_set_B_periph(AT91_PIN_PD6, 0);	/* CTS2 */
 }
 
-static struct platform_device *at91_uarts[ATMEL_MAX_UART];	/* the UARTs to use */
+static struct platform_device *__initdata at91_uarts[ATMEL_MAX_UART];	/* the UARTs to use */
 struct platform_device *atmel_default_console_device;	/* the serial console device */
 
 void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins)
@@ -1031,8 +1182,6 @@ void __init at91_set_serial_console(unsigned portnr)
 {
 	if (portnr < ATMEL_MAX_UART)
 		atmel_default_console_device = at91_uarts[portnr];
-	if (!atmel_default_console_device)
-		printk(KERN_INFO "AT91: No default serial console defined.\n");
 }
 
 void __init at91_add_device_serial(void)
@@ -1043,6 +1192,9 @@ void __init at91_add_device_serial(void)
 		if (at91_uarts[i])
 			platform_device_register(at91_uarts[i]);
 	}
+
+	if (!atmel_default_console_device)
+		printk(KERN_INFO "AT91: No default serial console defined.\n");
 }
 #else
 void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins) {}
@@ -1060,6 +1212,7 @@ static int __init at91_add_standard_devices(void)
 {
 	at91_add_device_rtt();
 	at91_add_device_watchdog();
+	at91_add_device_tc();
 	return 0;
 }
 

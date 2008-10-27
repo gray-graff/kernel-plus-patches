@@ -6,6 +6,9 @@
  * Copyright (c) 2003, 2004 Zultys Technologies.
  * Eugene Surovegin <eugene.surovegin@zultys.com> or <ebs@ebshome.net>
  *
+ * Copyright (c) 2008 PIKA Technologies
+ * Sean MacLennan <smaclennan@pikatech.com>
+ *
  * Based on original work by
  * 	Ian DaSilva  <idasilva@mvista.com>
  *      Armin Kuster <akuster@mvista.com>
@@ -39,12 +42,12 @@
 #include <asm/io.h>
 #include <linux/i2c.h>
 #include <linux/i2c-id.h>
-#include <asm/ocp.h>
-#include <asm/ibm4xx.h>
+#include <linux/of_platform.h>
+#include <linux/of_i2c.h>
 
 #include "i2c-ibm_iic.h"
 
-#define DRIVER_VERSION "2.1"
+#define DRIVER_VERSION "2.2"
 
 MODULE_DESCRIPTION("IBM IIC driver v" DRIVER_VERSION);
 MODULE_LICENSE("GPL");
@@ -650,122 +653,128 @@ static inline u8 iic_clckdiv(unsigned int opb)
 	opb /= 1000000;
 
 	if (opb < 20 || opb > 150){
-		printk(KERN_CRIT "ibm-iic: invalid OPB clock frequency %u MHz\n",
+		printk(KERN_WARNING "ibm-iic: invalid OPB clock frequency %u MHz\n",
 			opb);
 		opb = opb < 20 ? 20 : 150;
 	}
 	return (u8)((opb + 9) / 10 - 1);
 }
 
+static int __devinit iic_request_irq(struct of_device *ofdev,
+				     struct ibm_iic_private *dev)
+{
+	struct device_node *np = ofdev->node;
+	int irq;
+
+	if (iic_force_poll)
+		return NO_IRQ;
+
+	irq = irq_of_parse_and_map(np, 0);
+	if (irq == NO_IRQ) {
+		dev_err(&ofdev->dev, "irq_of_parse_and_map failed\n");
+		return NO_IRQ;
+	}
+
+	/* Disable interrupts until we finish initialization, assumes
+	 *  level-sensitive IRQ setup...
+	 */
+	iic_interrupt_mode(dev, 0);
+	if (request_irq(irq, iic_handler, 0, "IBM IIC", dev)) {
+		dev_err(&ofdev->dev, "request_irq %d failed\n", irq);
+		/* Fallback to the polling mode */
+		return NO_IRQ;
+	}
+
+	return irq;
+}
+
 /*
  * Register single IIC interface
  */
-static int __devinit iic_probe(struct ocp_device *ocp){
-
-	struct ibm_iic_private* dev;
-	struct i2c_adapter* adap;
-	struct ocp_func_iic_data* iic_data = ocp->def->additions;
+static int __devinit iic_probe(struct of_device *ofdev,
+			       const struct of_device_id *match)
+{
+	struct device_node *np = ofdev->node;
+	struct ibm_iic_private *dev;
+	struct i2c_adapter *adap;
+	const u32 *freq;
 	int ret;
 
-	if (!iic_data)
-		printk(KERN_WARNING"ibm-iic%d: missing additional data!\n",
-			ocp->def->index);
-
-	if (!(dev = kzalloc(sizeof(*dev), GFP_KERNEL))) {
-		printk(KERN_CRIT "ibm-iic%d: failed to allocate device data\n",
-			ocp->def->index);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	if (!dev) {
+		dev_err(&ofdev->dev, "failed to allocate device data\n");
 		return -ENOMEM;
 	}
 
-	dev->idx = ocp->def->index;
-	ocp_set_drvdata(ocp, dev);
+	dev_set_drvdata(&ofdev->dev, dev);
 
-	if (!request_mem_region(ocp->def->paddr, sizeof(struct iic_regs),
-				"ibm_iic")) {
-		ret = -EBUSY;
-		goto fail1;
-	}
-
-	if (!(dev->vaddr = ioremap(ocp->def->paddr, sizeof(struct iic_regs)))){
-		printk(KERN_CRIT "ibm-iic%d: failed to ioremap device registers\n",
-			dev->idx);
+	dev->vaddr = of_iomap(np, 0);
+	if (dev->vaddr == NULL) {
+		dev_err(&ofdev->dev, "failed to iomap device\n");
 		ret = -ENXIO;
-		goto fail2;
+		goto error_cleanup;
 	}
 
 	init_waitqueue_head(&dev->wq);
 
-	dev->irq = iic_force_poll ? -1 : ocp->def->irq;
-	if (dev->irq >= 0){
-		/* Disable interrupts until we finish initialization,
-		   assumes level-sensitive IRQ setup...
-		 */
-		iic_interrupt_mode(dev, 0);
-		if (request_irq(dev->irq, iic_handler, 0, "IBM IIC", dev)){
-			printk(KERN_ERR "ibm-iic%d: request_irq %d failed\n",
-				dev->idx, dev->irq);
-			/* Fallback to the polling mode */
-			dev->irq = -1;
+	dev->irq = iic_request_irq(ofdev, dev);
+	if (dev->irq == NO_IRQ)
+		dev_warn(&ofdev->dev, "using polling mode\n");
+
+	/* Board specific settings */
+	if (iic_force_fast || of_get_property(np, "fast-mode", NULL))
+		dev->fast_mode = 1;
+
+	freq = of_get_property(np, "clock-frequency", NULL);
+	if (freq == NULL) {
+		freq = of_get_property(np->parent, "clock-frequency", NULL);
+		if (freq == NULL) {
+			dev_err(&ofdev->dev, "Unable to get bus frequency\n");
+			ret = -EINVAL;
+			goto error_cleanup;
 		}
 	}
 
-	if (dev->irq < 0)
-		printk(KERN_WARNING "ibm-iic%d: using polling mode\n",
-			dev->idx);
-
-	/* Board specific settings */
-	dev->fast_mode = iic_force_fast ? 1 : (iic_data ? iic_data->fast_mode : 0);
-
-	/* clckdiv is the same for *all* IIC interfaces,
-	 * but I'd rather make a copy than introduce another global. --ebs
-	 */
-	dev->clckdiv = iic_clckdiv(ocp_sys_info.opb_bus_freq);
-	DBG("%d: clckdiv = %d\n", dev->idx, dev->clckdiv);
+	dev->clckdiv = iic_clckdiv(*freq);
+	dev_dbg(&ofdev->dev, "clckdiv = %d\n", dev->clckdiv);
 
 	/* Initialize IIC interface */
 	iic_dev_init(dev);
 
 	/* Register it with i2c layer */
 	adap = &dev->adap;
-	adap->dev.parent = &ocp->dev;
-	strcpy(adap->name, "IBM IIC");
+	adap->dev.parent = &ofdev->dev;
+	strlcpy(adap->name, "IBM IIC", sizeof(adap->name));
 	i2c_set_adapdata(adap, dev);
 	adap->id = I2C_HW_OCP;
-	adap->class = I2C_CLASS_HWMON;
+	adap->class = I2C_CLASS_HWMON | I2C_CLASS_SPD;
 	adap->algo = &iic_algo;
-	adap->client_register = NULL;
-	adap->client_unregister = NULL;
 	adap->timeout = 1;
 
-	/*
-	 * If "dev->idx" is negative we consider it as zero.
-	 * The reason to do so is to avoid sysfs names that only make
-	 * sense when there are multiple adapters.
-	 */
-	adap->nr = dev->idx >= 0 ? dev->idx : 0;
-
-	if ((ret = i2c_add_numbered_adapter(adap)) < 0) {
-		printk(KERN_CRIT "ibm-iic%d: failed to register i2c adapter\n",
-			dev->idx);
-		goto fail;
+	ret = i2c_add_adapter(adap);
+	if (ret  < 0) {
+		dev_err(&ofdev->dev, "failed to register i2c adapter\n");
+		goto error_cleanup;
 	}
 
-	printk(KERN_INFO "ibm-iic%d: using %s mode\n", dev->idx,
-		dev->fast_mode ? "fast (400 kHz)" : "standard (100 kHz)");
+	/* Now register all the child nodes */
+	of_register_i2c_devices(adap, np);
+
+	dev_info(&ofdev->dev, "using %s mode\n",
+		 dev->fast_mode ? "fast (400 kHz)" : "standard (100 kHz)");
 
 	return 0;
 
-fail:
-	if (dev->irq >= 0){
+error_cleanup:
+	if (dev->irq != NO_IRQ) {
 		iic_interrupt_mode(dev, 0);
 		free_irq(dev->irq, dev);
 	}
 
-	iounmap(dev->vaddr);
-fail2:
-	release_mem_region(ocp->def->paddr, sizeof(struct iic_regs));
-fail1:
-	ocp_set_drvdata(ocp, NULL);
+	if (dev->vaddr)
+		iounmap(dev->vaddr);
+
+	dev_set_drvdata(&ofdev->dev, NULL);
 	kfree(dev);
 	return ret;
 }
@@ -773,59 +782,45 @@ fail1:
 /*
  * Cleanup initialized IIC interface
  */
-static void __devexit iic_remove(struct ocp_device *ocp)
+static int __devexit iic_remove(struct of_device *ofdev)
 {
-	struct ibm_iic_private* dev = (struct ibm_iic_private*)ocp_get_drvdata(ocp);
-	BUG_ON(dev == NULL);
-	if (i2c_del_adapter(&dev->adap)){
-		printk(KERN_CRIT "ibm-iic%d: failed to delete i2c adapter :(\n",
-			dev->idx);
-		/* That's *very* bad, just shutdown IRQ ... */
-		if (dev->irq >= 0){
-		    iic_interrupt_mode(dev, 0);
-		    free_irq(dev->irq, dev);
-		    dev->irq = -1;
-		}
-	} else {
-		if (dev->irq >= 0){
-		    iic_interrupt_mode(dev, 0);
-		    free_irq(dev->irq, dev);
-		}
-		iounmap(dev->vaddr);
-		release_mem_region(ocp->def->paddr, sizeof(struct iic_regs));
-		kfree(dev);
+	struct ibm_iic_private *dev = dev_get_drvdata(&ofdev->dev);
+
+	dev_set_drvdata(&ofdev->dev, NULL);
+
+	i2c_del_adapter(&dev->adap);
+
+	if (dev->irq != NO_IRQ) {
+		iic_interrupt_mode(dev, 0);
+		free_irq(dev->irq, dev);
 	}
+
+	iounmap(dev->vaddr);
+	kfree(dev);
+
+	return 0;
 }
 
-static struct ocp_device_id ibm_iic_ids[] __devinitdata =
-{
-	{ .vendor = OCP_VENDOR_IBM, .function = OCP_FUNC_IIC },
-	{ .vendor = OCP_VENDOR_INVALID }
+static const struct of_device_id ibm_iic_match[] = {
+	{ .compatible = "ibm,iic", },
+	{}
 };
 
-MODULE_DEVICE_TABLE(ocp, ibm_iic_ids);
-
-static struct ocp_driver ibm_iic_driver =
-{
-	.name 		= "iic",
-	.id_table	= ibm_iic_ids,
-	.probe		= iic_probe,
-	.remove		= __devexit_p(iic_remove),
-#if defined(CONFIG_PM)
-	.suspend	= NULL,
-	.resume		= NULL,
-#endif
+static struct of_platform_driver ibm_iic_driver = {
+	.name	= "ibm-iic",
+	.match_table = ibm_iic_match,
+	.probe	= iic_probe,
+	.remove	= __devexit_p(iic_remove),
 };
 
 static int __init iic_init(void)
 {
-	printk(KERN_INFO "IBM IIC driver v" DRIVER_VERSION "\n");
-	return ocp_register_driver(&ibm_iic_driver);
+	return of_register_platform_driver(&ibm_iic_driver);
 }
 
 static void __exit iic_exit(void)
 {
-	ocp_unregister_driver(&ibm_iic_driver);
+	of_unregister_platform_driver(&ibm_iic_driver);
 }
 
 module_init(iic_init);

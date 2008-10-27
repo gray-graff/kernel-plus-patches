@@ -22,12 +22,13 @@
 #include <linux/io.h>
 #include <linux/sysdev.h>
 
-#include <asm/hardware.h>
-#include <asm/arch/pxa3xx-regs.h>
-#include <asm/arch/ohci.h>
-#include <asm/arch/pm.h>
-#include <asm/arch/dma.h>
-#include <asm/arch/ssp.h>
+#include <mach/hardware.h>
+#include <mach/pxa3xx-regs.h>
+#include <mach/reset.h>
+#include <mach/ohci.h>
+#include <mach/pm.h>
+#include <mach/dma.h>
+#include <mach/ssp.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -109,6 +110,31 @@ unsigned int pxa3xx_get_memclk_frequency_10khz(void)
 	return (clk / 10000);
 }
 
+void pxa3xx_clear_reset_status(unsigned int mask)
+{
+	/* RESET_STATUS_* has a 1:1 mapping with ARSR */
+	ARSR = mask;
+}
+
+/*
+ * Return the current AC97 clock frequency.
+ */
+static unsigned long clk_pxa3xx_ac97_getrate(struct clk *clk)
+{
+	unsigned long rate = 312000000;
+	unsigned long ac97_div;
+
+	ac97_div = AC97_DIV;
+
+	/* This may loose precision for some rates but won't for the
+	 * standard 24.576MHz.
+	 */
+	rate /= (ac97_div >> 12) & 0x7fff;
+	rate *= (ac97_div & 0xfff);
+
+	return rate;
+}
+
 /*
  * Return the current HSIO bus clock frequency
  */
@@ -125,7 +151,7 @@ static unsigned long clk_pxa3xx_hsio_getrate(struct clk *clk)
 	return hsio_clk;
 }
 
-static void clk_pxa3xx_cken_enable(struct clk *clk)
+void clk_pxa3xx_cken_enable(struct clk *clk)
 {
 	unsigned long mask = 1ul << (clk->cken & 0x1f);
 
@@ -135,7 +161,7 @@ static void clk_pxa3xx_cken_enable(struct clk *clk)
 		CKENB |= mask;
 }
 
-static void clk_pxa3xx_cken_disable(struct clk *clk)
+void clk_pxa3xx_cken_disable(struct clk *clk)
 {
 	unsigned long mask = 1ul << (clk->cken & 0x1f);
 
@@ -145,7 +171,7 @@ static void clk_pxa3xx_cken_disable(struct clk *clk)
 		CKENB &= ~mask;
 }
 
-static const struct clkops clk_pxa3xx_cken_ops = {
+const struct clkops clk_pxa3xx_cken_ops = {
 	.enable		= clk_pxa3xx_cken_enable,
 	.disable	= clk_pxa3xx_cken_disable,
 };
@@ -156,44 +182,57 @@ static const struct clkops clk_pxa3xx_hsio_ops = {
 	.getrate	= clk_pxa3xx_hsio_getrate,
 };
 
-#define PXA3xx_CKEN(_name, _cken, _rate, _delay, _dev)	\
-	{						\
-		.name	= _name,			\
-		.dev	= _dev,				\
-		.ops	= &clk_pxa3xx_cken_ops,		\
-		.rate	= _rate,			\
-		.cken	= CKEN_##_cken,			\
-		.delay	= _delay,			\
-	}
+static const struct clkops clk_pxa3xx_ac97_ops = {
+	.enable		= clk_pxa3xx_cken_enable,
+	.disable	= clk_pxa3xx_cken_disable,
+	.getrate	= clk_pxa3xx_ac97_getrate,
+};
 
-#define PXA3xx_CK(_name, _cken, _ops, _dev)		\
-	{						\
-		.name	= _name,			\
-		.dev	= _dev,				\
-		.ops	= _ops,				\
-		.cken	= CKEN_##_cken,			\
-	}
+static void clk_pout_enable(struct clk *clk)
+{
+	OSCC |= OSCC_PEN;
+}
+
+static void clk_pout_disable(struct clk *clk)
+{
+	OSCC &= ~OSCC_PEN;
+}
+
+static const struct clkops clk_pout_ops = {
+	.enable		= clk_pout_enable,
+	.disable	= clk_pout_disable,
+};
 
 static struct clk pxa3xx_clks[] = {
-	PXA3xx_CK("LCDCLK", LCD,    &clk_pxa3xx_hsio_ops, &pxa_device_fb.dev),
-	PXA3xx_CK("CAMCLK", CAMERA, &clk_pxa3xx_hsio_ops, NULL),
+	{
+		.name           = "CLK_POUT",
+		.ops            = &clk_pout_ops,
+		.rate           = 13000000,
+		.delay          = 70,
+	},
+
+	PXA3xx_CK("LCDCLK",  LCD,    &clk_pxa3xx_hsio_ops, &pxa_device_fb.dev),
+	PXA3xx_CK("CAMCLK",  CAMERA, &clk_pxa3xx_hsio_ops, NULL),
+	PXA3xx_CK("AC97CLK", AC97,   &clk_pxa3xx_ac97_ops, NULL),
 
 	PXA3xx_CKEN("UARTCLK", FFUART, 14857000, 1, &pxa_device_ffuart.dev),
 	PXA3xx_CKEN("UARTCLK", BTUART, 14857000, 1, &pxa_device_btuart.dev),
 	PXA3xx_CKEN("UARTCLK", STUART, 14857000, 1, NULL),
 
 	PXA3xx_CKEN("I2CCLK", I2C,  32842000, 0, &pxa_device_i2c.dev),
-	PXA3xx_CKEN("UDCCLK", UDC,  48000000, 5, &pxa_device_udc.dev),
+	PXA3xx_CKEN("UDCCLK", UDC,  48000000, 5, &pxa27x_device_udc.dev),
 	PXA3xx_CKEN("USBCLK", USBH, 48000000, 0, &pxa27x_device_ohci.dev),
+	PXA3xx_CKEN("KBDCLK", KEYPAD,  32768, 0, &pxa27x_device_keypad.dev),
 
 	PXA3xx_CKEN("SSPCLK", SSP1, 13000000, 0, &pxa27x_device_ssp1.dev),
 	PXA3xx_CKEN("SSPCLK", SSP2, 13000000, 0, &pxa27x_device_ssp2.dev),
 	PXA3xx_CKEN("SSPCLK", SSP3, 13000000, 0, &pxa27x_device_ssp3.dev),
 	PXA3xx_CKEN("SSPCLK", SSP4, 13000000, 0, &pxa3xx_device_ssp4.dev),
+	PXA3xx_CKEN("PWMCLK", PWM0, 13000000, 0, &pxa27x_device_pwm0.dev),
+	PXA3xx_CKEN("PWMCLK", PWM1, 13000000, 0, &pxa27x_device_pwm1.dev),
 
 	PXA3xx_CKEN("MMCCLK", MMC1, 19500000, 0, &pxa_device_mci.dev),
 	PXA3xx_CKEN("MMCCLK", MMC2, 19500000, 0, &pxa3xx_device_mci2.dev),
-	PXA3xx_CKEN("MMCCLK", MMC3, 19500000, 0, &pxa3xx_device_mci3.dev),
 };
 
 #ifdef CONFIG_PM
@@ -207,12 +246,11 @@ static unsigned long wakeup_src;
 #define SAVE(x)		sleep_save[SLEEP_SAVE_##x] = x
 #define RESTORE(x)	x = sleep_save[SLEEP_SAVE_##x]
 
-enum {	SLEEP_SAVE_START = 0,
-	SLEEP_SAVE_CKENA,
+enum {	SLEEP_SAVE_CKENA,
 	SLEEP_SAVE_CKENB,
 	SLEEP_SAVE_ACCR,
 
-	SLEEP_SAVE_SIZE,
+	SLEEP_SAVE_COUNT,
 };
 
 static void pxa3xx_cpu_pm_save(unsigned long *sleep_save)
@@ -305,8 +343,10 @@ static void pxa3xx_cpu_pm_enter(suspend_state_t state)
 	/*
 	 * Don't sleep if no wakeup sources are defined
 	 */
-	if (wakeup_src == 0)
+	if (wakeup_src == 0) {
+		printk(KERN_ERR "Not suspending: no wakeup sources\n");
 		return;
+	}
 
 	switch (state) {
 	case PM_SUSPEND_STANDBY:
@@ -325,7 +365,7 @@ static int pxa3xx_cpu_pm_valid(suspend_state_t state)
 }
 
 static struct pxa_cpu_pm_fns pxa3xx_cpu_pm_fns = {
-	.save_size	= SLEEP_SAVE_SIZE,
+	.save_count	= SLEEP_SAVE_COUNT,
 	.save		= pxa3xx_cpu_pm_save,
 	.restore	= pxa3xx_cpu_pm_restore,
 	.valid		= pxa3xx_cpu_pm_valid,
@@ -435,6 +475,8 @@ static int pxa3xx_set_wake(unsigned int irq, unsigned int on)
 	case IRQ_MMC3:
 		mask = ADXER_MFP_GEN12;
 		break;
+	default:
+		return -EINVAL;
 	}
 
 	local_irq_save(flags);
@@ -446,15 +488,9 @@ static int pxa3xx_set_wake(unsigned int irq, unsigned int on)
 
 	return 0;
 }
-
-static void pxa3xx_init_irq_pm(void)
-{
-	pxa_init_irq_set_wake(pxa3xx_set_wake);
-}
-
 #else
 static inline void pxa3xx_init_pm(void) {}
-static inline void pxa3xx_init_irq_pm(void) {}
+#define pxa3xx_set_wake	NULL
 #endif
 
 void __init pxa3xx_init_irq(void)
@@ -465,10 +501,8 @@ void __init pxa3xx_init_irq(void)
 	value |= (1 << 6);
 	__asm__ __volatile__("mcr p15, 0, %0, c15, c1, 0\n": :"r"(value));
 
-	pxa_init_irq_low();
-	pxa_init_irq_high();
-	pxa_init_irq_gpio(128);
-	pxa3xx_init_irq_pm();
+	pxa_init_irq(56, pxa3xx_set_wake);
+	pxa_init_gpio(128, NULL);
 }
 
 /*
@@ -476,7 +510,7 @@ void __init pxa3xx_init_irq(void)
  */
 
 static struct platform_device *devices[] __initdata = {
-	&pxa_device_udc,
+/*	&pxa_device_udc,	The UDC driver is PXA25x only */
 	&pxa_device_ffuart,
 	&pxa_device_btuart,
 	&pxa_device_stuart,
@@ -486,15 +520,15 @@ static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_ssp2,
 	&pxa27x_device_ssp3,
 	&pxa3xx_device_ssp4,
+	&pxa27x_device_pwm0,
+	&pxa27x_device_pwm1,
 };
 
 static struct sys_device pxa3xx_sysdev[] = {
 	{
-		.id	= 0,
 		.cls	= &pxa_irq_sysclass,
 	}, {
-		.id	= 1,
-		.cls	= &pxa_irq_sysclass,
+		.cls	= &pxa3xx_mfp_sysclass,
 	}, {
 		.cls	= &pxa_gpio_sysclass,
 	},
@@ -505,6 +539,9 @@ static int __init pxa3xx_init(void)
 	int i, ret = 0;
 
 	if (cpu_is_pxa3xx()) {
+
+		reset_status = ARSR;
+
 		/*
 		 * clear RDH bit every time after reset
 		 *
@@ -532,4 +569,4 @@ static int __init pxa3xx_init(void)
 	return ret;
 }
 
-subsys_initcall(pxa3xx_init);
+postcore_initcall(pxa3xx_init);

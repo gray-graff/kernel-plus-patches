@@ -136,6 +136,7 @@ static struct sctp_association *sctp_association_init(struct sctp_association *a
 
 	/* Set association default SACK delay */
 	asoc->sackdelay = msecs_to_jiffies(sp->sackdelay);
+	asoc->sackfreq = sp->sackfreq;
 
 	/* Set the association default flags controlling
 	 * Heartbeat, SACK delay, and Path MTU Discovery.
@@ -261,6 +262,7 @@ static struct sctp_association *sctp_association_init(struct sctp_association *a
 	 * already received one packet.]
 	 */
 	asoc->peer.sack_needed = 1;
+	asoc->peer.sack_cnt = 0;
 
 	/* Assume that the peer will tell us if he recognizes ASCONF
 	 * as part of INIT exchange.
@@ -462,7 +464,7 @@ static void sctp_association_destroy(struct sctp_association *asoc)
 		spin_unlock_bh(&sctp_assocs_id_lock);
 	}
 
-	BUG_TRAP(!atomic_read(&asoc->rmem_alloc));
+	WARN_ON(atomic_read(&asoc->rmem_alloc));
 
 	if (asoc->base.malloced) {
 		kfree(asoc);
@@ -474,6 +476,15 @@ static void sctp_association_destroy(struct sctp_association *asoc)
 void sctp_assoc_set_primary(struct sctp_association *asoc,
 			    struct sctp_transport *transport)
 {
+	int changeover = 0;
+
+	/* it's a changeover only if we already have a primary path
+	 * that we are changing
+	 */
+	if (asoc->peer.primary_path != NULL &&
+	    asoc->peer.primary_path != transport)
+		changeover = 1 ;
+
 	asoc->peer.primary_path = transport;
 
 	/* Set a default msg_name for events. */
@@ -499,12 +510,12 @@ void sctp_assoc_set_primary(struct sctp_association *asoc,
 	 * double switch to the same destination address.
 	 */
 	if (transport->cacc.changeover_active)
-		transport->cacc.cycling_changeover = 1;
+		transport->cacc.cycling_changeover = changeover;
 
 	/* 2) The sender MUST set CHANGEOVER_ACTIVE to indicate that
 	 * a changeover has occurred.
 	 */
-	transport->cacc.changeover_active = 1;
+	transport->cacc.changeover_active = changeover;
 
 	/* 3) The sender MUST store the next TSN to be sent in
 	 * next_tsn_at_change.
@@ -588,11 +599,12 @@ struct sctp_transport *sctp_assoc_add_peer(struct sctp_association *asoc,
 	/* Check to see if this is a duplicate. */
 	peer = sctp_assoc_lookup_paddr(asoc, addr);
 	if (peer) {
+		/* An UNKNOWN state is only set on transports added by
+		 * user in sctp_connectx() call.  Such transports should be
+		 * considered CONFIRMED per RFC 4960, Section 5.4.
+		 */
 		if (peer->state == SCTP_UNKNOWN) {
-			if (peer_state == SCTP_ACTIVE)
-				peer->state = SCTP_ACTIVE;
-			if (peer_state == SCTP_UNCONFIRMED)
-				peer->state = SCTP_UNCONFIRMED;
+			peer->state = SCTP_ACTIVE;
 		}
 		return peer;
 	}
@@ -615,6 +627,7 @@ struct sctp_transport *sctp_assoc_add_peer(struct sctp_association *asoc,
 	 * association configured value.
 	 */
 	peer->sackdelay = asoc->sackdelay;
+	peer->sackfreq = asoc->sackfreq;
 
 	/* Enable/disable heartbeat, SACK delay, and path MTU discovery
 	 * based on association setting.
@@ -641,6 +654,7 @@ struct sctp_transport *sctp_assoc_add_peer(struct sctp_association *asoc,
 
 	SCTP_DEBUG_PRINTK("sctp_assoc_add_peer:association %p PMTU set to "
 			  "%d\n", asoc, asoc->pathmtu);
+	peer->pmtu_pending = 0;
 
 	asoc->frag_point = sctp_frag_point(sp, asoc->pathmtu);
 
@@ -718,12 +732,11 @@ struct sctp_transport *sctp_assoc_lookup_paddr(
 					const union sctp_addr *address)
 {
 	struct sctp_transport *t;
-	struct list_head *pos;
 
 	/* Cycle through all transports searching for a peer address. */
 
-	list_for_each(pos, &asoc->peer.transport_addr_list) {
-		t = list_entry(pos, struct sctp_transport, transports);
+	list_for_each_entry(t, &asoc->peer.transport_addr_list,
+			transports) {
 		if (sctp_cmp_addr_exact(address, &t->ipaddr))
 			return t;
 	}
@@ -762,7 +775,6 @@ void sctp_assoc_control_transport(struct sctp_association *asoc,
 	struct sctp_transport *second;
 	struct sctp_ulpevent *event;
 	struct sockaddr_storage addr;
-	struct list_head *pos;
 	int spc_state = 0;
 
 	/* Record the transition on the transport.  */
@@ -814,8 +826,8 @@ void sctp_assoc_control_transport(struct sctp_association *asoc,
 	 */
 	first = NULL; second = NULL;
 
-	list_for_each(pos, &asoc->peer.transport_addr_list) {
-		t = list_entry(pos, struct sctp_transport, transports);
+	list_for_each_entry(t, &asoc->peer.transport_addr_list,
+			transports) {
 
 		if ((t->state == SCTP_INACTIVE) ||
 		    (t->state == SCTP_UNCONFIRMED))
@@ -932,7 +944,6 @@ struct sctp_transport *sctp_assoc_lookup_tsn(struct sctp_association *asoc,
 {
 	struct sctp_transport *active;
 	struct sctp_transport *match;
-	struct list_head *entry, *pos;
 	struct sctp_transport *transport;
 	struct sctp_chunk *chunk;
 	__be32 key = htonl(tsn);
@@ -956,8 +967,8 @@ struct sctp_transport *sctp_assoc_lookup_tsn(struct sctp_association *asoc,
 
 	active = asoc->peer.active_path;
 
-	list_for_each(entry, &active->transmitted) {
-		chunk = list_entry(entry, struct sctp_chunk, transmitted_list);
+	list_for_each_entry(chunk, &active->transmitted,
+			transmitted_list) {
 
 		if (key == chunk->subh.data_hdr->tsn) {
 			match = active;
@@ -966,14 +977,13 @@ struct sctp_transport *sctp_assoc_lookup_tsn(struct sctp_association *asoc,
 	}
 
 	/* If not found, go search all the other transports. */
-	list_for_each(pos, &asoc->peer.transport_addr_list) {
-		transport = list_entry(pos, struct sctp_transport, transports);
+	list_for_each_entry(transport, &asoc->peer.transport_addr_list,
+			transports) {
 
 		if (transport == active)
 			break;
-		list_for_each(entry, &transport->transmitted) {
-			chunk = list_entry(entry, struct sctp_chunk,
-					   transmitted_list);
+		list_for_each_entry(chunk, &transport->transmitted,
+				transmitted_list) {
 			if (key == chunk->subh.data_hdr->tsn) {
 				match = transport;
 				goto out;
@@ -1154,9 +1164,8 @@ void sctp_assoc_update(struct sctp_association *asoc,
 
 	} else {
 		/* Add any peer addresses from the new association. */
-		list_for_each(pos, &new->peer.transport_addr_list) {
-			trans = list_entry(pos, struct sctp_transport,
-					   transports);
+		list_for_each_entry(trans, &new->peer.transport_addr_list,
+				transports) {
 			if (!sctp_assoc_lookup_paddr(asoc, &trans->ipaddr))
 				sctp_assoc_add_peer(asoc, &trans->ipaddr,
 						    GFP_ATOMIC, trans->state);
@@ -1208,6 +1217,9 @@ void sctp_assoc_update_retran_path(struct sctp_association *asoc)
 	struct list_head *head = &asoc->peer.transport_addr_list;
 	struct list_head *pos;
 
+	if (asoc->peer.transport_count == 1)
+		return;
+
 	/* Find the next transport in a round-robin fashion. */
 	t = asoc->peer.retran_path;
 	pos = &t->transports;
@@ -1222,6 +1234,15 @@ void sctp_assoc_update_retran_path(struct sctp_association *asoc)
 
 		t = list_entry(pos, struct sctp_transport, transports);
 
+		/* We have exhausted the list, but didn't find any
+		 * other active transports.  If so, use the next
+		 * transport.
+		 */
+		if (t == asoc->peer.retran_path) {
+			t = next;
+			break;
+		}
+
 		/* Try to find an active transport. */
 
 		if ((t->state == SCTP_ACTIVE) ||
@@ -1233,15 +1254,6 @@ void sctp_assoc_update_retran_path(struct sctp_association *asoc)
 			 */
 			if (!next)
 				next = t;
-		}
-
-		/* We have exhausted the list, but didn't find any
-		 * other active transports.  If so, use the next
-		 * transport.
-		 */
-		if (t == asoc->peer.retran_path) {
-			t = next;
-			break;
 		}
 	}
 
@@ -1306,15 +1318,14 @@ struct sctp_transport *sctp_assoc_choose_shutdown_transport(
 void sctp_assoc_sync_pmtu(struct sctp_association *asoc)
 {
 	struct sctp_transport *t;
-	struct list_head *pos;
 	__u32 pmtu = 0;
 
 	if (!asoc)
 		return;
 
 	/* Get the lowest pmtu of all the transports. */
-	list_for_each(pos, &asoc->peer.transport_addr_list) {
-		t = list_entry(pos, struct sctp_transport, transports);
+	list_for_each_entry(t, &asoc->peer.transport_addr_list,
+				transports) {
 		if (t->pmtu_pending && t->dst) {
 			sctp_transport_update_pmtu(t, dst_mtu(t->dst));
 			t->pmtu_pending = 0;
@@ -1330,7 +1341,7 @@ void sctp_assoc_sync_pmtu(struct sctp_association *asoc)
 	}
 
 	SCTP_DEBUG_PRINTK("%s: asoc:%p, pmtu:%d, frag_point:%d\n",
-			  __FUNCTION__, asoc, asoc->pathmtu, asoc->frag_point);
+			  __func__, asoc, asoc->pathmtu, asoc->frag_point);
 }
 
 /* Should we send a SACK to update our peer? */
@@ -1370,7 +1381,7 @@ void sctp_assoc_rwnd_increase(struct sctp_association *asoc, unsigned len)
 	}
 
 	SCTP_DEBUG_PRINTK("%s: asoc %p rwnd increased by %d to (%u, %u) "
-			  "- %u\n", __FUNCTION__, asoc, len, asoc->rwnd,
+			  "- %u\n", __func__, asoc, len, asoc->rwnd,
 			  asoc->rwnd_over, asoc->a_rwnd);
 
 	/* Send a window update SACK if the rwnd has increased by at least the
@@ -1381,7 +1392,7 @@ void sctp_assoc_rwnd_increase(struct sctp_association *asoc, unsigned len)
 	if (sctp_peer_needs_update(asoc)) {
 		asoc->a_rwnd = asoc->rwnd;
 		SCTP_DEBUG_PRINTK("%s: Sending window update SACK- asoc: %p "
-				  "rwnd: %u a_rwnd: %u\n", __FUNCTION__,
+				  "rwnd: %u a_rwnd: %u\n", __func__,
 				  asoc, asoc->rwnd, asoc->a_rwnd);
 		sack = sctp_make_sack(asoc);
 		if (!sack)
@@ -1410,7 +1421,7 @@ void sctp_assoc_rwnd_decrease(struct sctp_association *asoc, unsigned len)
 		asoc->rwnd = 0;
 	}
 	SCTP_DEBUG_PRINTK("%s: asoc %p rwnd decreased by %d to (%u, %u)\n",
-			  __FUNCTION__, asoc, len, asoc->rwnd,
+			  __func__, asoc, len, asoc->rwnd,
 			  asoc->rwnd_over);
 }
 

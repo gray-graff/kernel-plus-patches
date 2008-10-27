@@ -44,7 +44,6 @@
 #include <net/checksum.h>
 #include <linux/smp_lock.h>
 #include <linux/stat.h>
-#include <asm/semaphore.h>
 
 #define FL_READONLY 128
 #define FL_DIR_SEM_HELD 256
@@ -1251,7 +1250,7 @@ static int reiserfs_check_acl(struct inode *inode, int mask)
 	return error;
 }
 
-int reiserfs_permission(struct inode *inode, int mask, struct nameidata *nd)
+int reiserfs_permission(struct inode *inode, int mask)
 {
 	/*
 	 * We don't do permission checks on the internal objects.

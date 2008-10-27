@@ -24,6 +24,7 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <linux/videodev2.h>	/* kernel radio structs		*/
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/isapnp.h>
 #include <asm/io.h>		/* outb, outb_p			*/
 #include <asm/uaccess.h>	/* copy to/from user		*/
@@ -288,16 +289,13 @@ static const struct file_operations fmi_fops = {
 	.open           = video_exclusive_open,
 	.release        = video_exclusive_release,
 	.ioctl		= video_ioctl2,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.llseek         = no_llseek,
 };
 
-static struct video_device fmi_radio=
-{
-	.owner		= THIS_MODULE,
-	.name		= "SF16FMx radio",
-	.type		= VID_TYPE_TUNER,
-	.fops           = &fmi_fops,
+static const struct v4l2_ioctl_ops fmi_ioctl_ops = {
 	.vidioc_querycap    = vidioc_querycap,
 	.vidioc_g_tuner     = vidioc_g_tuner,
 	.vidioc_s_tuner     = vidioc_s_tuner,
@@ -310,6 +308,12 @@ static struct video_device fmi_radio=
 	.vidioc_queryctrl   = vidioc_queryctrl,
 	.vidioc_g_ctrl      = vidioc_g_ctrl,
 	.vidioc_s_ctrl      = vidioc_s_ctrl,
+};
+
+static struct video_device fmi_radio = {
+	.name		= "SF16FMx radio",
+	.fops           = &fmi_fops,
+	.ioctl_ops 	= &fmi_ioctl_ops,
 };
 
 /* ladis: this is my card. does any other types exist? */
@@ -373,7 +377,7 @@ static int __init fmi_init(void)
 
 	mutex_init(&lock);
 
-	if (video_register_device(&fmi_radio, VFL_TYPE_RADIO, radio_nr) == -1) {
+	if (video_register_device(&fmi_radio, VFL_TYPE_RADIO, radio_nr) < 0) {
 		release_region(io, 2);
 		return -EINVAL;
 	}

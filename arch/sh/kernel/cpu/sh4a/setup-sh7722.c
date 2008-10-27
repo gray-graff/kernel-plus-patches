@@ -12,17 +12,18 @@
 #include <linux/serial.h>
 #include <linux/serial_sci.h>
 #include <linux/mm.h>
+#include <linux/uio_driver.h>
+#include <asm/clock.h>
 #include <asm/mmzone.h>
 
 static struct resource usbf_resources[] = {
 	[0] = {
 		.name	= "m66592_udc",
-		.start	= 0xA4480000,
-		.end	= 0xA44800FF,
+		.start	= 0x04480000,
+		.end	= 0x044800FF,
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.name	= "m66592_udc",
 		.start	= 65,
 		.end	= 65,
 		.flags	= IORESOURCE_IRQ,
@@ -38,6 +39,82 @@ static struct platform_device usbf_device = {
 	},
 	.num_resources	= ARRAY_SIZE(usbf_resources),
 	.resource	= usbf_resources,
+};
+
+static struct resource iic_resources[] = {
+	[0] = {
+		.name	= "IIC",
+		.start  = 0x04470000,
+		.end    = 0x04470017,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 96,
+		.end    = 99,
+		.flags  = IORESOURCE_IRQ,
+       },
+};
+
+static struct platform_device iic_device = {
+	.name           = "i2c-sh_mobile",
+	.num_resources  = ARRAY_SIZE(iic_resources),
+	.resource       = iic_resources,
+};
+
+static struct uio_info vpu_platform_data = {
+	.name = "VPU4",
+	.version = "0",
+	.irq = 60,
+};
+
+static struct resource vpu_resources[] = {
+	[0] = {
+		.name	= "VPU",
+		.start	= 0xfe900000,
+		.end	= 0xfe9022eb,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		/* place holder for contiguous memory */
+	},
+};
+
+static struct platform_device vpu_device = {
+	.name		= "uio_pdrv_genirq",
+	.id		= 0,
+	.dev = {
+		.platform_data	= &vpu_platform_data,
+	},
+	.resource	= vpu_resources,
+	.num_resources	= ARRAY_SIZE(vpu_resources),
+};
+
+static struct uio_info veu_platform_data = {
+	.name = "VEU",
+	.version = "0",
+	.irq = 54,
+};
+
+static struct resource veu_resources[] = {
+	[0] = {
+		.name	= "VEU",
+		.start	= 0xfe920000,
+		.end	= 0xfe9200b7,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		/* place holder for contiguous memory */
+	},
+};
+
+static struct platform_device veu_device = {
+	.name		= "uio_pdrv_genirq",
+	.id		= 1,
+	.dev = {
+		.platform_data	= &veu_platform_data,
+	},
+	.resource	= veu_resources,
+	.num_resources	= ARRAY_SIZE(veu_resources),
 };
 
 static struct plat_sci_port sci_platform_data[] = {
@@ -74,11 +151,29 @@ static struct platform_device sci_device = {
 
 static struct platform_device *sh7722_devices[] __initdata = {
 	&usbf_device,
+	&iic_device,
 	&sci_device,
+	&vpu_device,
+	&veu_device,
 };
 
 static int __init sh7722_devices_setup(void)
 {
+	clk_always_enable("mstp031"); /* TLB */
+	clk_always_enable("mstp030"); /* IC */
+	clk_always_enable("mstp029"); /* OC */
+	clk_always_enable("mstp028"); /* URAM */
+	clk_always_enable("mstp026"); /* XYMEM */
+	clk_always_enable("mstp022"); /* INTC */
+	clk_always_enable("mstp020"); /* SuperHyway */
+	clk_always_enable("mstp109"); /* I2C */
+	clk_always_enable("mstp211"); /* USB */
+	clk_always_enable("mstp202"); /* VEU */
+	clk_always_enable("mstp201"); /* VPU */
+
+	platform_resource_setup_memory(&vpu_device, "vpu", 1 << 20);
+	platform_resource_setup_memory(&veu_device, "veu", 2 << 20);
+
 	return platform_add_devices(sh7722_devices,
 				    ARRAY_SIZE(sh7722_devices));
 }
@@ -209,8 +304,14 @@ static struct intc_sense_reg sense_registers[] __initdata = {
 	  { IRQ0, IRQ1, IRQ2, IRQ3, IRQ4, IRQ5, IRQ6, IRQ7 } },
 };
 
-static DECLARE_INTC_DESC(intc_desc, "sh7722", vectors, groups,
-			 mask_registers, prio_registers, sense_registers);
+static struct intc_mask_reg ack_registers[] __initdata = {
+	{ 0xa4140024, 0, 8, /* INTREQ00 */
+	  { IRQ0, IRQ1, IRQ2, IRQ3, IRQ4, IRQ5, IRQ6, IRQ7 } },
+};
+
+static DECLARE_INTC_DESC_ACK(intc_desc, "sh7722", vectors, groups,
+			     mask_registers, prio_registers, sense_registers,
+			     ack_registers);
 
 void __init plat_irq_setup(void)
 {

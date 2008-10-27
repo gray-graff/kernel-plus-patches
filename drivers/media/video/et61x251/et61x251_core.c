@@ -34,7 +34,8 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/page-flags.h>
-#include <linux/byteorder/generic.h>
+#include <media/v4l2-ioctl.h>
+#include <asm/byteorder.h>
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
@@ -985,7 +986,7 @@ static DEVICE_ATTR(i2c_val, S_IRUGO | S_IWUSR,
 
 static int et61x251_create_sysfs(struct et61x251_device* cam)
 {
-	struct device *classdev = &(cam->v4ldev->class_dev);
+	struct device *classdev = &(cam->v4ldev->dev);
 	int err = 0;
 
 	if ((err = device_create_file(classdev, &dev_attr_reg)))
@@ -2523,7 +2524,9 @@ static const struct file_operations et61x251_fops = {
 	.open =    et61x251_open,
 	.release = et61x251_release,
 	.ioctl =   et61x251_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl = v4l_compat_ioctl32,
+#endif
 	.read =    et61x251_read,
 	.poll =    et61x251_poll,
 	.mmap =    et61x251_mmap,
@@ -2538,7 +2541,7 @@ et61x251_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
 	struct et61x251_device* cam;
-	static unsigned int dev_nr = 0;
+	static unsigned int dev_nr;
 	unsigned int i;
 	int err = 0;
 
@@ -2582,11 +2585,10 @@ et61x251_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	}
 
 	strcpy(cam->v4ldev->name, "ET61X[12]51 PC Camera");
-	cam->v4ldev->owner = THIS_MODULE;
-	cam->v4ldev->type = VID_TYPE_CAPTURE | VID_TYPE_SCALES;
 	cam->v4ldev->fops = &et61x251_fops;
 	cam->v4ldev->minor = video_nr[dev_nr];
 	cam->v4ldev->release = video_device_release;
+	cam->v4ldev->parent = &udev->dev;
 	video_set_drvdata(cam->v4ldev, cam);
 
 	init_completion(&cam->probe);

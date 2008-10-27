@@ -6,8 +6,9 @@
 # for more details.
 #
 
-
-CROSS_COMPILE    ?= bfin-uclinux-
+ifeq ($(CROSS_COMPILE),)
+CROSS_COMPILE    := bfin-uclinux-
+endif
 LDFLAGS_vmlinux  := -X
 OBJCOPYFLAGS     := -O binary -R .note -R .comment -S
 GZFLAGS          := -9
@@ -72,6 +73,11 @@ rev-$(CONFIG_BF_REV_ANY)  := any
 KBUILD_CFLAGS += -mcpu=$(cpu-y)-$(rev-y)
 KBUILD_AFLAGS += -mcpu=$(cpu-y)-$(rev-y)
 
+# - we utilize the silicon rev from the toolchain, so move it over to the checkflags
+# - the l1_text attribute is Blackfin specific, so fake it out as used to kill warnings
+CHECKFLAGS_SILICON = $(shell echo "" | $(CPP) $(KBUILD_CFLAGS) -dD - 2>/dev/null | awk '$$2 == "__SILICON_REVISION__" { print $$3 }')
+CHECKFLAGS += -D__SILICON_REVISION__=$(CHECKFLAGS_SILICON) -Dl1_text=__used__
+
 head-y   := arch/$(ARCH)/mach-$(MACHINE)/head.o arch/$(ARCH)/kernel/init_task.o
 
 core-y   += arch/$(ARCH)/kernel/ arch/$(ARCH)/mm/ arch/$(ARCH)/mach-common/
@@ -92,35 +98,19 @@ libs-y   += arch/$(ARCH)/lib/
 
 drivers-$(CONFIG_OPROFILE) += arch/$(ARCH)/oprofile/
 
+machdirs	:= $(patsubst %,arch/blackfin/mach-%/, $(machine-y))
 
+KBUILD_CFLAGS += -Iarch/$(ARCH)/include/
+KBUILD_CFLAGS += -Iarch/$(ARCH)/mach-$(MACHINE)/include
 
-#	Update machine arch symlinks if something which affects
-#	them changed.  We use .mach to indicate when they were updated
-#	last, otherwise make uses the target directory mtime.
-
-       show_mach_symlink = :
- quiet_show_mach_symlink = echo '  SYMLINK include/asm-$(ARCH)/mach-$(MACHINE) -> include/asm-$(ARCH)/mach'
-silent_show_mach_symlink = :
-include/asm-blackfin/.mach: $(wildcard include/config/arch/*.h) include/config/auto.conf
-	@$($(quiet)show_mach_symlink)
-ifneq ($(KBUILD_SRC),)
-	$(Q)mkdir -p include/asm-$(ARCH)
-	$(Q)ln -fsn $(srctree)/include/asm-$(ARCH)/mach-$(MACHINE) include/asm-$(ARCH)/mach
-else
-	$(Q)ln -fsn mach-$(MACHINE) include/asm-$(ARCH)/mach
-endif
-	@touch $@
+KBUILD_CPPFLAGS	+= $(patsubst %,-I$(srctree)/%include,$(machdirs))
 
 CLEAN_FILES += \
-	include/asm-$(ARCH)/asm-offsets.h \
+	arch/$(ARCH)/include/asm/asm-offsets.h \
 	arch/$(ARCH)/kernel/asm-offsets.s \
-	include/asm-$(ARCH)/mach \
-	include/asm-$(ARCH)/.mach
 
-archprepare: include/asm-blackfin/.mach
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
-
 
 INSTALL_PATH ?= /tftpboot
 boot := arch/$(ARCH)/boot

@@ -40,7 +40,6 @@ static inline unsigned long check_apicid_present(int bit)
 
 #define apicid_cluster(apicid) ((apicid) & XAPIC_DEST_CLUSTER_MASK)
 
-extern u8 bios_cpu_apicid[];
 extern u8 cpu_2_logical_apicid[];
 
 static inline void init_apic_ldr(void)
@@ -64,10 +63,10 @@ static inline void init_apic_ldr(void)
 	 * BIOS puts 5 CPUs in one APIC cluster, we're hosed. */
 	BUG_ON(count >= XAPIC_DEST_CPUS_SHIFT);
 	id = my_cluster | (1UL << count);
-	apic_write_around(APIC_DFR, APIC_DFR_VALUE);
+	apic_write(APIC_DFR, APIC_DFR_VALUE);
 	val = apic_read(APIC_LDR) & ~APIC_LDR_MASK;
 	val |= SET_APIC_LOGICAL_ID(id);
-	apic_write_around(APIC_LDR, val);
+	apic_write(APIC_LDR, val);
 }
 
 static inline int multi_timer_check(int apic, int irq)
@@ -110,7 +109,7 @@ static inline int cpu_to_logical_apicid(int cpu)
 static inline int cpu_present_to_apicid(int mps_cpu)
 {
 	if (mps_cpu < NR_CPUS)
-		return (int)bios_cpu_apicid[mps_cpu];
+		return (int)per_cpu(x86_bios_cpu_apicid, mps_cpu);
 	else
 		return BAD_APICID;
 }
@@ -123,18 +122,7 @@ static inline physid_mask_t ioapic_phys_id_map(physid_mask_t phys_id_map)
 
 static inline physid_mask_t apicid_to_cpu_present(int apicid)
 {
-	return physid_mask_of_physid(0);
-}
-
-static inline int mpc_apic_id(struct mpc_config_processor *m,
-			      struct mpc_config_translation *translation_record)
-{
-	printk("Processor #%d %u:%u APIC version %d\n",
-	       m->mpc_apicid,
-	       (m->mpc_cpufeature & CPU_FAMILY_MASK) >> 8,
-	       (m->mpc_cpufeature & CPU_MODEL_MASK) >> 4,
-	       m->mpc_apicver);
-	return m->mpc_apicid;
+	return physid_mask_of_physid(apicid);
 }
 
 static inline void setup_portio_remap(void)

@@ -33,13 +33,9 @@
  */
 void __ptrace_link(struct task_struct *child, struct task_struct *new_parent)
 {
-	BUG_ON(!list_empty(&child->ptrace_list));
-	if (child->parent == new_parent)
-		return;
-	list_add(&child->ptrace_list, &child->parent->ptrace_children);
-	remove_parent(child);
+	BUG_ON(!list_empty(&child->ptrace_entry));
+	list_add(&child->ptrace_entry, &new_parent->ptraced);
 	child->parent = new_parent;
-	add_parent(child);
 }
  
 /*
@@ -73,12 +69,8 @@ void __ptrace_unlink(struct task_struct *child)
 	BUG_ON(!child->ptrace);
 
 	child->ptrace = 0;
-	if (!list_empty(&child->ptrace_list)) {
-		list_del_init(&child->ptrace_list);
-		remove_parent(child);
-		child->parent = child->real_parent;
-		add_parent(child);
-	}
+	child->parent = child->real_parent;
+	list_del_init(&child->ptrace_entry);
 
 	if (task_is_traced(child))
 		ptrace_untrace(child);
@@ -115,13 +107,13 @@ int ptrace_check_attach(struct task_struct *child, int kill)
 	read_unlock(&tasklist_lock);
 
 	if (!ret && !kill)
-		wait_task_inactive(child);
+		ret = wait_task_inactive(child, TASK_TRACED) ? 0 : -ESRCH;
 
 	/* All systems go.. */
 	return ret;
 }
 
-int __ptrace_may_attach(struct task_struct *task)
+int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 {
 	/* May we inspect the given task?
 	 * This check is used both for attaching with ptrace
@@ -148,16 +140,16 @@ int __ptrace_may_attach(struct task_struct *task)
 	if (!dumpable && !capable(CAP_SYS_PTRACE))
 		return -EPERM;
 
-	return security_ptrace(current, task);
+	return security_ptrace_may_access(task, mode);
 }
 
-int ptrace_may_attach(struct task_struct *task)
+bool ptrace_may_access(struct task_struct *task, unsigned int mode)
 {
 	int err;
 	task_lock(task);
-	err = __ptrace_may_attach(task);
+	err = __ptrace_may_access(task, mode);
 	task_unlock(task);
-	return !err;
+	return (!err ? true : false);
 }
 
 int ptrace_attach(struct task_struct *task)
@@ -168,8 +160,6 @@ int ptrace_attach(struct task_struct *task)
 	audit_ptrace(task);
 
 	retval = -EPERM;
-	if (task->pid <= 1)
-		goto out;
 	if (same_thread_group(task, current))
 		goto out;
 
@@ -197,7 +187,7 @@ repeat:
 	/* the same process cannot be attached many times */
 	if (task->ptrace & PT_PTRACED)
 		goto bad;
-	retval = __ptrace_may_attach(task);
+	retval = __ptrace_may_access(task, PTRACE_MODE_ATTACH);
 	if (retval)
 		goto bad;
 
@@ -208,8 +198,7 @@ repeat:
 
 	__ptrace_link(task, current);
 
-	force_sig_specific(SIGSTOP, task);
-
+	send_sig_info(SIGSTOP, SEND_SIG_FORCED, task);
 bad:
 	write_unlock_irqrestore(&tasklist_lock, flags);
 	task_unlock(task);
@@ -323,9 +312,8 @@ static int ptrace_setoptions(struct task_struct *child, long data)
 	return (data & ~PTRACE_O_MASK) ? -EINVAL : 0;
 }
 
-static int ptrace_getsiginfo(struct task_struct *child, siginfo_t __user * data)
+static int ptrace_getsiginfo(struct task_struct *child, siginfo_t *info)
 {
-	siginfo_t lastinfo;
 	int error = -ESRCH;
 
 	read_lock(&tasklist_lock);
@@ -333,31 +321,25 @@ static int ptrace_getsiginfo(struct task_struct *child, siginfo_t __user * data)
 		error = -EINVAL;
 		spin_lock_irq(&child->sighand->siglock);
 		if (likely(child->last_siginfo != NULL)) {
-			lastinfo = *child->last_siginfo;
+			*info = *child->last_siginfo;
 			error = 0;
 		}
 		spin_unlock_irq(&child->sighand->siglock);
 	}
 	read_unlock(&tasklist_lock);
-	if (!error)
-		return copy_siginfo_to_user(data, &lastinfo);
 	return error;
 }
 
-static int ptrace_setsiginfo(struct task_struct *child, siginfo_t __user * data)
+static int ptrace_setsiginfo(struct task_struct *child, const siginfo_t *info)
 {
-	siginfo_t newinfo;
 	int error = -ESRCH;
-
-	if (copy_from_user(&newinfo, data, sizeof (siginfo_t)))
-		return -EFAULT;
 
 	read_lock(&tasklist_lock);
 	if (likely(child->sighand != NULL)) {
 		error = -EINVAL;
 		spin_lock_irq(&child->sighand->siglock);
 		if (likely(child->last_siginfo != NULL)) {
-			*child->last_siginfo = newinfo;
+			*child->last_siginfo = *info;
 			error = 0;
 		}
 		spin_unlock_irq(&child->sighand->siglock);
@@ -424,6 +406,7 @@ int ptrace_request(struct task_struct *child, long request,
 		   long addr, long data)
 {
 	int ret = -EIO;
+	siginfo_t siginfo;
 
 	switch (request) {
 	case PTRACE_PEEKTEXT:
@@ -442,12 +425,22 @@ int ptrace_request(struct task_struct *child, long request,
 	case PTRACE_GETEVENTMSG:
 		ret = put_user(child->ptrace_message, (unsigned long __user *) data);
 		break;
+
 	case PTRACE_GETSIGINFO:
-		ret = ptrace_getsiginfo(child, (siginfo_t __user *) data);
+		ret = ptrace_getsiginfo(child, &siginfo);
+		if (!ret)
+			ret = copy_siginfo_to_user((siginfo_t __user *) data,
+						   &siginfo);
 		break;
+
 	case PTRACE_SETSIGINFO:
-		ret = ptrace_setsiginfo(child, (siginfo_t __user *) data);
+		if (copy_from_user(&siginfo, (siginfo_t __user *) data,
+				   sizeof siginfo))
+			ret = -EFAULT;
+		else
+			ret = ptrace_setsiginfo(child, &siginfo);
 		break;
+
 	case PTRACE_DETACH:	 /* detach a process that was attached. */
 		ret = ptrace_detach(child, data);
 		break;
@@ -491,14 +484,33 @@ int ptrace_traceme(void)
 	/*
 	 * Are we already being traced?
 	 */
+repeat:
 	task_lock(current);
 	if (!(current->ptrace & PT_PTRACED)) {
-		ret = security_ptrace(current->parent, current);
+		/*
+		 * See ptrace_attach() comments about the locking here.
+		 */
+		unsigned long flags;
+		if (!write_trylock_irqsave(&tasklist_lock, flags)) {
+			task_unlock(current);
+			do {
+				cpu_relax();
+			} while (!write_can_lock(&tasklist_lock));
+			goto repeat;
+		}
+
+		ret = security_ptrace_traceme(current->parent);
+
 		/*
 		 * Set the ptrace bit in the process ptrace flags.
+		 * Then link us on our parent's ptraced list.
 		 */
-		if (!ret)
+		if (!ret) {
 			current->ptrace |= PT_PTRACED;
+			__ptrace_link(current, current->real_parent);
+		}
+
+		write_unlock_irqrestore(&tasklist_lock, flags);
 	}
 	task_unlock(current);
 	return ret;
@@ -518,12 +530,6 @@ struct task_struct *ptrace_get_task_struct(pid_t pid)
 {
 	struct task_struct *child;
 
-	/*
-	 * Tracing init is not allowed.
-	 */
-	if (pid == 1)
-		return ERR_PTR(-EPERM);
-
 	read_lock(&tasklist_lock);
 	child = find_task_by_vpid(pid);
 	if (child)
@@ -539,7 +545,6 @@ struct task_struct *ptrace_get_task_struct(pid_t pid)
 #define arch_ptrace_attach(child)	do { } while (0)
 #endif
 
-#ifndef __ARCH_SYS_PTRACE
 asmlinkage long sys_ptrace(long request, long pid, long addr, long data)
 {
 	struct task_struct *child;
@@ -587,7 +592,6 @@ asmlinkage long sys_ptrace(long request, long pid, long addr, long data)
 	unlock_kernel();
 	return ret;
 }
-#endif /* __ARCH_SYS_PTRACE */
 
 int generic_ptrace_peekdata(struct task_struct *tsk, long addr, long data)
 {
@@ -608,7 +612,7 @@ int generic_ptrace_pokedata(struct task_struct *tsk, long addr, long data)
 	return (copied == sizeof(data)) ? 0 : -EIO;
 }
 
-#ifdef CONFIG_COMPAT
+#if defined CONFIG_COMPAT && defined __ARCH_WANT_COMPAT_SYS_PTRACE
 #include <linux/compat.h>
 
 int compat_ptrace_request(struct task_struct *child, compat_long_t request,
@@ -616,6 +620,7 @@ int compat_ptrace_request(struct task_struct *child, compat_long_t request,
 {
 	compat_ulong_t __user *datap = compat_ptr(data);
 	compat_ulong_t word;
+	siginfo_t siginfo;
 	int ret;
 
 	switch (request) {
@@ -638,6 +643,23 @@ int compat_ptrace_request(struct task_struct *child, compat_long_t request,
 		ret = put_user((compat_ulong_t) child->ptrace_message, datap);
 		break;
 
+	case PTRACE_GETSIGINFO:
+		ret = ptrace_getsiginfo(child, &siginfo);
+		if (!ret)
+			ret = copy_siginfo_to_user32(
+				(struct compat_siginfo __user *) datap,
+				&siginfo);
+		break;
+
+	case PTRACE_SETSIGINFO:
+		memset(&siginfo, 0, sizeof siginfo);
+		if (copy_siginfo_from_user32(
+			    &siginfo, (struct compat_siginfo __user *) datap))
+			ret = -EFAULT;
+		else
+			ret = ptrace_setsiginfo(child, &siginfo);
+		break;
+
 	default:
 		ret = ptrace_request(child, request, addr, data);
 	}
@@ -645,7 +667,6 @@ int compat_ptrace_request(struct task_struct *child, compat_long_t request,
 	return ret;
 }
 
-#ifdef __ARCH_WANT_COMPAT_SYS_PTRACE
 asmlinkage long compat_sys_ptrace(compat_long_t request, compat_long_t pid,
 				  compat_long_t addr, compat_long_t data)
 {
@@ -688,6 +709,4 @@ asmlinkage long compat_sys_ptrace(compat_long_t request, compat_long_t pid,
 	unlock_kernel();
 	return ret;
 }
-#endif /* __ARCH_WANT_COMPAT_SYS_PTRACE */
-
-#endif	/* CONFIG_COMPAT */
+#endif	/* CONFIG_COMPAT && __ARCH_WANT_COMPAT_SYS_PTRACE */

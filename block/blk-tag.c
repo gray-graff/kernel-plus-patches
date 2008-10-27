@@ -38,7 +38,8 @@ static int __blk_free_tags(struct blk_queue_tag *bqt)
 
 	retval = atomic_dec_and_test(&bqt->refcnt);
 	if (retval) {
-		BUG_ON(bqt->busy);
+		BUG_ON(find_first_bit(bqt->tag_map, bqt->max_depth) <
+							bqt->max_depth);
 
 		kfree(bqt->tag_index);
 		bqt->tag_index = NULL;
@@ -70,7 +71,7 @@ void __blk_queue_free_tags(struct request_queue *q)
 	__blk_free_tags(bqt);
 
 	q->queue_tags = NULL;
-	q->queue_flags &= ~(1 << QUEUE_FLAG_QUEUED);
+	queue_flag_clear_unlocked(QUEUE_FLAG_QUEUED, q);
 }
 
 /**
@@ -98,7 +99,7 @@ EXPORT_SYMBOL(blk_free_tags);
  **/
 void blk_queue_free_tags(struct request_queue *q)
 {
-	clear_bit(QUEUE_FLAG_QUEUED, &q->queue_flags);
+	queue_flag_clear_unlocked(QUEUE_FLAG_QUEUED, q);
 }
 EXPORT_SYMBOL(blk_queue_free_tags);
 
@@ -112,7 +113,7 @@ init_tag_map(struct request_queue *q, struct blk_queue_tag *tags, int depth)
 	if (q && depth > q->nr_requests * 2) {
 		depth = q->nr_requests * 2;
 		printk(KERN_ERR "%s: adjusted depth to %d\n",
-				__FUNCTION__, depth);
+		       __func__, depth);
 	}
 
 	tag_index = kzalloc(depth * sizeof(struct request *), GFP_ATOMIC);
@@ -147,7 +148,6 @@ static struct blk_queue_tag *__blk_queue_init_tags(struct request_queue *q,
 	if (init_tag_map(q, tags, depth))
 		goto fail;
 
-	tags->busy = 0;
 	atomic_set(&tags->refcnt, 1);
 	return tags;
 fail:
@@ -171,6 +171,9 @@ EXPORT_SYMBOL(blk_init_tags);
  * @q:  the request queue for the device
  * @depth:  the maximum queue depth supported
  * @tags: the tag to use
+ *
+ * Queue lock must be held here if the function is called to resize an
+ * existing map.
  **/
 int blk_queue_init_tags(struct request_queue *q, int depth,
 			struct blk_queue_tag *tags)
@@ -188,7 +191,7 @@ int blk_queue_init_tags(struct request_queue *q, int depth,
 		rc = blk_queue_resize_tags(q, depth);
 		if (rc)
 			return rc;
-		set_bit(QUEUE_FLAG_QUEUED, &q->queue_flags);
+		queue_flag_set(QUEUE_FLAG_QUEUED, q);
 		return 0;
 	} else
 		atomic_inc(&tags->refcnt);
@@ -197,7 +200,7 @@ int blk_queue_init_tags(struct request_queue *q, int depth,
 	 * assign it, all done
 	 */
 	q->queue_tags = tags;
-	q->queue_flags |= (1 << QUEUE_FLAG_QUEUED);
+	queue_flag_set_unlocked(QUEUE_FLAG_QUEUED, q);
 	INIT_LIST_HEAD(&q->tag_busy_list);
 	return 0;
 fail:
@@ -296,13 +299,13 @@ void blk_queue_end_tag(struct request_queue *q, struct request *rq)
 
 	if (unlikely(bqt->tag_index[tag] == NULL))
 		printk(KERN_ERR "%s: tag %d is missing\n",
-		       __FUNCTION__, tag);
+		       __func__, tag);
 
 	bqt->tag_index[tag] = NULL;
 
 	if (unlikely(!test_bit(tag, bqt->tag_map))) {
 		printk(KERN_ERR "%s: attempt to clear non-busy tag (%d)\n",
-		       __FUNCTION__, tag);
+		       __func__, tag);
 		return;
 	}
 	/*
@@ -310,7 +313,6 @@ void blk_queue_end_tag(struct request_queue *q, struct request *rq)
 	 * unlock memory barrier semantics.
 	 */
 	clear_bit_unlock(tag, bqt->tag_map);
-	bqt->busy--;
 }
 EXPORT_SYMBOL(blk_queue_end_tag);
 
@@ -340,7 +342,7 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 	if (unlikely((rq->cmd_flags & REQ_QUEUED))) {
 		printk(KERN_ERR
 		       "%s: request %p for device [%s] already tagged %d",
-		       __FUNCTION__, rq,
+		       __func__, rq,
 		       rq->rq_disk ? rq->rq_disk->disk_name : "?", rq->tag);
 		BUG();
 	}
@@ -365,7 +367,6 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 	bqt->tag_index[tag] = rq;
 	blkdev_dequeue_request(rq);
 	list_add(&rq->queuelist, &q->tag_busy_list);
-	bqt->busy++;
 	return 0;
 }
 EXPORT_SYMBOL(blk_queue_start_tag);

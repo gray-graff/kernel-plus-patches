@@ -10,7 +10,7 @@
  *	   2 of the License, or (at your option) any later version.
  *
  * FILE		: megaraid_sas.c
- * Version	: v00.00.03.16-rc1
+ * Version     : v00.00.04.01-rc1
  *
  * Authors:
  *	(email-id : megaraidlinux@lsi.com)
@@ -33,6 +33,7 @@
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
+#include <linux/smp_lock.h>
 #include <linux/uio.h>
 #include <asm/uaccess.h>
 #include <linux/fs.h>
@@ -68,6 +69,12 @@ static struct pci_device_id megasas_pci_table[] = {
 	/* xscale IOP */
 	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_SAS1078R)},
 	/* ppc IOP */
+	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_SAS1078DE)},
+	/* ppc IOP */
+	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_SAS1078GEN2)},
+	/* gen2*/
+	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_SAS0079GEN2)},
+	/* gen2*/
 	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_VERDE_ZCR)},
 	/* xscale IOP, vega */
 	{PCI_DEVICE(PCI_VENDOR_ID_DELL, PCI_DEVICE_ID_DELL_PERC5)},
@@ -195,6 +202,9 @@ megasas_clear_intr_xscale(struct megasas_register_set __iomem * regs)
 	 */
 	writel(status, &regs->outbound_intr_status);
 
+	/* Dummy readl to force pci flush */
+	readl(&regs->outbound_intr_status);
+
 	return 0;
 }
 
@@ -290,6 +300,9 @@ megasas_clear_intr_ppc(struct megasas_register_set __iomem * regs)
 	 */
 	writel(status, &regs->outbound_doorbell_clear);
 
+	/* Dummy readl to force pci flush */
+	readl(&regs->outbound_doorbell_clear);
+
 	return 0;
 }
 /**
@@ -312,6 +325,99 @@ static struct megasas_instance_template megasas_instance_template_ppc = {
 	.disable_intr = megasas_disable_intr_ppc,
 	.clear_intr = megasas_clear_intr_ppc,
 	.read_fw_status_reg = megasas_read_fw_status_reg_ppc,
+};
+
+/**
+*	The following functions are defined for gen2 (deviceid : 0x78 0x79)
+*	controllers
+*/
+
+/**
+ * megasas_enable_intr_gen2 -  Enables interrupts
+ * @regs:                      MFI register set
+ */
+static inline void
+megasas_enable_intr_gen2(struct megasas_register_set __iomem *regs)
+{
+	writel(0xFFFFFFFF, &(regs)->outbound_doorbell_clear);
+
+	/* write ~0x00000005 (4 & 1) to the intr mask*/
+	writel(~MFI_GEN2_ENABLE_INTERRUPT_MASK, &(regs)->outbound_intr_mask);
+
+	/* Dummy readl to force pci flush */
+	readl(&regs->outbound_intr_mask);
+}
+
+/**
+ * megasas_disable_intr_gen2 - Disables interrupt
+ * @regs:                      MFI register set
+ */
+static inline void
+megasas_disable_intr_gen2(struct megasas_register_set __iomem *regs)
+{
+	u32 mask = 0xFFFFFFFF;
+	writel(mask, &regs->outbound_intr_mask);
+	/* Dummy readl to force pci flush */
+	readl(&regs->outbound_intr_mask);
+}
+
+/**
+ * megasas_read_fw_status_reg_gen2 - returns the current FW status value
+ * @regs:                      MFI register set
+ */
+static u32
+megasas_read_fw_status_reg_gen2(struct megasas_register_set __iomem *regs)
+{
+	return readl(&(regs)->outbound_scratch_pad);
+}
+
+/**
+ * megasas_clear_interrupt_gen2 -      Check & clear interrupt
+ * @regs:                              MFI register set
+ */
+static int
+megasas_clear_intr_gen2(struct megasas_register_set __iomem *regs)
+{
+	u32 status;
+	/*
+	 * Check if it is our interrupt
+	 */
+	status = readl(&regs->outbound_intr_status);
+
+	if (!(status & MFI_GEN2_ENABLE_INTERRUPT_MASK))
+		return 1;
+
+	/*
+	 * Clear the interrupt by writing back the same value
+	 */
+	writel(status, &regs->outbound_doorbell_clear);
+
+	/* Dummy readl to force pci flush */
+	readl(&regs->outbound_intr_status);
+
+	return 0;
+}
+/**
+ * megasas_fire_cmd_gen2 -     Sends command to the FW
+ * @frame_phys_addr :          Physical address of cmd
+ * @frame_count :              Number of frames for the command
+ * @regs :                     MFI register set
+ */
+static inline void
+megasas_fire_cmd_gen2(dma_addr_t frame_phys_addr, u32 frame_count,
+			struct megasas_register_set __iomem *regs)
+{
+	writel((frame_phys_addr | (frame_count<<1))|1,
+			&(regs)->inbound_queue_port);
+}
+
+static struct megasas_instance_template megasas_instance_template_gen2 = {
+
+	.fire_cmd = megasas_fire_cmd_gen2,
+	.enable_intr = megasas_enable_intr_gen2,
+	.disable_intr = megasas_disable_intr_gen2,
+	.clear_intr = megasas_clear_intr_gen2,
+	.read_fw_status_reg = megasas_read_fw_status_reg_gen2,
 };
 
 /**
@@ -488,12 +594,13 @@ megasas_make_sgl64(struct megasas_instance *instance, struct scsi_cmnd *scp,
 
  /**
  * megasas_get_frame_count - Computes the number of frames
+ * @frame_type		: type of frame- io or pthru frame
  * @sge_count		: number of sg elements
  *
  * Returns the number of frames required for numnber of sge's (sge_count)
  */
 
-static u32 megasas_get_frame_count(u8 sge_count)
+static u32 megasas_get_frame_count(u8 sge_count, u8 frame_type)
 {
 	int num_cnt;
 	int sge_bytes;
@@ -504,13 +611,22 @@ static u32 megasas_get_frame_count(u8 sge_count)
 	    sizeof(struct megasas_sge32);
 
 	/*
-	* Main frame can contain 2 SGEs for 64-bit SGLs and
-	* 3 SGEs for 32-bit SGLs
-	*/
-	if (IS_DMA64)
-		num_cnt = sge_count - 2;
-	else
-		num_cnt = sge_count - 3;
+	 * Main frame can contain 2 SGEs for 64-bit SGLs and
+	 * 3 SGEs for 32-bit SGLs for ldio &
+	 * 1 SGEs for 64-bit SGLs and
+	 * 2 SGEs for 32-bit SGLs for pthru frame
+	 */
+	if (unlikely(frame_type == PTHRU_FRAME)) {
+		if (IS_DMA64)
+			num_cnt = sge_count - 1;
+		else
+			num_cnt = sge_count - 2;
+	} else {
+		if (IS_DMA64)
+			num_cnt = sge_count - 2;
+		else
+			num_cnt = sge_count - 3;
+	}
 
 	if(num_cnt>0){
 		sge_bytes = sge_sz * num_cnt;
@@ -592,7 +708,8 @@ megasas_build_dcdb(struct megasas_instance *instance, struct scsi_cmnd *scp,
 	 * Compute the total number of frames this command consumes. FW uses
 	 * this number to pull sufficient number of frames from host memory.
 	 */
-	cmd->frame_count = megasas_get_frame_count(pthru->sge_count);
+	cmd->frame_count = megasas_get_frame_count(pthru->sge_count,
+							PTHRU_FRAME);
 
 	return cmd->frame_count;
 }
@@ -709,7 +826,7 @@ megasas_build_ldio(struct megasas_instance *instance, struct scsi_cmnd *scp,
 	 * Compute the total number of frames this command consumes. FW uses
 	 * this number to pull sufficient number of frames from host memory.
 	 */
-	cmd->frame_count = megasas_get_frame_count(ldio->sge_count);
+	cmd->frame_count = megasas_get_frame_count(ldio->sge_count, IO_FRAME);
 
 	return cmd->frame_count;
 }
@@ -1460,7 +1577,7 @@ megasas_transition_to_ready(struct megasas_instance* instance)
 			instance->instancet->disable_intr(instance->reg_set);
 			writel(MFI_RESET_FLAGS, &instance->reg_set->inbound_doorbell);
 
-			max_wait = 10;
+			max_wait = 60;
 			cur_state = MFI_STATE_OPERATIONAL;
 			break;
 
@@ -1962,7 +2079,12 @@ static int megasas_init_mfi(struct megasas_instance *instance)
 	/*
 	 * Map the message registers
 	 */
-	instance->base_addr = pci_resource_start(instance->pdev, 0);
+	if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS1078GEN2) ||
+		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0079GEN2)) {
+		instance->base_addr = pci_resource_start(instance->pdev, 1);
+	} else {
+		instance->base_addr = pci_resource_start(instance->pdev, 0);
+	}
 
 	if (pci_request_regions(instance->pdev, "megasas: LSI")) {
 		printk(KERN_DEBUG "megasas: IO memory region busy!\n");
@@ -1980,8 +2102,13 @@ static int megasas_init_mfi(struct megasas_instance *instance)
 
 	switch(instance->pdev->device)
 	{
-		case PCI_DEVICE_ID_LSI_SAS1078R:	
+		case PCI_DEVICE_ID_LSI_SAS1078R:
+		case PCI_DEVICE_ID_LSI_SAS1078DE:
 			instance->instancet = &megasas_instance_template_ppc;
+			break;
+		case PCI_DEVICE_ID_LSI_SAS1078GEN2:
+		case PCI_DEVICE_ID_LSI_SAS0079GEN2:
+			instance->instancet = &megasas_instance_template_gen2;
 			break;
 		case PCI_DEVICE_ID_LSI_SAS1064R:
 		case PCI_DEVICE_ID_DELL_PERC5:
@@ -2636,12 +2763,13 @@ static void megasas_shutdown_controller(struct megasas_instance *instance,
 	return;
 }
 
+#ifdef CONFIG_PM
 /**
  * megasas_suspend -	driver suspend entry point
  * @pdev:		PCI device structure
  * @state:		PCI power state to suspend routine
  */
-static int __devinit
+static int
 megasas_suspend(struct pci_dev *pdev, pm_message_t state)
 {
 	struct Scsi_Host *host;
@@ -2673,7 +2801,7 @@ megasas_suspend(struct pci_dev *pdev, pm_message_t state)
  * megasas_resume-      driver resume entry point
  * @pdev:               PCI device structure
  */
-static int __devinit
+static int
 megasas_resume(struct pci_dev *pdev)
 {
 	int rval;
@@ -2768,12 +2896,16 @@ fail_ready_state:
 
 	return -ENODEV;
 }
+#else
+#define megasas_suspend	NULL
+#define megasas_resume	NULL
+#endif
 
 /**
  * megasas_detach_one -	PCI hot"un"plug entry point
  * @pdev:		PCI device structure
  */
-static void megasas_detach_one(struct pci_dev *pdev)
+static void __devexit megasas_detach_one(struct pci_dev *pdev)
 {
 	int i;
 	struct Scsi_Host *host;
@@ -2837,6 +2969,7 @@ static void megasas_shutdown(struct pci_dev *pdev)
 {
 	struct megasas_instance *instance = pci_get_drvdata(pdev);
 	megasas_flush_cache(instance);
+	megasas_shutdown_controller(instance, MR_DCMD_CTRL_SHUTDOWN);
 }
 
 /**
@@ -2844,6 +2977,7 @@ static void megasas_shutdown(struct pci_dev *pdev)
  */
 static int megasas_mgmt_open(struct inode *inode, struct file *filep)
 {
+	cycle_kernel_lock();
 	/*
 	 * Allow only those users with admin rights
 	 */
@@ -2909,7 +3043,6 @@ megasas_mgmt_fw_ioctl(struct megasas_instance *instance,
 	void *sense = NULL;
 	dma_addr_t sense_handle;
 	u32 *sense_ptr;
-	unsigned long *sense_buff;
 
 	memset(kbuff_arr, 0, sizeof(kbuff_arr));
 
@@ -3014,14 +3147,14 @@ megasas_mgmt_fw_ioctl(struct megasas_instance *instance,
 	 */
 	if (ioc->sense_len) {
 		/*
-		 * sense_buff points to the location that has the user
+		 * sense_ptr points to the location that has the user
 		 * sense buffer address
 		 */
-		sense_buff = (unsigned long *) ((unsigned long)ioc->frame.raw +
-								ioc->sense_off);
+		sense_ptr = (u32 *) ((unsigned long)ioc->frame.raw +
+				     ioc->sense_off);
 
-		if (copy_to_user((void __user *)(unsigned long)(*sense_buff),
-				sense, ioc->sense_len)) {
+		if (copy_to_user((void __user *)((unsigned long)(*sense_ptr)),
+				 sense, ioc->sense_len)) {
 			printk(KERN_ERR "megasas: Failed to copy out to user "
 					"sense data\n");
 			error = -EFAULT;
@@ -3272,7 +3405,7 @@ megasas_sysfs_set_dbg_lvl(struct device_driver *dd, const char *buf, size_t coun
 	return retval;
 }
 
-static DRIVER_ATTR(dbg_lvl, S_IRUGO|S_IWUGO, megasas_sysfs_show_dbg_lvl,
+static DRIVER_ATTR(dbg_lvl, S_IRUGO|S_IWUSR, megasas_sysfs_show_dbg_lvl,
 		megasas_sysfs_set_dbg_lvl);
 
 static ssize_t

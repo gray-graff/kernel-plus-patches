@@ -43,9 +43,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-
-#include <asm/current.h>
-
 #include "ehca_classes.h"
 #include "ehca_tools.h"
 #include "ehca_qes.h"
@@ -415,6 +412,7 @@ static struct ehca_qp *internal_create_qp(
 	struct ehca_shca *shca = container_of(pd->device, struct ehca_shca,
 					      ib_device);
 	struct ib_ucontext *context = NULL;
+	u32 nr_qes;
 	u64 h_ret;
 	int is_llqp = 0, has_srq = 0;
 	int qp_type, max_send_sge, max_recv_sge, ret;
@@ -424,6 +422,19 @@ static struct ehca_qp *internal_create_qp(
 	u32 swqe_size = 0, rwqe_size = 0, ib_qp_num;
 	unsigned long flags;
 
+	if (!atomic_add_unless(&shca->num_qps, 1, ehca_max_qp)) {
+		ehca_err(pd->device, "Unable to create QP, max number of %i "
+			 "QPs reached.", ehca_max_qp);
+		ehca_err(pd->device, "To increase the maximum number of QPs "
+			 "use the number_of_qps module parameter.\n");
+		return ERR_PTR(-ENOSPC);
+	}
+
+	if (init_attr->create_flags) {
+		atomic_dec(&shca->num_qps);
+		return ERR_PTR(-EINVAL);
+	}
+
 	memset(&parms, 0, sizeof(parms));
 	qp_type = init_attr->qp_type;
 
@@ -431,6 +442,7 @@ static struct ehca_qp *internal_create_qp(
 		init_attr->sq_sig_type != IB_SIGNAL_ALL_WR) {
 		ehca_err(pd->device, "init_attr->sg_sig_type=%x not allowed",
 			 init_attr->sq_sig_type);
+		atomic_dec(&shca->num_qps);
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -455,6 +467,7 @@ static struct ehca_qp *internal_create_qp(
 
 	if (is_llqp && has_srq) {
 		ehca_err(pd->device, "LLQPs can't have an SRQ");
+		atomic_dec(&shca->num_qps);
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -466,6 +479,7 @@ static struct ehca_qp *internal_create_qp(
 			ehca_err(pd->device, "no more than three SGEs "
 				 "supported for SRQ  pd=%p  max_sge=%x",
 				 pd, init_attr->cap.max_recv_sge);
+			atomic_dec(&shca->num_qps);
 			return ERR_PTR(-EINVAL);
 		}
 	}
@@ -477,6 +491,7 @@ static struct ehca_qp *internal_create_qp(
 	    qp_type != IB_QPT_SMI &&
 	    qp_type != IB_QPT_GSI) {
 		ehca_err(pd->device, "wrong QP Type=%x", qp_type);
+		atomic_dec(&shca->num_qps);
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -490,6 +505,7 @@ static struct ehca_qp *internal_create_qp(
 					 "or max_rq_wr=%x for RC LLQP",
 					 init_attr->cap.max_send_wr,
 					 init_attr->cap.max_recv_wr);
+				atomic_dec(&shca->num_qps);
 				return ERR_PTR(-EINVAL);
 			}
 			break;
@@ -497,6 +513,7 @@ static struct ehca_qp *internal_create_qp(
 			if (!EHCA_BMASK_GET(HCA_CAP_UD_LL_QP, shca->hca_cap)) {
 				ehca_err(pd->device, "UD LLQP not supported "
 					 "by this adapter");
+				atomic_dec(&shca->num_qps);
 				return ERR_PTR(-ENOSYS);
 			}
 			if (!(init_attr->cap.max_send_sge <= 5
@@ -508,20 +525,22 @@ static struct ehca_qp *internal_create_qp(
 					 "or max_recv_sge=%x for UD LLQP",
 					 init_attr->cap.max_send_sge,
 					 init_attr->cap.max_recv_sge);
+				atomic_dec(&shca->num_qps);
 				return ERR_PTR(-EINVAL);
 			} else if (init_attr->cap.max_send_wr > 255) {
 				ehca_err(pd->device,
 					 "Invalid Number of "
 					 "max_send_wr=%x for UD QP_TYPE=%x",
 					 init_attr->cap.max_send_wr, qp_type);
+				atomic_dec(&shca->num_qps);
 				return ERR_PTR(-EINVAL);
 			}
 			break;
 		default:
 			ehca_err(pd->device, "unsupported LL QP Type=%x",
 				 qp_type);
+			atomic_dec(&shca->num_qps);
 			return ERR_PTR(-EINVAL);
-			break;
 		}
 	} else {
 		int max_sge = (qp_type == IB_QPT_UD || qp_type == IB_QPT_SMI
@@ -533,6 +552,7 @@ static struct ehca_qp *internal_create_qp(
 				 "send_sge=%x recv_sge=%x max_sge=%x",
 				 init_attr->cap.max_send_sge,
 				 init_attr->cap.max_recv_sge, max_sge);
+			atomic_dec(&shca->num_qps);
 			return ERR_PTR(-EINVAL);
 		}
 	}
@@ -543,13 +563,17 @@ static struct ehca_qp *internal_create_qp(
 	my_qp = kmem_cache_zalloc(qp_cache, GFP_KERNEL);
 	if (!my_qp) {
 		ehca_err(pd->device, "pd=%p not enough memory to alloc qp", pd);
+		atomic_dec(&shca->num_qps);
 		return ERR_PTR(-ENOMEM);
 	}
 
+	atomic_set(&my_qp->nr_events, 0);
+	init_waitqueue_head(&my_qp->wait_completion);
 	spin_lock_init(&my_qp->spinlock_s);
 	spin_lock_init(&my_qp->spinlock_r);
 	my_qp->qp_type = qp_type;
 	my_qp->ext_type = parms.ext_type;
+	my_qp->state = IB_QPS_RESET;
 
 	if (init_attr->recv_cq)
 		my_qp->recv_cq =
@@ -692,6 +716,15 @@ static struct ehca_qp *internal_create_qp(
 				 "and pages ret=%i", ret);
 			goto create_qp_exit2;
 		}
+		nr_qes = my_qp->ipz_squeue.queue_length /
+			 my_qp->ipz_squeue.qe_size;
+		my_qp->sq_map = vmalloc(nr_qes *
+					sizeof(struct ehca_qmap_entry));
+		if (!my_qp->sq_map) {
+			ehca_err(pd->device, "Couldn't allocate squeue "
+				 "map ret=%i", ret);
+			goto create_qp_exit3;
+		}
 	}
 
 	if (HAS_RQ(my_qp)) {
@@ -701,7 +734,7 @@ static struct ehca_qp *internal_create_qp(
 		if (ret) {
 			ehca_err(pd->device, "Couldn't initialize rqueue "
 				 "and pages ret=%i", ret);
-			goto create_qp_exit3;
+			goto create_qp_exit4;
 		}
 	}
 
@@ -747,7 +780,7 @@ static struct ehca_qp *internal_create_qp(
 			if (!my_qp->mod_qp_parm) {
 				ehca_err(pd->device,
 					 "Could not alloc mod_qp_parm");
-				goto create_qp_exit4;
+				goto create_qp_exit5;
 			}
 		}
 	}
@@ -757,7 +790,7 @@ static struct ehca_qp *internal_create_qp(
 		h_ret = ehca_define_sqp(shca, my_qp, init_attr);
 		if (h_ret != H_SUCCESS) {
 			ret = ehca2ib_return_code(h_ret);
-			goto create_qp_exit5;
+			goto create_qp_exit6;
 		}
 	}
 
@@ -766,7 +799,7 @@ static struct ehca_qp *internal_create_qp(
 		if (ret) {
 			ehca_err(pd->device,
 				 "Couldn't assign qp to send_cq ret=%i", ret);
-			goto create_qp_exit5;
+			goto create_qp_exit6;
 		}
 	}
 
@@ -792,21 +825,25 @@ static struct ehca_qp *internal_create_qp(
 		if (ib_copy_to_udata(udata, &resp, sizeof resp)) {
 			ehca_err(pd->device, "Copy to udata failed");
 			ret = -EINVAL;
-			goto create_qp_exit6;
+			goto create_qp_exit7;
 		}
 	}
 
 	return my_qp;
 
-create_qp_exit6:
+create_qp_exit7:
 	ehca_cq_unassign_qp(my_qp->send_cq, my_qp->real_qp_num);
 
-create_qp_exit5:
+create_qp_exit6:
 	kfree(my_qp->mod_qp_parm);
 
-create_qp_exit4:
+create_qp_exit5:
 	if (HAS_RQ(my_qp))
 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
+
+create_qp_exit4:
+	if (HAS_SQ(my_qp))
+		vfree(my_qp->sq_map);
 
 create_qp_exit3:
 	if (HAS_SQ(my_qp))
@@ -822,6 +859,7 @@ create_qp_exit1:
 
 create_qp_exit0:
 	kmem_cache_free(qp_cache, my_qp);
+	atomic_dec(&shca->num_qps);
 	return ERR_PTR(ret);
 }
 
@@ -965,7 +1003,7 @@ static int prepare_sqe_rts(struct ehca_qp *my_qp, struct ehca_shca *shca,
 		 qp_num, bad_send_wqe_p);
 	/* convert wqe pointer to vadr */
 	bad_send_wqe_v = abs_to_virt((u64)bad_send_wqe_p);
-	if (ehca_debug_level)
+	if (ehca_debug_level >= 2)
 		ehca_dmp(bad_send_wqe_v, 32, "qp_num=%x bad_wqe", qp_num);
 	squeue = &my_qp->ipz_squeue;
 	if (ipz_queue_abs_to_offset(squeue, (u64)bad_send_wqe_p, &q_ofs)) {
@@ -978,7 +1016,7 @@ static int prepare_sqe_rts(struct ehca_qp *my_qp, struct ehca_shca *shca,
 	wqe = (struct ehca_wqe *)ipz_qeit_calc(squeue, q_ofs);
 	*bad_wqe_cnt = 0;
 	while (wqe->optype != 0xff && wqe->wqef != 0xff) {
-		if (ehca_debug_level)
+		if (ehca_debug_level >= 2)
 			ehca_dmp(wqe, 32, "qp_num=%x wqe", qp_num);
 		wqe->nr_of_data_seg = 0; /* suppress data access */
 		wqe->wqef = WQEF_PURGE; /* WQE to be purged */
@@ -1436,6 +1474,8 @@ static int internal_modify_qp(struct ib_qp *ibqp,
 			goto modify_qp_exit2;
 		}
 		mqpcb->path_migration_state = attr->path_mig_state + 1;
+		if (attr->path_mig_state == IB_MIG_REARM)
+			my_qp->mig_armed = 1;
 		update_mask |=
 			EHCA_BMASK_SET(MQPCB_MASK_PATH_MIGRATION_STATE, 1);
 	}
@@ -1450,7 +1490,7 @@ static int internal_modify_qp(struct ib_qp *ibqp,
 		/* no support for max_send/recv_sge yet */
 	}
 
-	if (ehca_debug_level)
+	if (ehca_debug_level >= 2)
 		ehca_dmp(mqpcb, 4*70, "qp_num=%x", ibqp->qp_num);
 
 	h_ret = hipz_h_modify_qp(shca->ipz_hca_handle,
@@ -1523,19 +1563,11 @@ modify_qp_exit1:
 int ehca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
 		   struct ib_udata *udata)
 {
+	int ret = 0;
+
 	struct ehca_shca *shca = container_of(ibqp->device, struct ehca_shca,
 					      ib_device);
 	struct ehca_qp *my_qp = container_of(ibqp, struct ehca_qp, ib_qp);
-	struct ehca_pd *my_pd = container_of(my_qp->ib_qp.pd, struct ehca_pd,
-					     ib_pd);
-	u32 cur_pid = current->tgid;
-
-	if (my_pd->ib_pd.uobject && my_pd->ib_pd.uobject->context &&
-	    my_pd->ownpid != cur_pid) {
-		ehca_err(ibqp->pd->device, "Invalid caller pid=%x ownpid=%x",
-			 cur_pid, my_pd->ownpid);
-		return -EINVAL;
-	}
 
 	/* The if-block below caches qp_attr to be modified for GSI and SMI
 	 * qps during the initialization by ib_mad. When the respective port
@@ -1579,12 +1611,18 @@ int ehca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
 				 attr->qp_state, my_qp->init_attr.port_num,
 				 ibqp->qp_type);
 			spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
-			return 0;
+			goto out;
 		}
 		spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
 	}
 
-	return internal_modify_qp(ibqp, attr, attr_mask, 0);
+	ret = internal_modify_qp(ibqp, attr, attr_mask, 0);
+
+out:
+	if ((ret == 0) && (attr_mask & IB_QP_STATE))
+		my_qp->state = attr->qp_state;
+
+	return ret;
 }
 
 void ehca_recover_sqp(struct ib_qp *sqp)
@@ -1636,22 +1674,12 @@ int ehca_query_qp(struct ib_qp *qp,
 		  int qp_attr_mask, struct ib_qp_init_attr *qp_init_attr)
 {
 	struct ehca_qp *my_qp = container_of(qp, struct ehca_qp, ib_qp);
-	struct ehca_pd *my_pd = container_of(my_qp->ib_qp.pd, struct ehca_pd,
-					     ib_pd);
 	struct ehca_shca *shca = container_of(qp->device, struct ehca_shca,
 					      ib_device);
 	struct ipz_adapter_handle adapter_handle = shca->ipz_hca_handle;
 	struct hcp_modify_qp_control_block *qpcb;
-	u32 cur_pid = current->tgid;
 	int cnt, ret = 0;
 	u64 h_ret;
-
-	if (my_pd->ib_pd.uobject  && my_pd->ib_pd.uobject->context  &&
-	    my_pd->ownpid != cur_pid) {
-		ehca_err(qp->device, "Invalid caller pid=%x ownpid=%x",
-			 cur_pid, my_pd->ownpid);
-		return -EINVAL;
-	}
 
 	if (qp_attr_mask & QP_ATTR_QUERY_NOT_SUPPORTED) {
 		ehca_err(qp->device, "Invalid attribute mask "
@@ -1783,7 +1811,7 @@ int ehca_query_qp(struct ib_qp *qp,
 	if (qp_init_attr)
 		*qp_init_attr = my_qp->init_attr;
 
-	if (ehca_debug_level)
+	if (ehca_debug_level >= 2)
 		ehca_dmp(qpcb, 4*70, "qp_num=%x", qp->qp_num);
 
 query_qp_exit1:
@@ -1797,22 +1825,12 @@ int ehca_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 {
 	struct ehca_qp *my_qp =
 		container_of(ibsrq, struct ehca_qp, ib_srq);
-	struct ehca_pd *my_pd =
-		container_of(ibsrq->pd, struct ehca_pd, ib_pd);
 	struct ehca_shca *shca =
 		container_of(ibsrq->pd->device, struct ehca_shca, ib_device);
 	struct hcp_modify_qp_control_block *mqpcb;
 	u64 update_mask;
 	u64 h_ret;
 	int ret = 0;
-
-	u32 cur_pid = current->tgid;
-	if (my_pd->ib_pd.uobject && my_pd->ib_pd.uobject->context &&
-	    my_pd->ownpid != cur_pid) {
-		ehca_err(ibsrq->pd->device, "Invalid caller pid=%x ownpid=%x",
-			 cur_pid, my_pd->ownpid);
-		return -EINVAL;
-	}
 
 	mqpcb = ehca_alloc_fw_ctrlblock(GFP_KERNEL);
 	if (!mqpcb) {
@@ -1841,7 +1859,7 @@ int ehca_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 		goto modify_srq_exit0;
 	}
 
-	if (ehca_debug_level)
+	if (ehca_debug_level >= 2)
 		ehca_dmp(mqpcb, 4*70, "qp_num=%x", my_qp->real_qp_num);
 
 	h_ret = hipz_h_modify_qp(shca->ipz_hca_handle, my_qp->ipz_qp_handle,
@@ -1864,21 +1882,12 @@ modify_srq_exit0:
 int ehca_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr)
 {
 	struct ehca_qp *my_qp = container_of(srq, struct ehca_qp, ib_srq);
-	struct ehca_pd *my_pd = container_of(srq->pd, struct ehca_pd, ib_pd);
 	struct ehca_shca *shca = container_of(srq->device, struct ehca_shca,
 					      ib_device);
 	struct ipz_adapter_handle adapter_handle = shca->ipz_hca_handle;
 	struct hcp_modify_qp_control_block *qpcb;
-	u32 cur_pid = current->tgid;
 	int ret = 0;
 	u64 h_ret;
-
-	if (my_pd->ib_pd.uobject  && my_pd->ib_pd.uobject->context  &&
-	    my_pd->ownpid != cur_pid) {
-		ehca_err(srq->device, "Invalid caller pid=%x ownpid=%x",
-			 cur_pid, my_pd->ownpid);
-		return -EINVAL;
-	}
 
 	qpcb = ehca_alloc_fw_ctrlblock(GFP_KERNEL);
 	if (!qpcb) {
@@ -1903,7 +1912,7 @@ int ehca_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr)
 	srq_attr->srq_limit = EHCA_BMASK_GET(
 		MQPCB_CURR_SRQ_LIMIT, qpcb->curr_srq_limit);
 
-	if (ehca_debug_level)
+	if (ehca_debug_level >= 2)
 		ehca_dmp(qpcb, 4*70, "qp_num=%x", my_qp->real_qp_num);
 
 query_srq_exit1:
@@ -1919,7 +1928,6 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 	struct ehca_pd *my_pd = container_of(my_qp->ib_qp.pd, struct ehca_pd,
 					     ib_pd);
 	struct ehca_sport *sport = &shca->sport[my_qp->init_attr.port_num - 1];
-	u32 cur_pid = current->tgid;
 	u32 qp_num = my_qp->real_qp_num;
 	int ret;
 	u64 h_ret;
@@ -1932,11 +1940,6 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 		    my_qp->mm_count_rqueue || my_qp->mm_count_squeue) {
 			ehca_err(dev, "Resources still referenced in "
 				 "user space qp_num=%x", qp_num);
-			return -EINVAL;
-		}
-		if (my_pd->ownpid != cur_pid) {
-			ehca_err(dev, "Invalid caller pid=%x ownpid=%x",
-				 cur_pid, my_pd->ownpid);
 			return -EINVAL;
 		}
 	}
@@ -1954,6 +1957,9 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 	write_lock_irqsave(&ehca_qp_idr_lock, flags);
 	idr_remove(&ehca_qp_idr, my_qp->token);
 	write_unlock_irqrestore(&ehca_qp_idr_lock, flags);
+
+	/* now wait until all pending events have completed */
+	wait_event(my_qp->wait_completion, !atomic_read(&my_qp->nr_events));
 
 	h_ret = hipz_h_destroy_qp(shca->ipz_hca_handle, my_qp);
 	if (h_ret != H_SUCCESS) {
@@ -1987,9 +1993,12 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 
 	if (HAS_RQ(my_qp))
 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
-	if (HAS_SQ(my_qp))
+	if (HAS_SQ(my_qp)) {
 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
+		vfree(my_qp->sq_map);
+	}
 	kmem_cache_free(qp_cache, my_qp);
+	atomic_dec(&shca->num_qps);
 	return 0;
 }
 

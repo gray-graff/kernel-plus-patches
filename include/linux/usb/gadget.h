@@ -33,7 +33,8 @@ struct usb_ep;
  * @short_not_ok: When reading data, makes short packets be
  *     treated as errors (queue stops advancing till cleanup).
  * @complete: Function called when request completes, so this request and
- *	its buffer may be re-used.
+ *	its buffer may be re-used.  The function will always be called with
+ *	interrupts disabled, and it must not sleep.
  *	Reads terminate with a short packet, or when the buffer fills,
  *	whichever comes first.  When writes terminate, some data bytes
  *	will usually still be in flight (often in a hardware fifo).
@@ -114,6 +115,8 @@ struct usb_ep_ops {
 	int (*dequeue) (struct usb_ep *ep, struct usb_request *req);
 
 	int (*set_halt) (struct usb_ep *ep, int value);
+	int (*set_wedge) (struct usb_ep *ep);
+
 	int (*fifo_status) (struct usb_ep *ep);
 	void (*fifo_flush) (struct usb_ep *ep);
 };
@@ -269,7 +272,10 @@ static inline void usb_ep_free_request(struct usb_ep *ep,
  * (Note that some USB device controllers disallow protocol stall responses
  * in some cases.)  When control responses are deferred (the response is
  * written after the setup callback returns), then usb_ep_set_halt() may be
- * used on ep0 to trigger protocol stalls.
+ * used on ep0 to trigger protocol stalls.  Depending on the controller,
+ * it may not be possible to trigger a status-stage protocol stall when the
+ * data stage is over, that is, from within the response's completion
+ * routine.
  *
  * For periodic endpoints, like interrupt or isochronous ones, the usb host
  * arranges to poll once per interval, and the gadget driver usually will
@@ -346,6 +352,25 @@ static inline int usb_ep_set_halt(struct usb_ep *ep)
 static inline int usb_ep_clear_halt(struct usb_ep *ep)
 {
 	return ep->ops->set_halt(ep, 0);
+}
+
+/**
+ * usb_ep_set_wedge - sets the halt feature and ignores clear requests
+ * @ep: the endpoint being wedged
+ *
+ * Use this to stall an endpoint and ignore CLEAR_FEATURE(HALT_ENDPOINT)
+ * requests. If the gadget driver clears the halt status, it will
+ * automatically unwedge the endpoint.
+ *
+ * Returns zero on success, else negative errno.
+ */
+static inline int
+usb_ep_set_wedge(struct usb_ep *ep)
+{
+	if (ep->ops->set_wedge)
+		return ep->ops->set_wedge(ep);
+	else
+		return ep->ops->set_halt(ep, 1);
 }
 
 /**
@@ -837,6 +862,25 @@ int usb_descriptor_fillbuf(void *, unsigned,
 int usb_gadget_config_buf(const struct usb_config_descriptor *config,
 	void *buf, unsigned buflen, const struct usb_descriptor_header **desc);
 
+/* copy a NULL-terminated vector of descriptors */
+struct usb_descriptor_header **usb_copy_descriptors(
+		struct usb_descriptor_header **);
+
+/* return copy of endpoint descriptor given original descriptor set */
+struct usb_endpoint_descriptor *usb_find_endpoint(
+	struct usb_descriptor_header **src,
+	struct usb_descriptor_header **copy,
+	struct usb_endpoint_descriptor *match);
+
+/**
+ * usb_free_descriptors - free descriptors returned by usb_copy_descriptors()
+ * @v: vector of descriptors
+ */
+static inline void usb_free_descriptors(struct usb_descriptor_header **v)
+{
+	kfree(v);
+}
+
 /*-------------------------------------------------------------------------*/
 
 /* utility wrapping a simple endpoint selection policy */
@@ -846,4 +890,4 @@ extern struct usb_ep *usb_ep_autoconfig(struct usb_gadget *,
 
 extern void usb_ep_autoconfig_reset(struct usb_gadget *) __devinit;
 
-#endif	/* __LINUX_USB_GADGET_H */
+#endif /* __LINUX_USB_GADGET_H */

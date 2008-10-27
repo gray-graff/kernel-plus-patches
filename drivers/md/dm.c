@@ -37,8 +37,8 @@ static DEFINE_SPINLOCK(_minor_lock);
 struct dm_io {
 	struct mapped_device *md;
 	int error;
-	struct bio *bio;
 	atomic_t io_count;
+	struct bio *bio;
 	unsigned long start_time;
 };
 
@@ -204,6 +204,7 @@ static int (*_inits[])(void) __initdata = {
 	dm_target_init,
 	dm_linear_init,
 	dm_stripe_init,
+	dm_kcopyd_init,
 	dm_interface_init,
 };
 
@@ -212,6 +213,7 @@ static void (*_exits[])(void) = {
 	dm_target_exit,
 	dm_linear_exit,
 	dm_stripe_exit,
+	dm_kcopyd_exit,
 	dm_interface_exit,
 };
 
@@ -827,6 +829,53 @@ static int __split_bio(struct mapped_device *md, struct bio *bio)
  * CRUD END
  *---------------------------------------------------------------*/
 
+static int dm_merge_bvec(struct request_queue *q,
+			 struct bvec_merge_data *bvm,
+			 struct bio_vec *biovec)
+{
+	struct mapped_device *md = q->queuedata;
+	struct dm_table *map = dm_get_table(md);
+	struct dm_target *ti;
+	sector_t max_sectors;
+	int max_size = 0;
+
+	if (unlikely(!map))
+		goto out;
+
+	ti = dm_table_find_target(map, bvm->bi_sector);
+	if (!dm_target_is_valid(ti))
+		goto out_table;
+
+	/*
+	 * Find maximum amount of I/O that won't need splitting
+	 */
+	max_sectors = min(max_io_len(md, bvm->bi_sector, ti),
+			  (sector_t) BIO_MAX_SECTORS);
+	max_size = (max_sectors << SECTOR_SHIFT) - bvm->bi_size;
+	if (max_size < 0)
+		max_size = 0;
+
+	/*
+	 * merge_bvec_fn() returns number of bytes
+	 * it can accept at this offset
+	 * max is precomputed maximal io size
+	 */
+	if (max_size && ti->type->merge)
+		max_size = ti->type->merge(ti, bvm, biovec, max_size);
+
+out_table:
+	dm_table_put(map);
+
+out:
+	/*
+	 * Always allow an entire first page
+	 */
+	if (max_size <= biovec->bv_len && !(bvm->bi_size >> SECTOR_SHIFT))
+		max_size = biovec->bv_len;
+
+	return max_size;
+}
+
 /*
  * The request function that just remaps the bio built up by
  * dm_merge_bvec.
@@ -922,7 +971,7 @@ static void free_minor(int minor)
 /*
  * See if the device with a specific minor # is free.
  */
-static int specific_minor(struct mapped_device *md, int minor)
+static int specific_minor(int minor)
 {
 	int r, m;
 
@@ -955,7 +1004,7 @@ out:
 	return r;
 }
 
-static int next_free_minor(struct mapped_device *md, int *minor)
+static int next_free_minor(int *minor)
 {
 	int r, m;
 
@@ -966,9 +1015,8 @@ static int next_free_minor(struct mapped_device *md, int *minor)
 	spin_lock(&_minor_lock);
 
 	r = idr_get_new(&_minor_idr, MINOR_ALLOCED, &m);
-	if (r) {
+	if (r)
 		goto out;
-	}
 
 	if (m >= (1 << MINORBITS)) {
 		idr_remove(&_minor_idr, m);
@@ -991,7 +1039,7 @@ static struct block_device_operations dm_blk_dops;
 static struct mapped_device *alloc_dev(int minor)
 {
 	int r;
-	struct mapped_device *md = kmalloc(sizeof(*md), GFP_KERNEL);
+	struct mapped_device *md = kzalloc(sizeof(*md), GFP_KERNEL);
 	void *old_md;
 
 	if (!md) {
@@ -1004,13 +1052,12 @@ static struct mapped_device *alloc_dev(int minor)
 
 	/* get a minor number for the dev */
 	if (minor == DM_ANY_MINOR)
-		r = next_free_minor(md, &minor);
+		r = next_free_minor(&minor);
 	else
-		r = specific_minor(md, minor);
+		r = specific_minor(minor);
 	if (r < 0)
 		goto bad_minor;
 
-	memset(md, 0, sizeof(*md));
 	init_rwsem(&md->io_lock);
 	mutex_init(&md->suspend_lock);
 	spin_lock_init(&md->pushback_lock);
@@ -1032,6 +1079,7 @@ static struct mapped_device *alloc_dev(int minor)
 	blk_queue_make_request(md->queue, dm_request);
 	blk_queue_bounce_limit(md->queue, BLK_BOUNCE_ANY);
 	md->queue->unplug_fn = dm_unplug_all;
+	blk_queue_merge_bvec(md->queue, dm_merge_bvec);
 
 	md->io_pool = mempool_create_slab_pool(MIN_IOS, _io_cache);
 	if (!md->io_pool)

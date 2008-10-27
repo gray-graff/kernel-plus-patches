@@ -27,15 +27,15 @@
 #include "saa7134-reg.h"
 #include "saa7134.h"
 
-static unsigned int disable_ir = 0;
+static unsigned int disable_ir;
 module_param(disable_ir, int, 0444);
 MODULE_PARM_DESC(disable_ir,"disable infrared remote support");
 
-static unsigned int ir_debug = 0;
+static unsigned int ir_debug;
 module_param(ir_debug, int, 0644);
 MODULE_PARM_DESC(ir_debug,"enable debug messages [IR]");
 
-static int pinnacle_remote = 0;
+static int pinnacle_remote;
 module_param(pinnacle_remote, int, 0644);    /* Choose Pinnacle PCTV remote */
 MODULE_PARM_DESC(pinnacle_remote, "Specify Pinnacle PCTV remote: 0=coloured, 1=grey (defaults to 0)");
 
@@ -198,6 +198,84 @@ static int get_key_beholdm6xx(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
 	return 1;
 }
 
+/* Common (grey or coloured) pinnacle PCTV remote handling
+ *
+ */
+static int get_key_pinnacle(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw,
+			    int parity_offset, int marker, int code_modulo)
+{
+	unsigned char b[4];
+	unsigned int start = 0,parity = 0,code = 0;
+
+	/* poll IR chip */
+	if (4 != i2c_master_recv(&ir->c, b, 4)) {
+		i2cdprintk("read error\n");
+		return -EIO;
+	}
+
+	for (start = 0; start < ARRAY_SIZE(b); start++) {
+		if (b[start] == marker) {
+			code=b[(start+parity_offset + 1) % 4];
+			parity=b[(start+parity_offset) % 4];
+		}
+	}
+
+	/* Empty Request */
+	if (parity == 0)
+		return 0;
+
+	/* Repeating... */
+	if (ir->old == parity)
+		return 0;
+
+	ir->old = parity;
+
+	/* drop special codes when a key is held down a long time for the grey controller
+	   In this case, the second bit of the code is asserted */
+	if (marker == 0xfe && (code & 0x40))
+		return 0;
+
+	code %= code_modulo;
+
+	*ir_raw = code;
+	*ir_key = code;
+
+	i2cdprintk("Pinnacle PCTV key %02x\n", code);
+
+	return 1;
+}
+
+/* The grey pinnacle PCTV remote
+ *
+ *  There are one issue with this remote:
+ *   - I2c packet does not change when the same key is pressed quickly. The workaround
+ *     is to hold down each key for about half a second, so that another code is generated
+ *     in the i2c packet, and the function can distinguish key presses.
+ *
+ * Sylvain Pasche <sylvain.pasche@gmail.com>
+ */
+static int get_key_pinnacle_grey(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
+{
+
+	return get_key_pinnacle(ir, ir_key, ir_raw, 1, 0xfe, 0xff);
+}
+
+
+/* The new pinnacle PCTV remote (with the colored buttons)
+ *
+ * Ricardo Cerqueira <v4l@cerqueira.org>
+ */
+static int get_key_pinnacle_color(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
+{
+	/* code_modulo parameter (0x88) is used to reduce code value to fit inside IR_KEYTAB_SIZE
+	 *
+	 * this is the only value that results in 42 unique
+	 * codes < 128
+	 */
+
+	return get_key_pinnacle(ir, ir_key, ir_raw, 2, 0x80, 0x88);
+}
+
 void saa7134_input_irq(struct saa7134_dev *dev)
 {
 	struct card_ir *ir = dev->remote;
@@ -323,6 +401,15 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		saa_setb(SAA7134_GPIO_GPMODE1, 0x1);
 		saa_setb(SAA7134_GPIO_GPSTATUS1, 0x1);
 		break;
+	case SAA7134_BOARD_AVERMEDIA_A16D:
+		ir_codes     = ir_codes_avermedia_a16d;
+		mask_keycode = 0x02F200;
+		mask_keydown = 0x000400;
+		polling      = 50; /* ms */
+		/* Without this we won't receive key up events */
+		saa_setb(SAA7134_GPIO_GPMODE1, 0x1);
+		saa_setb(SAA7134_GPIO_GPSTATUS1, 0x1);
+		break;
 	case SAA7134_BOARD_KWORLD_TERMINATOR:
 		ir_codes     = ir_codes_pixelview;
 		mask_keycode = 0x00001f;
@@ -331,6 +418,11 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		break;
 	case SAA7134_BOARD_MANLI_MTV001:
 	case SAA7134_BOARD_MANLI_MTV002:
+		ir_codes     = ir_codes_manli;
+		mask_keycode = 0x001f00;
+		mask_keyup   = 0x004000;
+		polling      = 50; /* ms */
+		break;
 	case SAA7134_BOARD_BEHOLD_409FM:
 	case SAA7134_BOARD_BEHOLD_401:
 	case SAA7134_BOARD_BEHOLD_403:
@@ -343,7 +435,13 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_BEHOLD_505FM:
 	case SAA7134_BOARD_BEHOLD_507_9FM:
 		ir_codes     = ir_codes_manli;
-		mask_keycode = 0x001f00;
+		mask_keycode = 0x003f00;
+		mask_keyup   = 0x004000;
+		polling      = 50; /* ms */
+		break;
+	case SAA7134_BOARD_BEHOLD_COLUMBUS_TVFM:
+		ir_codes     = ir_codes_behold_columbus;
+		mask_keycode = 0x003f00;
 		mask_keyup   = 0x004000;
 		polling      = 50; // ms
 		break;
@@ -389,6 +487,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		break;
 	case SAA7134_BOARD_ASUSTeK_P7131_DUAL:
 	case SAA7134_BOARD_ASUSTeK_P7131_HYBRID_LNA:
+       case SAA7134_BOARD_ASUSTeK_P7131_ANALOG:
 		ir_codes     = ir_codes_asus_pc39;
 		mask_keydown = 0x0040000;
 		rc5_gpio = 1;
@@ -520,6 +619,9 @@ void saa7134_set_i2c_ir(struct saa7134_dev *dev, struct IR_i2c *ir)
 		break;
 	case SAA7134_BOARD_BEHOLD_607_9FM:
 	case SAA7134_BOARD_BEHOLD_M6:
+	case SAA7134_BOARD_BEHOLD_M63:
+	case SAA7134_BOARD_BEHOLD_M6_EXTRA:
+	case SAA7134_BOARD_BEHOLD_H6:
 		snprintf(ir->c.name, sizeof(ir->c.name), "BeholdTV");
 		ir->get_key   = get_key_beholdm6xx;
 		ir->ir_codes  = ir_codes_behold;

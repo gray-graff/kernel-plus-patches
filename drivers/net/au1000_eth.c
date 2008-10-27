@@ -701,7 +701,7 @@ static struct net_device * au1000_probe(int port_num)
 	aup->mii_bus.write = mdiobus_write;
 	aup->mii_bus.reset = mdiobus_reset;
 	aup->mii_bus.name = "au1000_eth_mii";
-	aup->mii_bus.id = aup->mac_id;
+	snprintf(aup->mii_bus.id, MII_BUS_ID_SIZE, "%x", aup->mac_id);
 	aup->mii_bus.irq = kmalloc(sizeof(int)*PHY_MAX_ADDR, GFP_KERNEL);
 	for(i = 0; i < PHY_MAX_ADDR; ++i)
 		aup->mii_bus.irq[i] = PHY_POLL;
@@ -709,11 +709,11 @@ static struct net_device * au1000_probe(int port_num)
 	/* if known, set corresponding PHY IRQs */
 #if defined(AU1XXX_PHY_STATIC_CONFIG)
 # if defined(AU1XXX_PHY0_IRQ)
-	if (AU1XXX_PHY0_BUSID == aup->mii_bus.id)
+	if (AU1XXX_PHY0_BUSID == aup->mac_id)
 		aup->mii_bus.irq[AU1XXX_PHY0_ADDR] = AU1XXX_PHY0_IRQ;
 # endif
 # if defined(AU1XXX_PHY1_IRQ)
-	if (AU1XXX_PHY1_BUSID == aup->mii_bus.id)
+	if (AU1XXX_PHY1_BUSID == aup->mac_id)
 		aup->mii_bus.irq[AU1XXX_PHY1_ADDR] = AU1XXX_PHY1_IRQ;
 # endif
 #endif
@@ -807,7 +807,7 @@ err_out:
 static int au1000_init(struct net_device *dev)
 {
 	struct au1000_private *aup = (struct au1000_private *) dev->priv;
-	u32 flags;
+	unsigned long flags;
 	int i;
 	u32 control;
 
@@ -911,9 +911,8 @@ au1000_adjust_link(struct net_device *dev)
 	if(phydev->link != aup->old_link) {
 		// link state changed
 
-		if (phydev->link) // link went up
-			netif_schedule(dev);
-		else { // link went down
+		if (!phydev->link) {
+			/* link went down */
 			aup->old_speed = 0;
 			aup->old_duplex = -1;
 		}
@@ -1239,12 +1238,7 @@ static int au1000_rx(struct net_device *dev)
  */
 static irqreturn_t au1000_interrupt(int irq, void *dev_id)
 {
-	struct net_device *dev = (struct net_device *) dev_id;
-
-	if (dev == NULL) {
-		printk(KERN_ERR "%s: isr: null dev ptr\n", dev->name);
-		return IRQ_RETVAL(1);
-	}
+	struct net_device *dev = dev_id;
 
 	/* Handle RX interrupts first to minimize chance of overrun */
 

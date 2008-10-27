@@ -31,15 +31,14 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/hardware.h>
 #include <asm/delay.h>
 #include <asm/dma.h>
 
-#include <asm/arch/hardware.h>
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/regs-ssp.h>
-#include <asm/arch/ssp.h>
-#include <asm/arch/pxa2xx_spi.h>
+#include <mach/hardware.h>
+#include <mach/pxa-regs.h>
+#include <mach/regs-ssp.h>
+#include <mach/ssp.h>
+#include <mach/pxa2xx_spi.h>
 
 MODULE_AUTHOR("Stephen Street");
 MODULE_DESCRIPTION("PXA2xx SSP SPI Controller");
@@ -48,9 +47,10 @@ MODULE_ALIAS("platform:pxa2xx-spi");
 
 #define MAX_BUSES 3
 
-#define DMA_INT_MASK (DCSR_ENDINTR | DCSR_STARTINTR | DCSR_BUSERR)
-#define RESET_DMA_CHANNEL (DCSR_NODESC | DMA_INT_MASK)
-#define IS_DMA_ALIGNED(x) (((u32)(x)&0x07)==0)
+#define DMA_INT_MASK		(DCSR_ENDINTR | DCSR_STARTINTR | DCSR_BUSERR)
+#define RESET_DMA_CHANNEL	(DCSR_NODESC | DMA_INT_MASK)
+#define IS_DMA_ALIGNED(x)	((((u32)(x)) & 0x07) == 0)
+#define MAX_DMA_LEN		8191
 
 /*
  * for testing SSCR1 changes that require SSP restart, basically
@@ -67,8 +67,11 @@ MODULE_ALIAS("platform:pxa2xx-spi");
 				| SSCR1_SPH | SSCR1_SPO | SSCR1_LBM)
 
 #define DEFINE_SSP_REG(reg, off) \
-static inline u32 read_##reg(void *p) { return __raw_readl(p + (off)); } \
-static inline void write_##reg(u32 v, void *p) { __raw_writel(v, p + (off)); }
+static inline u32 read_##reg(void const __iomem *p) \
+{ return __raw_readl(p + (off)); } \
+\
+static inline void write_##reg(u32 v, void __iomem *p) \
+{ __raw_writel(v, p + (off)); }
 
 DEFINE_SSP_REG(SSCR0, 0x00)
 DEFINE_SSP_REG(SSCR1, 0x04)
@@ -106,7 +109,7 @@ struct driver_data {
 	u32 *null_dma_buf;
 
 	/* SSP register addresses */
-	void *ioaddr;
+	void __iomem *ioaddr;
 	u32 ssdr_physical;
 
 	/* SSP masks*/
@@ -142,7 +145,6 @@ struct driver_data {
 	size_t tx_map_len;
 	u8 n_bytes;
 	u32 dma_width;
-	int cs_change;
 	int (*write)(struct driver_data *drv_data);
 	int (*read)(struct driver_data *drv_data);
 	irqreturn_t (*transfer_handler)(struct driver_data *drv_data);
@@ -173,7 +175,7 @@ static int flush(struct driver_data *drv_data)
 {
 	unsigned long limit = loops_per_jiffy << 1;
 
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	do {
 		while (read_SSSR(reg) & SSSR_RNE) {
@@ -191,7 +193,7 @@ static void null_cs_control(u32 command)
 
 static int null_writer(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 	u8 n_bytes = drv_data->n_bytes;
 
 	if (((read_SSSR(reg) & 0x00000f00) == 0x00000f00)
@@ -206,7 +208,7 @@ static int null_writer(struct driver_data *drv_data)
 
 static int null_reader(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 	u8 n_bytes = drv_data->n_bytes;
 
 	while ((read_SSSR(reg) & SSSR_RNE)
@@ -220,7 +222,7 @@ static int null_reader(struct driver_data *drv_data)
 
 static int u8_writer(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	if (((read_SSSR(reg) & 0x00000f00) == 0x00000f00)
 		|| (drv_data->tx == drv_data->tx_end))
@@ -234,7 +236,7 @@ static int u8_writer(struct driver_data *drv_data)
 
 static int u8_reader(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	while ((read_SSSR(reg) & SSSR_RNE)
 		&& (drv_data->rx < drv_data->rx_end)) {
@@ -247,7 +249,7 @@ static int u8_reader(struct driver_data *drv_data)
 
 static int u16_writer(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	if (((read_SSSR(reg) & 0x00000f00) == 0x00000f00)
 		|| (drv_data->tx == drv_data->tx_end))
@@ -261,7 +263,7 @@ static int u16_writer(struct driver_data *drv_data)
 
 static int u16_reader(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	while ((read_SSSR(reg) & SSSR_RNE)
 		&& (drv_data->rx < drv_data->rx_end)) {
@@ -274,7 +276,7 @@ static int u16_reader(struct driver_data *drv_data)
 
 static int u32_writer(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	if (((read_SSSR(reg) & 0x00000f00) == 0x00000f00)
 		|| (drv_data->tx == drv_data->tx_end))
@@ -288,7 +290,7 @@ static int u32_writer(struct driver_data *drv_data)
 
 static int u32_reader(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	while ((read_SSSR(reg) & SSSR_RNE)
 		&& (drv_data->rx < drv_data->rx_end)) {
@@ -350,7 +352,7 @@ static int map_dma_buffers(struct driver_data *drv_data)
 	drv_data->rx_dma = dma_map_single(dev, drv_data->rx,
 						drv_data->rx_map_len,
 						DMA_FROM_DEVICE);
-	if (dma_mapping_error(drv_data->rx_dma))
+	if (dma_mapping_error(dev, drv_data->rx_dma))
 		return 0;
 
 	/* Stream map the tx buffer */
@@ -358,7 +360,7 @@ static int map_dma_buffers(struct driver_data *drv_data)
 						drv_data->tx_map_len,
 						DMA_TO_DEVICE);
 
-	if (dma_mapping_error(drv_data->tx_dma)) {
+	if (dma_mapping_error(dev, drv_data->tx_dma)) {
 		dma_unmap_single(dev, drv_data->rx_dma,
 					drv_data->rx_map_len, DMA_FROM_DEVICE);
 		return 0;
@@ -404,15 +406,52 @@ static void giveback(struct driver_data *drv_data)
 					struct spi_transfer,
 					transfer_list);
 
+	/* Delay if requested before any change in chip select */
+	if (last_transfer->delay_usecs)
+		udelay(last_transfer->delay_usecs);
+
+	/* Drop chip select UNLESS cs_change is true or we are returning
+	 * a message with an error, or next message is for another chip
+	 */
 	if (!last_transfer->cs_change)
 		drv_data->cs_control(PXA2XX_CS_DEASSERT);
+	else {
+		struct spi_message *next_msg;
+
+		/* Holding of cs was hinted, but we need to make sure
+		 * the next message is for the same chip.  Don't waste
+		 * time with the following tests unless this was hinted.
+		 *
+		 * We cannot postpone this until pump_messages, because
+		 * after calling msg->complete (below) the driver that
+		 * sent the current message could be unloaded, which
+		 * could invalidate the cs_control() callback...
+		 */
+
+		/* get a pointer to the next message, if any */
+		spin_lock_irqsave(&drv_data->lock, flags);
+		if (list_empty(&drv_data->queue))
+			next_msg = NULL;
+		else
+			next_msg = list_entry(drv_data->queue.next,
+					struct spi_message, queue);
+		spin_unlock_irqrestore(&drv_data->lock, flags);
+
+		/* see if the next and current messages point
+		 * to the same chip
+		 */
+		if (next_msg && next_msg->spi != msg->spi)
+			next_msg = NULL;
+		if (!next_msg || msg->state == ERROR_STATE)
+			drv_data->cs_control(PXA2XX_CS_DEASSERT);
+	}
 
 	msg->state = NULL;
 	if (msg->complete)
 		msg->complete(msg->context);
 }
 
-static int wait_ssp_rx_stall(void *ioaddr)
+static int wait_ssp_rx_stall(void const __iomem *ioaddr)
 {
 	unsigned long limit = loops_per_jiffy << 1;
 
@@ -432,9 +471,9 @@ static int wait_dma_channel_stop(int channel)
 	return limit;
 }
 
-void dma_error_stop(struct driver_data *drv_data, const char *msg)
+static void dma_error_stop(struct driver_data *drv_data, const char *msg)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	/* Stop and reset */
 	DCSR(drv_data->rx_channel) = RESET_DMA_CHANNEL;
@@ -456,7 +495,7 @@ void dma_error_stop(struct driver_data *drv_data, const char *msg)
 
 static void dma_transfer_complete(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 	struct spi_message *msg = drv_data->cur_msg;
 
 	/* Clear and disable interrupts on SSP and DMA channels*/
@@ -488,10 +527,9 @@ static void dma_transfer_complete(struct driver_data *drv_data)
 	msg->actual_length += drv_data->len -
 				(drv_data->rx_end - drv_data->rx);
 
-	/* Release chip select if requested, transfer delays are
-	 * handled in pump_transfers */
-	if (drv_data->cs_change)
-		drv_data->cs_control(PXA2XX_CS_DEASSERT);
+	/* Transfer delays and chip select release are
+	 * handled in pump_transfers or giveback
+	 */
 
 	/* Move to next transfer */
 	msg->state = next_transfer(drv_data);
@@ -536,7 +574,7 @@ static void dma_handler(int channel, void *data)
 static irqreturn_t dma_transfer(struct driver_data *drv_data)
 {
 	u32 irq_status;
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	irq_status = read_SSSR(reg) & drv_data->mask_sr;
 	if (irq_status & SSSR_ROR) {
@@ -570,7 +608,7 @@ static irqreturn_t dma_transfer(struct driver_data *drv_data)
 
 static void int_error_stop(struct driver_data *drv_data, const char* msg)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	/* Stop and reset SSP */
 	write_SSSR(drv_data->clear_sr, reg);
@@ -588,7 +626,7 @@ static void int_error_stop(struct driver_data *drv_data, const char* msg)
 
 static void int_transfer_complete(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	/* Stop SSP */
 	write_SSSR(drv_data->clear_sr, reg);
@@ -600,10 +638,9 @@ static void int_transfer_complete(struct driver_data *drv_data)
 	drv_data->cur_msg->actual_length += drv_data->len -
 				(drv_data->rx_end - drv_data->rx);
 
-	/* Release chip select if requested, transfer delays are
-	 * handled in pump_transfers */
-	if (drv_data->cs_change)
-		drv_data->cs_control(PXA2XX_CS_DEASSERT);
+	/* Transfer delays and chip select release are
+	 * handled in pump_transfers or giveback
+	 */
 
 	/* Move to next transfer */
 	drv_data->cur_msg->state = next_transfer(drv_data);
@@ -614,7 +651,7 @@ static void int_transfer_complete(struct driver_data *drv_data)
 
 static irqreturn_t interrupt_transfer(struct driver_data *drv_data)
 {
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	u32 irq_mask = (read_SSCR1(reg) & SSCR1_TIE) ?
 			drv_data->mask_sr : drv_data->mask_sr & ~SSSR_TFS;
@@ -675,7 +712,7 @@ static irqreturn_t interrupt_transfer(struct driver_data *drv_data)
 static irqreturn_t ssp_int(int irq, void *dev_id)
 {
 	struct driver_data *drv_data = dev_id;
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 
 	if (!drv_data->cur_msg) {
 
@@ -695,7 +732,8 @@ static irqreturn_t ssp_int(int irq, void *dev_id)
 	return drv_data->transfer_handler(drv_data);
 }
 
-int set_dma_burst_and_threshold(struct chip_data *chip, struct spi_device *spi,
+static int set_dma_burst_and_threshold(struct chip_data *chip,
+				struct spi_device *spi,
 				u8 bits_per_word, u32 *burst_code,
 				u32 *threshold)
 {
@@ -809,7 +847,7 @@ static void pump_transfers(unsigned long data)
 	struct spi_transfer *previous = NULL;
 	struct chip_data *chip = NULL;
 	struct ssp_device *ssp = drv_data->ssp;
-	void *reg = drv_data->ioaddr;
+	void __iomem *reg = drv_data->ioaddr;
 	u32 clk_div = 0;
 	u8 bits = 0;
 	u32 speed = 0;
@@ -837,23 +875,40 @@ static void pump_transfers(unsigned long data)
 		return;
 	}
 
-	/* Delay if requested at end of transfer*/
+	/* Delay if requested at end of transfer before CS change */
 	if (message->state == RUNNING_STATE) {
 		previous = list_entry(transfer->transfer_list.prev,
 					struct spi_transfer,
 					transfer_list);
 		if (previous->delay_usecs)
 			udelay(previous->delay_usecs);
+
+		/* Drop chip select only if cs_change is requested */
+		if (previous->cs_change)
+			drv_data->cs_control(PXA2XX_CS_DEASSERT);
 	}
 
-	/* Check transfer length */
-	if (transfer->len > 8191)
-	{
-		dev_warn(&drv_data->pdev->dev, "pump_transfers: transfer "
-				"length greater than 8191\n");
-		message->status = -EINVAL;
-		giveback(drv_data);
-		return;
+	/* Check for transfers that need multiple DMA segments */
+	if (transfer->len > MAX_DMA_LEN && chip->enable_dma) {
+
+		/* reject already-mapped transfers; PIO won't always work */
+		if (message->is_dma_mapped
+				|| transfer->rx_dma || transfer->tx_dma) {
+			dev_err(&drv_data->pdev->dev,
+				"pump_transfers: mapped transfer length "
+				"of %u is greater than %d\n",
+				transfer->len, MAX_DMA_LEN);
+			message->status = -EINVAL;
+			giveback(drv_data);
+			return;
+		}
+
+		/* warn ... we force this to PIO mode */
+		if (printk_ratelimit())
+			dev_warn(&message->spi->dev, "pump_transfers: "
+				"DMA disabled for transfer length %ld "
+				"greater than %d\n",
+				(long)drv_data->len, MAX_DMA_LEN);
 	}
 
 	/* Setup the transfer state based on the type of transfer */
@@ -875,7 +930,6 @@ static void pump_transfers(unsigned long data)
 	drv_data->len = transfer->len & DCMD_LENGTH;
 	drv_data->write = drv_data->tx ? chip->write : null_writer;
 	drv_data->read = drv_data->rx ? chip->read : null_reader;
-	drv_data->cs_change = transfer->cs_change;
 
 	/* Change speed and bit per word on a per transfer */
 	cr0 = chip->cr0;
@@ -922,7 +976,7 @@ static void pump_transfers(unsigned long data)
 							&dma_thresh))
 				if (printk_ratelimit())
 					dev_warn(&message->spi->dev,
-						"pump_transfer: "
+						"pump_transfers: "
 						"DMA burst size reduced to "
 						"match bits_per_word\n");
 		}
@@ -936,8 +990,23 @@ static void pump_transfers(unsigned long data)
 
 	message->state = RUNNING_STATE;
 
-	/* Try to map dma buffer and do a dma transfer if successful */
-	if ((drv_data->dma_mapped = map_dma_buffers(drv_data))) {
+	/* Try to map dma buffer and do a dma transfer if successful, but
+	 * only if the length is non-zero and less than MAX_DMA_LEN.
+	 *
+	 * Zero-length non-descriptor DMA is illegal on PXA2xx; force use
+	 * of PIO instead.  Care is needed above because the transfer may
+	 * have have been passed with buffers that are already dma mapped.
+	 * A zero-length transfer in PIO mode will not try to write/read
+	 * to/from the buffers
+	 *
+	 * REVISIT large transfers are exactly where we most want to be
+	 * using DMA.  If this happens much, split those transfers into
+	 * multiple DMA segments rather than forcing PIO.
+	 */
+	drv_data->dma_mapped = 0;
+	if (drv_data->len > 0 && drv_data->len <= MAX_DMA_LEN)
+		drv_data->dma_mapped = map_dma_buffers(drv_data);
+	if (drv_data->dma_mapped) {
 
 		/* Ensure we have the correct interrupt handler */
 		drv_data->transfer_handler = dma_transfer;
@@ -1338,7 +1407,7 @@ static int __init pxa2xx_spi_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct pxa2xx_spi_master *platform_info;
 	struct spi_master *master;
-	struct driver_data *drv_data = 0;
+	struct driver_data *drv_data = NULL;
 	struct ssp_device *ssp;
 	int status = 0;
 
@@ -1563,7 +1632,7 @@ static int pxa2xx_spi_resume(struct platform_device *pdev)
 	int status = 0;
 
 	/* Enable the SSP clock */
-	clk_disable(ssp->clk);
+	clk_enable(ssp->clk);
 
 	/* Start the queue running */
 	status = start_queue(drv_data);

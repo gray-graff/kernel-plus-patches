@@ -95,6 +95,8 @@ xfs_fs_geometry(
 				XFS_FSOP_GEOM_FLAGS_DIRV2 : 0) |
 			(xfs_sb_version_hassector(&mp->m_sb) ?
 				XFS_FSOP_GEOM_FLAGS_SECTOR : 0) |
+			(xfs_sb_version_hasasciici(&mp->m_sb) ?
+				XFS_FSOP_GEOM_FLAGS_DIRV2CI : 0) |
 			(xfs_sb_version_haslazysbcount(&mp->m_sb) ?
 				XFS_FSOP_GEOM_FLAGS_LAZYSB : 0) |
 			(xfs_sb_version_hasattr2(&mp->m_sb) ?
@@ -462,7 +464,7 @@ xfs_fs_counts(
 	xfs_mount_t		*mp,
 	xfs_fsop_counts_t	*cnt)
 {
-	xfs_icsb_sync_counters_flags(mp, XFS_ICSB_LAZY_COUNT);
+	xfs_icsb_sync_counters(mp, XFS_ICSB_LAZY_COUNT);
 	spin_lock(&mp->m_sb_lock);
 	cnt->freedata = mp->m_sb.sb_fdblocks - XFS_ALLOC_SET_ASIDE(mp);
 	cnt->freertx = mp->m_sb.sb_frextents;
@@ -524,7 +526,7 @@ xfs_reserve_blocks(
 	 */
 retry:
 	spin_lock(&mp->m_sb_lock);
-	xfs_icsb_sync_counters_flags(mp, XFS_ICSB_SB_LOCKED);
+	xfs_icsb_sync_counters_locked(mp, 0);
 
 	/*
 	 * If our previous reservation was larger than the current value,
@@ -552,11 +554,8 @@ retry:
 			mp->m_resblks += free;
 			mp->m_resblks_avail += free;
 			fdblks_delta = -free;
-			mp->m_sb.sb_fdblocks = XFS_ALLOC_SET_ASIDE(mp);
 		} else {
 			fdblks_delta = -delta;
-			mp->m_sb.sb_fdblocks =
-				lcounter + XFS_ALLOC_SET_ASIDE(mp);
 			mp->m_resblks = request;
 			mp->m_resblks_avail += delta;
 		}
@@ -587,7 +586,6 @@ out:
 		if (error == ENOSPC)
 			goto retry;
 	}
-
 	return 0;
 }
 
@@ -629,7 +627,7 @@ xfs_fs_goingdown(
 			xfs_force_shutdown(mp, SHUTDOWN_FORCE_UMOUNT);
 			thaw_bdev(sb->s_bdev, sb);
 		}
-	
+
 		break;
 	}
 	case XFS_FSOP_GOING_FLAGS_LOGFLUSH:

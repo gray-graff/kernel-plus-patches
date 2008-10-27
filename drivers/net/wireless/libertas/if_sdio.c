@@ -1,7 +1,7 @@
 /*
  *  linux/drivers/net/wireless/libertas/if_sdio.c
  *
- *  Copyright 2007 Pierre Ossman
+ *  Copyright 2007-2008 Pierre Ossman
  *
  * Inspired by if_cs.c, Copyright 2007 Holger Schurig
  *
@@ -91,8 +91,6 @@ struct if_sdio_card {
 	const char		*firmware;
 
 	u8			buffer[65536];
-	u8			int_cause;
-	u32			event;
 
 	spinlock_t		lock;
 	struct if_sdio_packet	*packets;
@@ -129,12 +127,12 @@ static u16 if_sdio_read_scratch(struct if_sdio_card *card, int *err)
 static int if_sdio_handle_cmd(struct if_sdio_card *card,
 		u8 *buffer, unsigned size)
 {
+	struct lbs_private *priv = card->priv;
 	int ret;
 	unsigned long flags;
+	u8 i;
 
 	lbs_deb_enter(LBS_DEB_SDIO);
-
-	spin_lock_irqsave(&card->priv->driver_lock, flags);
 
 	if (size > LBS_CMD_BUFFER_SIZE) {
 		lbs_deb_sdio("response packet too large (%d bytes)\n",
@@ -143,20 +141,20 @@ static int if_sdio_handle_cmd(struct if_sdio_card *card,
 		goto out;
 	}
 
-	memcpy(card->priv->upld_buf, buffer, size);
-	card->priv->upld_len = size;
+	spin_lock_irqsave(&priv->driver_lock, flags);
 
-	card->int_cause |= MRVDRV_CMD_UPLD_RDY;
+	i = (priv->resp_idx == 0) ? 1 : 0;
+	BUG_ON(priv->resp_len[i]);
+	priv->resp_len[i] = size;
+	memcpy(priv->resp_buf[i], buffer, size);
+	lbs_notify_command_response(priv, i);
 
-	lbs_interrupt(card->priv);
+	spin_unlock_irqrestore(&card->priv->driver_lock, flags);
 
 	ret = 0;
 
 out:
-	spin_unlock_irqrestore(&card->priv->driver_lock, flags);
-
 	lbs_deb_leave_args(LBS_DEB_SDIO, "ret %d", ret);
-
 	return ret;
 }
 
@@ -202,7 +200,6 @@ static int if_sdio_handle_event(struct if_sdio_card *card,
 		u8 *buffer, unsigned size)
 {
 	int ret;
-	unsigned long flags;
 	u32 event;
 
 	lbs_deb_enter(LBS_DEB_SDIO);
@@ -222,18 +219,9 @@ static int if_sdio_handle_event(struct if_sdio_card *card,
 		event |= buffer[2] << 16;
 		event |= buffer[1] << 8;
 		event |= buffer[0] << 0;
-		event <<= SBI_EVENT_CAUSE_SHIFT;
 	}
 
-	spin_lock_irqsave(&card->priv->driver_lock, flags);
-
-	card->event = event;
-	card->int_cause |= MRVDRV_CARDEVENT;
-
-	lbs_interrupt(card->priv);
-
-	spin_unlock_irqrestore(&card->priv->driver_lock, flags);
-
+	lbs_queue_event(card->priv, event & 0xFF);
 	ret = 0;
 
 out:
@@ -278,13 +266,10 @@ static int if_sdio_card_to_host(struct if_sdio_card *card)
 
 	/*
 	 * The transfer must be in one transaction or the firmware
-	 * goes suicidal.
+	 * goes suicidal. There's no way to guarantee that for all
+	 * controllers, but we can at least try.
 	 */
-	chunk = size;
-	if ((chunk > card->func->cur_blksize) || (chunk > 512)) {
-		chunk = (chunk + card->func->cur_blksize - 1) /
-			card->func->cur_blksize * card->func->cur_blksize;
-	}
+	chunk = sdio_align_size(card->func, size);
 
 	ret = sdio_readsb(card->func, card->buffer, card->ioport, chunk);
 	if (ret)
@@ -404,7 +389,7 @@ static int if_sdio_prog_helper(struct if_sdio_card *card)
 	unsigned long timeout;
 	u8 *chunk_buffer;
 	u32 chunk_size;
-	u8 *firmware;
+	const u8 *firmware;
 	size_t size;
 
 	lbs_deb_enter(LBS_DEB_SDIO);
@@ -520,7 +505,7 @@ static int if_sdio_prog_real(struct if_sdio_card *card)
 	unsigned long timeout;
 	u8 *chunk_buffer;
 	u32 chunk_size;
-	u8 *firmware;
+	const u8 *firmware;
 	size_t size, req_size;
 
 	lbs_deb_enter(LBS_DEB_SDIO);
@@ -708,13 +693,10 @@ static int if_sdio_host_to_card(struct lbs_private *priv,
 
 	/*
 	 * The transfer must be in one transaction or the firmware
-	 * goes suicidal.
+	 * goes suicidal. There's no way to guarantee that for all
+	 * controllers, but we can at least try.
 	 */
-	size = nb + 4;
-	if ((size > card->func->cur_blksize) || (size > 512)) {
-		size = (size + card->func->cur_blksize - 1) /
-			card->func->cur_blksize * card->func->cur_blksize;
-	}
+	size = sdio_align_size(card->func, nb + 4);
 
 	packet = kzalloc(sizeof(struct if_sdio_packet) + size,
 			GFP_ATOMIC);
@@ -768,37 +750,6 @@ out:
 	lbs_deb_leave_args(LBS_DEB_SDIO, "ret %d", ret);
 
 	return ret;
-}
-
-static int if_sdio_get_int_status(struct lbs_private *priv, u8 *ireg)
-{
-	struct if_sdio_card *card;
-
-	lbs_deb_enter(LBS_DEB_SDIO);
-
-	card = priv->card;
-
-	*ireg = card->int_cause;
-	card->int_cause = 0;
-
-	lbs_deb_leave(LBS_DEB_SDIO);
-
-	return 0;
-}
-
-static int if_sdio_read_event_cause(struct lbs_private *priv)
-{
-	struct if_sdio_card *card;
-
-	lbs_deb_enter(LBS_DEB_SDIO);
-
-	card = priv->card;
-
-	priv->eventcause = card->event;
-
-	lbs_deb_leave(LBS_DEB_SDIO);
-
-	return 0;
 }
 
 /*******************************************************************/
@@ -953,8 +904,6 @@ static int if_sdio_probe(struct sdio_func *func,
 
 	priv->card = card;
 	priv->hw_host_to_card = if_sdio_host_to_card;
-	priv->hw_get_int_status = if_sdio_get_int_status;
-	priv->hw_read_event_cause = if_sdio_read_event_cause;
 
 	priv->fw_ready = 1;
 

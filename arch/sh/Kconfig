@@ -8,8 +8,10 @@ mainmenu "Linux/SuperH Kernel Configuration"
 config SUPERH
 	def_bool y
 	select EMBEDDED
+	select HAVE_CLK
 	select HAVE_IDE
 	select HAVE_OPROFILE
+	select HAVE_GENERIC_DMA_COHERENT
 	help
 	  The SuperH is a RISC processor targeted for use in embedded systems
 	  and consumer electronics; it was also used in the Sega Dreamcast
@@ -21,6 +23,11 @@ config SUPERH32
 
 config SUPERH64
 	def_bool y if CPU_SH5
+
+config ARCH_DEFCONFIG
+	string
+	default "arch/sh/configs/shx3_defconfig" if SUPERH32
+	default "arch/sh/configs/cayman_defconfig" if SUPERH64
 
 config RWSEM_GENERIC_SPINLOCK
 	def_bool y
@@ -41,6 +48,9 @@ config GENERIC_HWEIGHT
 config GENERIC_HARDIRQS
 	def_bool y
 
+config GENERIC_HARDIRQS_NO__DO_IRQ
+	def_bool y
+
 config GENERIC_IRQ_PROBE
 	def_bool y
 
@@ -55,6 +65,10 @@ config GENERIC_TIME
 
 config GENERIC_CLOCKEVENTS
 	def_bool n
+
+config GENERIC_LOCKBREAK
+	def_bool y
+	depends on SMP && PREEMPT
 
 config SYS_SUPPORTS_PM
 	bool
@@ -85,9 +99,6 @@ config ARCH_HAS_ILOG2_U64
 	def_bool n
 
 config ARCH_NO_VIRT_TO_BUS
-	def_bool y
-
-config ARCH_SUPPORTS_AOUT
 	def_bool y
 
 config IO_TRAPPED
@@ -166,6 +177,12 @@ config CPU_SUBTYPE_SH7263
 	bool "Support SH7263 processor"
 	select CPU_SH2A
 	select CPU_HAS_FPU
+
+config CPU_SUBTYPE_MXG
+	bool "Support MX-G processor"
+	select CPU_SH2A
+	help
+	  Select MX-G if running on an R8A03022BG part.
 
 # SH-3 Processor Support
 
@@ -270,6 +287,14 @@ config CPU_SUBTYPE_SH4_202
 
 # SH-4A Processor Support
 
+config CPU_SUBTYPE_SH7723
+	bool "Support SH7723 processor"
+	select CPU_SH4A
+	select CPU_SHX2
+	select ARCH_SPARSEMEM_ENABLE
+	help
+	  Select SH7723 if you have an SH-MobileR2 CPU.
+
 config CPU_SUBTYPE_SH7763
 	bool "Support SH7763 processor"
 	select CPU_SH4A
@@ -332,219 +357,10 @@ config CPU_SUBTYPE_SH5_103
 endchoice
 
 source "arch/sh/mm/Kconfig"
+ 
 source "arch/sh/Kconfig.cpu"
 
-menu "Board support"
-
-config SOLUTION_ENGINE
-	bool
-
-config SH_SOLUTION_ENGINE
-	bool "SolutionEngine"
-	select SOLUTION_ENGINE
-	select CPU_HAS_IPR_IRQ
-	depends on CPU_SUBTYPE_SH7705 || CPU_SUBTYPE_SH7709 || CPU_SUBTYPE_SH7710 || \
-	  CPU_SUBTYPE_SH7712 || CPU_SUBTYPE_SH7750 || CPU_SUBTYPE_SH7750S || \
-	  CPU_SUBTYPE_SH7750R 
-	help
-	  Select SolutionEngine if configuring for a Hitachi SH7705, SH7709,
-	  SH7710, SH7712, SH7750, SH7750S or SH7750R evaluation board.
-
-config SH_7206_SOLUTION_ENGINE
-	bool "SolutionEngine7206"
-	select SOLUTION_ENGINE
-	depends on CPU_SUBTYPE_SH7206
-	help
-	  Select 7206 SolutionEngine if configuring for a Hitachi SH7206
-	  evaluation board.
-
-config SH_7619_SOLUTION_ENGINE
-	bool "SolutionEngine7619"
-	select SOLUTION_ENGINE
-	depends on CPU_SUBTYPE_SH7619
-	help
-	  Select 7619 SolutionEngine if configuring for a Hitachi SH7619
-	  evaluation board.
-	
-config SH_7722_SOLUTION_ENGINE
-	bool "SolutionEngine7722"
-	select SOLUTION_ENGINE
-	depends on CPU_SUBTYPE_SH7722
-	help
-	  Select 7722 SolutionEngine if configuring for a Hitachi SH772
-	  evaluation board.
-
-config SH_7751_SOLUTION_ENGINE
-	bool "SolutionEngine7751"
-	select SOLUTION_ENGINE
-	select CPU_HAS_IPR_IRQ
-	depends on CPU_SUBTYPE_SH7751
-	help
-	  Select 7751 SolutionEngine if configuring for a Hitachi SH7751
-	  evaluation board.
-	  
-config SH_7780_SOLUTION_ENGINE
-	bool "SolutionEngine7780"
-	select SOLUTION_ENGINE
-	select SYS_SUPPORTS_PCI
-	depends on CPU_SUBTYPE_SH7780
-	help
-	  Select 7780 SolutionEngine if configuring for a Renesas SH7780
-	  evaluation board.
-
-config SH_7343_SOLUTION_ENGINE
-	bool "SolutionEngine7343"
-	select SOLUTION_ENGINE
-	depends on CPU_SUBTYPE_SH7343
-	help
-	  Select 7343 SolutionEngine if configuring for a Hitachi
-	  SH7343 (SH-Mobile 3AS) evaluation board.
-
-config SH_7751_SYSTEMH
-	bool "SystemH7751R"
-	depends on CPU_SUBTYPE_SH7751R
-	help
-	  Select SystemH if you are configuring for a Renesas SystemH
-	  7751R evaluation board.
-
-config SH_HP6XX
-	bool "HP6XX"
-	select SYS_SUPPORTS_APM_EMULATION
-	select HD6446X_SERIES
-	depends on CPU_SUBTYPE_SH7709
-	help
-	  Select HP6XX if configuring for a HP jornada HP6xx.
-	  More information (hardware only) at
-	  <http://www.hp.com/jornada/>.
-
-config SH_DREAMCAST
-	bool "Dreamcast"
-	select SYS_SUPPORTS_PCI
-	depends on CPU_SUBTYPE_SH7091
-	help
-	  Select Dreamcast if configuring for a SEGA Dreamcast.
-	  More information at <http://www.linux-sh.org>
-
-config SH_MPC1211
-	bool "Interface MPC1211"
-	depends on CPU_SUBTYPE_SH7751 && BROKEN
-	help
-	  CTP/PCI-SH02 is a CPU module computer that is produced
-	  by Interface Corporation.
-	  More information at <http://www.interface.co.jp>
-
-config SH_SH03
-	bool "Interface CTP/PCI-SH03"
-	depends on CPU_SUBTYPE_SH7751
-	select CPU_HAS_IPR_IRQ
-	select SYS_SUPPORTS_PCI
-	help
-	  CTP/PCI-SH03 is a CPU module computer that is produced
-	  by Interface Corporation.
-	  More information at <http://www.interface.co.jp>
-
-config SH_SECUREEDGE5410
-	bool "SecureEdge5410"
-	depends on CPU_SUBTYPE_SH7751R
-	select CPU_HAS_IPR_IRQ
-	select SYS_SUPPORTS_PCI
-	help
-	  Select SecureEdge5410 if configuring for a SnapGear SH board.
-	  This includes both the OEM SecureEdge products as well as the
-	  SME product line.
-
-config SH_RTS7751R2D
-	bool "RTS7751R2D"
-	depends on CPU_SUBTYPE_SH7751R
-	select SYS_SUPPORTS_PCI
-	select IO_TRAPPED
-	help
-	  Select RTS7751R2D if configuring for a Renesas Technology
-	  Sales SH-Graphics board.
-
-config SH_SDK7780
-	bool "SDK7780R3"
-	depends on CPU_SUBTYPE_SH7780
-	select SYS_SUPPORTS_PCI
-	help
-	  Select SDK7780 if configuring for a Renesas SH7780 SDK7780R3
-	  evaluation board.
-
-config SH_HIGHLANDER
-	bool "Highlander"
-	depends on CPU_SUBTYPE_SH7780 || CPU_SUBTYPE_SH7785
-	select SYS_SUPPORTS_PCI
-	select IO_TRAPPED
-
-config SH_MIGOR
-	bool "Migo-R"
-	depends on CPU_SUBTYPE_SH7722
-	help
-	  Select Migo-R if configuring for the SH7722 Migo-R platform
-          by Renesas System Solutions Asia Pte. Ltd.
-
-config SH_EDOSK7705
-	bool "EDOSK7705"
-	depends on CPU_SUBTYPE_SH7705
-
-config SH_SH4202_MICRODEV
-	bool "SH4-202 MicroDev"
-	depends on CPU_SUBTYPE_SH4_202
-	help
-	  Select SH4-202 MicroDev if configuring for a SuperH MicroDev board
-	  with an SH4-202 CPU.
-
-config SH_LANDISK
-	bool "LANDISK"
-	depends on CPU_SUBTYPE_SH7751R
-	select SYS_SUPPORTS_PCI
-	help
-	  I-O DATA DEVICE, INC. "LANDISK Series" support.
-
-config SH_TITAN
-	bool "TITAN"
-	depends on CPU_SUBTYPE_SH7751R
-	select CPU_HAS_IPR_IRQ
-	select SYS_SUPPORTS_PCI
-	help
-	  Select Titan if you are configuring for a Nimble Microsystems
-	  NetEngine NP51R.
-
-config SH_SHMIN
-	bool "SHMIN"
-	depends on CPU_SUBTYPE_SH7706
-	select CPU_HAS_IPR_IRQ
-	help
-	  Select SHMIN if configuring for the SHMIN board.
-
-config SH_LBOX_RE2
-	bool "L-BOX RE2"
-	depends on CPU_SUBTYPE_SH7751R
-	select SYS_SUPPORTS_PCI
-	help
-	  Select L-BOX RE2 if configuring for the NTT COMWARE L-BOX RE2.
-
-config SH_X3PROTO
-	bool "SH-X3 Prototype board"
-	depends on CPU_SUBTYPE_SHX3
-
-config SH_MAGIC_PANEL_R2
-	bool "Magic Panel R2"
-	depends on CPU_SUBTYPE_SH7720
-	help
-	  Select Magic Panel R2 if configuring for Magic Panel R2.
-
-config SH_CAYMAN
-	bool "Hitachi Cayman"
-	depends on CPU_SUBTYPE_SH5_101 || CPU_SUBTYPE_SH5_103
-	select SYS_SUPPORTS_PCI
-
-endmenu
-
-source "arch/sh/boards/renesas/rts7751r2d/Kconfig"
-source "arch/sh/boards/renesas/r7780rp/Kconfig"
-source "arch/sh/boards/renesas/sdk7780/Kconfig"
-source "arch/sh/boards/magicpanelr2/Kconfig"
+source "arch/sh/boards/Kconfig"
 
 menu "Timer and clock configuration"
 
@@ -560,7 +376,7 @@ config SH_TMU
 config SH_CMT
 	def_bool y
 	prompt "CMT timer support"
-	depends on CPU_SH2
+	depends on CPU_SH2 && !CPU_SUBTYPE_MXG
 	help
 	  This enables the use of the CMT as the system timer.
 
@@ -578,6 +394,7 @@ config SH_TIMER_IRQ
 	default "86" if CPU_SUBTYPE_SH7619
 	default "140" if CPU_SUBTYPE_SH7206
 	default "142" if CPU_SUBTYPE_SH7203
+	default "238" if CPU_SUBTYPE_MXG
 	default "16"
 
 config SH_PCLK_FREQ
@@ -585,10 +402,10 @@ config SH_PCLK_FREQ
 	default "27000000" if CPU_SUBTYPE_SH7343
 	default "31250000" if CPU_SUBTYPE_SH7619
 	default "32000000" if CPU_SUBTYPE_SH7722
-	default "33333333" if CPU_SUBTYPE_SH7770 || \
+	default "33333333" if CPU_SUBTYPE_SH7770 || CPU_SUBTYPE_SH7723 || \
 			      CPU_SUBTYPE_SH7760 || CPU_SUBTYPE_SH7705 || \
 			      CPU_SUBTYPE_SH7203 || CPU_SUBTYPE_SH7206 || \
-			      CPU_SUBTYPE_SH7263
+			      CPU_SUBTYPE_SH7263 || CPU_SUBTYPE_MXG
 	default "60000000" if CPU_SUBTYPE_SH7751 || CPU_SUBTYPE_SH7751R
 	default "66000000" if CPU_SUBTYPE_SH4_202
 	default "50000000"
@@ -633,8 +450,7 @@ source "arch/sh/drivers/Kconfig"
 endmenu
 
 config ISA_DMA_API
-	def_bool y
-	depends on SH_MPC1211
+	bool
 
 menu "Kernel features"
 
@@ -642,7 +458,7 @@ source kernel/Kconfig.hz
 
 config KEXEC
 	bool "kexec system call (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
+	depends on SUPERH32 && EXPERIMENTAL
 	help
 	  kexec is a system call that implements the ability to shutdown your
 	  current kernel, and to start another kernel.  It is like a reboot
@@ -659,7 +475,7 @@ config KEXEC
 
 config CRASH_DUMP
 	bool "kernel crash dumps (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
+	depends on SUPERH32 && EXPERIMENTAL
 	help
 	  Generate crash dump after being started by kexec.
 	  This should be normally only set in special crash dump kernels
@@ -671,9 +487,27 @@ config CRASH_DUMP
 
 	  For more details see Documentation/kdump/kdump.txt
 
+config SECCOMP
+	bool "Enable seccomp to safely compute untrusted bytecode"
+	depends on PROC_FS
+	default y
+	help
+	  This kernel feature is useful for number crunching applications
+	  that may need to compute untrusted bytecode during their
+	  execution. By using pipes or other transports made available to
+	  the process as file descriptors supporting the read/write
+	  syscalls, it's possible to isolate those applications in
+	  their own address space using seccomp. Once seccomp is
+	  enabled via prctl, it cannot be disabled and the task is only
+	  allowed to execute a few safe syscalls defined by each seccomp
+	  mode.
+
+	  If unsure, say N.
+
 config SMP
 	bool "Symmetric multi-processing support"
 	depends on SYS_SUPPORTS_SMP
+	select USE_GENERIC_SMP_HELPERS
 	---help---
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If
@@ -739,7 +573,7 @@ menu "Boot options"
 
 config ZERO_PAGE_OFFSET
 	hex "Zero page offset"
-	default "0x00004000" if SH_MPC1211 || SH_SH03
+	default "0x00004000" if SH_SH03
 	default "0x00010000" if PAGE_SIZE_64KB
 	default "0x00002000" if PAGE_SIZE_8KB
 	default "0x00001000"

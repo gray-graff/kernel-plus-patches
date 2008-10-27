@@ -36,6 +36,33 @@ struct driver_private {
 };
 #define to_driver(obj) container_of(obj, struct driver_private, kobj)
 
+
+/**
+ * struct class_private - structure to hold the private to the driver core portions of the class structure.
+ *
+ * @class_subsys - the struct kset that defines this class.  This is the main kobject
+ * @class_devices - list of devices associated with this class
+ * @class_interfaces - list of class_interfaces associated with this class
+ * @class_dirs - "glue" directory for virtual devices associated with this class
+ * @class_mutex - mutex to protect the children, devices, and interfaces lists.
+ * @class - pointer back to the struct class that this structure is associated
+ * with.
+ *
+ * This structure is the one that is the actual kobject allowing struct
+ * class to be statically allocated safely.  Nothing outside of the driver
+ * core should ever touch these fields.
+ */
+struct class_private {
+	struct kset class_subsys;
+	struct list_head class_devices;
+	struct list_head class_interfaces;
+	struct kset class_dirs;
+	struct mutex class_mutex;
+	struct class *class;
+};
+#define to_class(obj)	\
+	container_of(obj, struct class_private, class_subsys.kobj)
+
 /* initialisation functions */
 extern int devices_init(void);
 extern int buses_init(void);
@@ -63,17 +90,6 @@ extern int driver_probe_device(struct device_driver *drv, struct device *dev);
 extern void sysdev_shutdown(void);
 extern int sysdev_suspend(pm_message_t state);
 extern int sysdev_resume(void);
-
-static inline struct class_device *to_class_dev(struct kobject *obj)
-{
-	return container_of(obj, struct class_device, kobj);
-}
-
-static inline
-struct class_device_attribute *to_class_dev_attr(struct attribute *_attr)
-{
-	return container_of(_attr, struct class_device_attribute, attr);
-}
 
 extern char *make_class_name(const char *name, struct kobject *kobj);
 

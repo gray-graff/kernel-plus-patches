@@ -23,6 +23,9 @@
 #include <linux/kexec.h>
 #include <linux/module.h>
 #include <linux/smp.h>
+#include <linux/err.h>
+#include <linux/debugfs.h>
+#include <linux/crash_dump.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/page.h>
@@ -51,6 +54,7 @@ EXPORT_SYMBOL(cpu_data);
  * sh_mv= on the command line, prior to .machvec.init teardown.
  */
 struct sh_machine_vector sh_mv = { .mv_name = "generic", };
+EXPORT_SYMBOL(sh_mv);
 
 #ifdef CONFIG_VT
 struct screen_info screen_info;
@@ -74,10 +78,17 @@ static struct resource data_resource = {
 	.flags = IORESOURCE_BUSY | IORESOURCE_MEM,
 };
 
+static struct resource bss_resource = {
+	.name	= "Kernel bss",
+	.flags	= IORESOURCE_BUSY | IORESOURCE_MEM,
+};
+
 unsigned long memory_start;
 EXPORT_SYMBOL(memory_start);
 unsigned long memory_end = 0;
 EXPORT_SYMBOL(memory_end);
+
+static struct resource mem_resources[MAX_NUMNODES];
 
 int l1i_cache_shape, l1d_cache_shape, l2_cache_shape;
 
@@ -160,12 +171,42 @@ static void __init reserve_crashkernel(void)
 				(unsigned long)(free_mem >> 20));
 		crashk_res.start = crash_base;
 		crashk_res.end   = crash_base + crash_size - 1;
+		insert_resource(&iomem_resource, &crashk_res);
 	}
 }
 #else
 static inline void __init reserve_crashkernel(void)
 {}
 #endif
+
+void __init __add_active_range(unsigned int nid, unsigned long start_pfn,
+						unsigned long end_pfn)
+{
+	struct resource *res = &mem_resources[nid];
+
+	WARN_ON(res->name); /* max one active range per node for now */
+
+	res->name = "System RAM";
+	res->start = start_pfn << PAGE_SHIFT;
+	res->end = (end_pfn << PAGE_SHIFT) - 1;
+	res->flags = IORESOURCE_MEM | IORESOURCE_BUSY;
+	if (request_resource(&iomem_resource, res)) {
+		pr_err("unable to request memory_resource 0x%lx 0x%lx\n",
+		       start_pfn, end_pfn);
+		return;
+	}
+
+	/*
+	 *  We don't know which RAM region contains kernel data,
+	 *  so we try it repeatedly and let the resource manager
+	 *  test it.
+	 */
+	request_resource(res, &code_resource);
+	request_resource(res, &data_resource);
+	request_resource(res, &bss_resource);
+
+	add_active_range(nid, start_pfn, end_pfn);
+}
 
 void __init setup_bootmem_allocator(unsigned long free_pfn)
 {
@@ -179,7 +220,7 @@ void __init setup_bootmem_allocator(unsigned long free_pfn)
 	bootmap_size = init_bootmem_node(NODE_DATA(0), free_pfn,
 					 min_low_pfn, max_low_pfn);
 
-	add_active_range(0, min_low_pfn, max_low_pfn);
+	__add_active_range(0, min_low_pfn, max_low_pfn);
 	register_bootmem_low_pages();
 
 	node_set_online(0);
@@ -242,11 +283,41 @@ static void __init setup_memory(void)
 extern void __init setup_memory(void);
 #endif
 
+/*
+ * Note: elfcorehdr_addr is not just limited to vmcore. It is also used by
+ * is_kdump_kernel() to determine if we are booting after a panic. Hence
+ * ifdef it under CONFIG_CRASH_DUMP and not CONFIG_PROC_VMCORE.
+ */
+#ifdef CONFIG_CRASH_DUMP
+/* elfcorehdr= specifies the location of elf core header
+ * stored by the crashed kernel.
+ */
+static int __init parse_elfcorehdr(char *arg)
+{
+	if (!arg)
+		return -EINVAL;
+	elfcorehdr_addr = memparse(arg, &arg);
+	return 0;
+}
+early_param("elfcorehdr", parse_elfcorehdr);
+#endif
+
 void __init setup_arch(char **cmdline_p)
 {
 	enable_mmu();
 
 	ROOT_DEV = old_decode_dev(ORIG_ROOT_DEV);
+
+	printk(KERN_NOTICE "Boot params:\n"
+			   "... MOUNT_ROOT_RDONLY - %08lx\n"
+			   "... RAMDISK_FLAGS     - %08lx\n"
+			   "... ORIG_ROOT_DEV     - %08lx\n"
+			   "... LOADER_TYPE       - %08lx\n"
+			   "... INITRD_START      - %08lx\n"
+			   "... INITRD_SIZE       - %08lx\n",
+			   MOUNT_ROOT_RDONLY, RAMDISK_FLAGS,
+			   ORIG_ROOT_DEV, LOADER_TYPE,
+			   INITRD_START, INITRD_SIZE);
 
 #ifdef CONFIG_BLK_DEV_RAM
 	rd_image_start = RAMDISK_FLAGS & RAMDISK_IMAGE_START_MASK;
@@ -265,6 +336,8 @@ void __init setup_arch(char **cmdline_p)
 	code_resource.end = virt_to_phys(_etext)-1;
 	data_resource.start = virt_to_phys(_etext);
 	data_resource.end = virt_to_phys(_edata)-1;
+	bss_resource.start = virt_to_phys(__bss_start);
+	bss_resource.end = virt_to_phys(_ebss)-1;
 
 	memory_start = (unsigned long)__va(__MEMORY_START);
 	if (!memory_end)
@@ -333,6 +406,7 @@ static const char *cpu_name[] = {
 	[CPU_SH7343]	= "SH7343",	[CPU_SH7785]	= "SH7785",
 	[CPU_SH7722]	= "SH7722",	[CPU_SHX3]	= "SH-X3",
 	[CPU_SH5_101]	= "SH5-101",	[CPU_SH5_103]	= "SH5-103",
+	[CPU_MXG]	= "MX-G",	[CPU_SH7723]	= "SH7723",
 	[CPU_SH7366]	= "SH7366",	[CPU_SH_NONE]	= "Unknown"
 };
 
@@ -340,6 +414,7 @@ const char *get_cpu_subtype(struct sh_cpuinfo *c)
 {
 	return cpu_name[c->type];
 }
+EXPORT_SYMBOL(get_cpu_subtype);
 
 #ifdef CONFIG_PROC_FS
 /* Symbolic CPU flags, keep in sync with asm/cpu-features.h */
@@ -394,6 +469,12 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_printf(m, "processor\t: %d\n", cpu);
 	seq_printf(m, "cpu family\t: %s\n", init_utsname()->machine);
 	seq_printf(m, "cpu type\t: %s\n", get_cpu_subtype(c));
+	if (c->cut_major == -1)
+		seq_printf(m, "cut\t\t: unknown\n");
+	else if (c->cut_minor == -1)
+		seq_printf(m, "cut\t\t: %d.x\n", c->cut_major);
+	else
+		seq_printf(m, "cut\t\t: %d.%d\n", c->cut_major, c->cut_minor);
 
 	show_cpuflags(m, c);
 
@@ -443,3 +524,15 @@ const struct seq_operations cpuinfo_op = {
 	.show	= show_cpuinfo,
 };
 #endif /* CONFIG_PROC_FS */
+
+struct dentry *sh_debugfs_root;
+
+static int __init sh_debugfs_init(void)
+{
+	sh_debugfs_root = debugfs_create_dir("sh", NULL);
+	if (IS_ERR(sh_debugfs_root))
+		return PTR_ERR(sh_debugfs_root);
+
+	return 0;
+}
+arch_initcall(sh_debugfs_init);

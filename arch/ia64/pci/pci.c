@@ -324,7 +324,6 @@ pcibios_setup_root_windows(struct pci_bus *bus, struct pci_controller *ctrl)
 struct pci_bus * __devinit
 pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
 {
-	struct pci_root_info info;
 	struct pci_controller *controller;
 	unsigned int windows = 0;
 	struct pci_bus *pbus;
@@ -346,22 +345,24 @@ pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
 	acpi_walk_resources(device->handle, METHOD_NAME__CRS, count_window,
 			&windows);
 	if (windows) {
+		struct pci_root_info info;
+
 		controller->window =
 			kmalloc_node(sizeof(*controller->window) * windows,
 				     GFP_KERNEL, controller->node);
 		if (!controller->window)
 			goto out2;
+
+		name = kmalloc(16, GFP_KERNEL);
+		if (!name)
+			goto out3;
+
+		sprintf(name, "PCI Bus %04x:%02x", domain, bus);
+		info.controller = controller;
+		info.name = name;
+		acpi_walk_resources(device->handle, METHOD_NAME__CRS,
+			add_window, &info);
 	}
-
-	name = kmalloc(16, GFP_KERNEL);
-	if (!name)
-		goto out3;
-
-	sprintf(name, "PCI Bus %04x:%02x", domain, bus);
-	info.controller = controller;
-	info.name = name;
-	acpi_walk_resources(device->handle, METHOD_NAME__CRS, add_window,
-			&info);
 	/*
 	 * See arch/x86/pci/acpi.c.
 	 * The desired pci bus might already be scanned in a quirk. We
@@ -504,54 +505,12 @@ pcibios_update_irq (struct pci_dev *dev, int irq)
 	/* ??? FIXME -- record old value for shutdown.  */
 }
 
-static inline int
-pcibios_enable_resources (struct pci_dev *dev, int mask)
-{
-	u16 cmd, old_cmd;
-	int idx;
-	struct resource *r;
-	unsigned long type_mask = IORESOURCE_IO | IORESOURCE_MEM;
-
-	if (!dev)
-		return -EINVAL;
-
-	pci_read_config_word(dev, PCI_COMMAND, &cmd);
-	old_cmd = cmd;
-	for (idx=0; idx<PCI_NUM_RESOURCES; idx++) {
-		/* Only set up the desired resources.  */
-		if (!(mask & (1 << idx)))
-			continue;
-
-		r = &dev->resource[idx];
-		if (!(r->flags & type_mask))
-			continue;
-		if ((idx == PCI_ROM_RESOURCE) &&
-				(!(r->flags & IORESOURCE_ROM_ENABLE)))
-			continue;
-		if (!r->start && r->end) {
-			printk(KERN_ERR
-			       "PCI: Device %s not available because of resource collisions\n",
-			       pci_name(dev));
-			return -EINVAL;
-		}
-		if (r->flags & IORESOURCE_IO)
-			cmd |= PCI_COMMAND_IO;
-		if (r->flags & IORESOURCE_MEM)
-			cmd |= PCI_COMMAND_MEMORY;
-	}
-	if (cmd != old_cmd) {
-		printk("PCI: Enabling device %s (%04x -> %04x)\n", pci_name(dev), old_cmd, cmd);
-		pci_write_config_word(dev, PCI_COMMAND, cmd);
-	}
-	return 0;
-}
-
 int
 pcibios_enable_device (struct pci_dev *dev, int mask)
 {
 	int ret;
 
-	ret = pcibios_enable_resources(dev, mask);
+	ret = pci_enable_resources(dev, mask);
 	if (ret < 0)
 		return ret;
 

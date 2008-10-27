@@ -32,6 +32,13 @@
 #include <asm/spu_csa.h>
 #include <asm/spu_info.h>
 
+#define SPUFS_PS_MAP_SIZE	0x20000
+#define SPUFS_MFC_MAP_SIZE	0x1000
+#define SPUFS_CNTL_MAP_SIZE	0x1000
+#define SPUFS_CNTL_MAP_SIZE	0x1000
+#define SPUFS_SIGNAL_MAP_SIZE	PAGE_SIZE
+#define SPUFS_MSS_MAP_SIZE	0x1000
+
 /* The magic number for our file system */
 enum {
 	SPUFS_MAGIC = 0x23c9b64e,
@@ -45,6 +52,30 @@ enum {
 	SPU_SCHED_NOTIFY_ACTIVE,
 	SPU_SCHED_WAS_ACTIVE,	/* was active upon spu_acquire_saved()  */
 	SPU_SCHED_SPU_RUN,	/* context is within spu_run */
+};
+
+enum {
+	SWITCH_LOG_BUFSIZE = 4096,
+};
+
+enum {
+	SWITCH_LOG_START,
+	SWITCH_LOG_STOP,
+	SWITCH_LOG_EXIT,
+};
+
+struct switch_log {
+	spinlock_t		lock;
+	wait_queue_head_t	wait;
+	unsigned long		head;
+	unsigned long		tail;
+	struct switch_log_entry {
+		struct timespec	tstamp;
+		s32		spu_id;
+		u32		type;
+		u32		val;
+		u64		timebase;
+	} log[];
 };
 
 struct spu_context {
@@ -97,6 +128,7 @@ struct spu_context {
 	cpumask_t cpus_allowed;
 	int policy;
 	int prio;
+	int last_ran;
 
 	/* statistics */
 	struct {
@@ -115,6 +147,9 @@ struct spu_context {
 		unsigned long long class2_intr_base; /* # at last ctx switch */
 		unsigned long long libassist;
 	} stats;
+
+	/* context switch log */
+	struct switch_log *switch_log;
 
 	struct list_head aff_list;
 	int aff_head;
@@ -200,8 +235,16 @@ struct spufs_inode_info {
 #define SPUFS_I(inode) \
 	container_of(inode, struct spufs_inode_info, vfs_inode)
 
-extern struct tree_descr spufs_dir_contents[];
-extern struct tree_descr spufs_dir_nosched_contents[];
+struct spufs_tree_descr {
+	const char *name;
+	const struct file_operations *ops;
+	int mode;
+	size_t size;
+};
+
+extern struct spufs_tree_descr spufs_dir_contents[];
+extern struct spufs_tree_descr spufs_dir_nosched_contents[];
+extern struct spufs_tree_descr spufs_dir_debug_contents[];
 
 /* system call implementation */
 extern struct spufs_calls spufs_calls;
@@ -256,6 +299,8 @@ int spu_activate(struct spu_context *ctx, unsigned long flags);
 void spu_deactivate(struct spu_context *ctx);
 void spu_yield(struct spu_context *ctx);
 void spu_switch_notify(struct spu *spu, struct spu_context *ctx);
+void spu_switch_log_notify(struct spu *spu, struct spu_context *ctx,
+		u32 type, u32 val);
 void spu_set_timeslice(struct spu_context *ctx);
 void spu_update_sched_info(struct spu_context *ctx);
 void __spu_update_sched_info(struct spu_context *ctx);
@@ -302,7 +347,7 @@ size_t spu_ibox_read(struct spu_context *ctx, u32 *data);
 /* irq callback funcs. */
 void spufs_ibox_callback(struct spu *spu);
 void spufs_wbox_callback(struct spu *spu);
-void spufs_stop_callback(struct spu *spu);
+void spufs_stop_callback(struct spu *spu, int irq);
 void spufs_mfc_callback(struct spu *spu);
 void spufs_dma_callback(struct spu *spu, int type);
 
@@ -330,8 +375,8 @@ extern void spuctx_switch_state(struct spu_context *ctx,
 		enum spu_utilization_state new_state);
 
 #define spu_context_trace(name, ctx, spu) \
-	trace_mark(name, "%p %p", ctx, spu);
+	trace_mark(name, "ctx %p spu %p", ctx, spu);
 #define spu_context_nospu_trace(name, ctx) \
-	trace_mark(name, "%p", ctx);
+	trace_mark(name, "ctx %p", ctx);
 
 #endif

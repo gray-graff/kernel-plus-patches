@@ -138,14 +138,20 @@ objflags=-S
 tmp=$tmpdir/zImage.$$.o
 ksection=.kernel:vmlinux.strip
 isection=.kernel:initrd
+link_address='0x400000'
 
 case "$platform" in
-pmac|pseries|chrp)
+pseries)
+    platformo=$object/of.o
+    link_address='0x4000000'
+    ;;
+pmac|chrp)
     platformo=$object/of.o
     ;;
 coff)
     platformo=$object/of.o
     lds=$object/zImage.coff.lds
+    link_address='0x500000'
     ;;
 miboot|uboot)
     # miboot and U-boot want just the bare bits, not an ELF binary
@@ -159,7 +165,7 @@ cuboot*)
     binary=y
     gzip=
     case "$platform" in
-    *-mpc885ads|*-adder875*|*-ep88xc)
+    *-mpc866ads|*-mpc885ads|*-adder875*|*-ep88xc)
         platformo=$object/cuboot-8xx.o
         ;;
     *5200*|*-motionpro)
@@ -171,13 +177,13 @@ cuboot*)
     *-mpc824*)
         platformo=$object/cuboot-824x.o
         ;;
-    *-mpc83*)
+    *-mpc83*|*-asp834x*)
         platformo=$object/cuboot-83xx.o
         ;;
-    *-tqm8541|*-mpc8560*|*-tqm8560|*-tqm8555)
+    *-tqm8541|*-mpc8560*|*-tqm8560|*-tqm8555|*-ksi8560*)
         platformo=$object/cuboot-85xx-cpm2.o
         ;;
-    *-mpc85*|*-tqm8540|*-sbc85*)
+    *-mpc85*|*-tqm85*|*-sbc85*)
         platformo=$object/cuboot-85xx.o
         ;;
     esac
@@ -190,6 +196,7 @@ ps3)
     objflags="-O binary --set-section-flags=.bss=contents,alloc,load,data"
     ksection=.kernel:vmlinux.bin
     isection=.kernel:initrd
+    link_address=''
     ;;
 ep88xc|ep405|ep8248e)
     platformo="$object/fixed-head.o $object/$platform.o"
@@ -197,6 +204,22 @@ ep88xc|ep405|ep8248e)
     ;;
 adder875-redboot)
     platformo="$object/fixed-head.o $object/redboot-8xx.o"
+    binary=y
+    ;;
+simpleboot-virtex405-*)
+    platformo="$object/virtex405-head.o $object/simpleboot.o $object/virtex.o"
+    binary=y
+    ;;
+simpleboot-virtex440-*)
+    platformo="$object/simpleboot.o $object/virtex.o"
+    binary=y
+    ;;
+simpleboot-*)
+    platformo="$object/simpleboot.o"
+    binary=y
+    ;;
+asp834x-redboot)
+    platformo="$object/fixed-head.o $object/redboot-83xx.o"
     binary=y
     ;;
 esac
@@ -226,10 +249,13 @@ if [ -n "$version" ]; then
     uboot_version="-n Linux-$version"
 fi
 
+# physical offset of kernel image
+membase=`${CROSS}objdump -p "$kernel" | grep -m 1 LOAD | awk '{print $7}'`
+
 case "$platform" in
 uboot)
     rm -f "$ofile"
-    mkimage -A ppc -O linux -T kernel -C gzip -a 00000000 -e 00000000 \
+    mkimage -A ppc -O linux -T kernel -C gzip -a $membase -e $membase \
 	$uboot_version -d "$vmz" "$ofile"
     if [ -z "$cacheit" ]; then
 	rm -f "$vmz"
@@ -261,7 +287,10 @@ if [ -n "$dtb" ]; then
 fi
 
 if [ "$platform" != "miboot" ]; then
-    ${CROSS}ld -m elf32ppc -T $lds -o "$ofile" \
+    if [ -n "$link_address" ] ; then
+        text_start="-Ttext $link_address --defsym _start=$link_address"
+    fi
+    ${CROSS}ld -m elf32ppc -T $lds $text_start -o "$ofile" \
 	$platformo $tmp $object/wrapper.a
     rm $tmp
 fi
@@ -298,15 +327,16 @@ treeboot*)
     exit 0
     ;;
 ps3)
-    # The ps3's loader supports loading gzipped binary images from flash
-    # rom to addr zero. The loader enters the image at addr 0x100.  A
-    # bootwrapper overlay is use to arrange for the kernel to be loaded
-    # to addr zero and to have a suitable bootwrapper entry at 0x100.
-    # To construct the rom image, 0x100 bytes from offset 0x100 in the
-    # kernel is copied to the bootwrapper symbol __system_reset_kernel.
-    # The 0x100 bytes at the bootwrapper symbol __system_reset_overlay is
-    # then copied to offset 0x100.  At runtime the bootwrapper program
-    # copies the 0x100 bytes at __system_reset_kernel to addr 0x100.
+    # The ps3's loader supports loading a gzipped binary image from flash
+    # rom to ram addr zero. The loader then enters the system reset
+    # vector at addr 0x100.  A bootwrapper overlay is used to arrange for
+    # a binary image of the kernel to be at addr zero, and yet have a
+    # suitable bootwrapper entry at 0x100.  To construct the final rom
+    # image 512 bytes from offset 0x100 is copied to the bootwrapper
+    # place holder at symbol __system_reset_kernel.  The 512 bytes of the
+    # bootwrapper entry code at symbol __system_reset_overlay is then
+    # copied to offset 0x100.  At runtime the bootwrapper program copies
+    # the data at __system_reset_kernel back to addr 0x100.
 
     system_reset_overlay=0x`${CROSS}nm "$ofile" \
         | grep ' __system_reset_overlay$'       \
@@ -317,7 +347,7 @@ ps3)
         | cut -d' ' -f1`
     system_reset_kernel=`printf "%d" $system_reset_kernel`
     overlay_dest="256"
-    overlay_size="256"
+    overlay_size="512"
 
     ${CROSS}objcopy -O binary "$ofile" "$ofile.bin"
 

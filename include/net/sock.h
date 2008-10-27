@@ -47,7 +47,6 @@
 #include <linux/module.h>
 #include <linux/lockdep.h>
 #include <linux/netdevice.h>
-#include <linux/pcounter.h>
 #include <linux/skbuff.h>	/* struct sk_buff */
 #include <linux/mm.h>
 #include <linux/security.h>
@@ -70,7 +69,11 @@
 #define SOCK_DEBUG(sk, msg...) do { if ((sk) && sock_flag((sk), SOCK_DBG)) \
 					printk(KERN_DEBUG msg); } while (0)
 #else
-#define SOCK_DEBUG(sk, msg...) do { } while (0)
+/* Validate arguments and do nothing */
+static void inline int __attribute__ ((format (printf, 2, 3)))
+SOCK_DEBUG(struct sock *sk, const char *msg, ...)
+{
+}
 #endif
 
 /* This is the per-socket lock.  The spinlock provides a synchronization
@@ -122,7 +125,9 @@ struct sock_common {
 	atomic_t		skc_refcnt;
 	unsigned int		skc_hash;
 	struct proto		*skc_prot;
+#ifdef CONFIG_NET_NS
 	struct net	 	*skc_net;
+#endif
 };
 
 /**
@@ -151,6 +156,7 @@ struct sock_common {
   *	@sk_no_check: %SO_NO_CHECK setting, wether or not checkup packets
   *	@sk_route_caps: route capabilities (e.g. %NETIF_F_TSO)
   *	@sk_gso_type: GSO type (e.g. %SKB_GSO_TCPV4)
+  *	@sk_gso_max_size: Maximum GSO segment size to build
   *	@sk_lingertime: %SO_LINGER l_linger setting
   *	@sk_backlog: always used with the per-socket spinlock held
   *	@sk_callback_lock: used with the callbacks in the end of this struct
@@ -160,7 +166,7 @@ struct sock_common {
   *	@sk_err: last error
   *	@sk_err_soft: errors that don't cause failure but are the cause of a
   *		      persistent failure not just 'timed out'
-  *	@sk_drops: raw drops counter
+  *	@sk_drops: raw/udp drops counter
   *	@sk_ack_backlog: current listen backlog
   *	@sk_max_ack_backlog: listen backlog set in listen()
   *	@sk_priority: %SO_PRIORITY setting
@@ -237,6 +243,7 @@ struct sock {
 	gfp_t			sk_allocation;
 	int			sk_route_caps;
 	int			sk_gso_type;
+	unsigned int		sk_gso_max_size;
 	int			sk_rcvlowat;
 	unsigned long 		sk_flags;
 	unsigned long	        sk_lingertime;
@@ -498,6 +505,7 @@ extern int sk_wait_data(struct sock *sk, long *timeo);
 struct request_sock_ops;
 struct timewait_sock_ops;
 struct inet_hashinfo;
+struct raw_hashinfo;
 
 /* Networking protocol blocks we attach to sockets.
  * socket layer -> transport layer interface
@@ -516,7 +524,7 @@ struct proto {
 	int			(*ioctl)(struct sock *sk, int cmd,
 					 unsigned long arg);
 	int			(*init)(struct sock *sk);
-	int			(*destroy)(struct sock *sk);
+	void			(*destroy)(struct sock *sk);
 	void			(*shutdown)(struct sock *sk, int how);
 	int			(*setsockopt)(struct sock *sk, int level, 
 					int optname, char __user *optval,
@@ -553,11 +561,11 @@ struct proto {
 
 	/* Keeping track of sockets in use */
 #ifdef CONFIG_PROC_FS
-	struct pcounter		inuse;
+	unsigned int		inuse_idx;
 #endif
 
 	/* Memory pressure */
-	void			(*enter_memory_pressure)(void);
+	void			(*enter_memory_pressure)(struct sock *sk);
 	atomic_t		*memory_allocated;	/* Current allocated memory. */
 	atomic_t		*sockets_allocated;	/* Current number of sockets. */
 	/*
@@ -580,7 +588,11 @@ struct proto {
 	struct request_sock_ops	*rsk_prot;
 	struct timewait_sock_ops *twsk_prot;
 
-	struct inet_hashinfo	*hashinfo;
+	union {
+		struct inet_hashinfo	*hashinfo;
+		struct hlist_head	*udp_hash;
+		struct raw_hashinfo	*raw_hash;
+	} h;
 
 	struct module		*owner;
 
@@ -622,36 +634,12 @@ static inline void sk_refcnt_debug_release(const struct sock *sk)
 
 
 #ifdef CONFIG_PROC_FS
-# define DEFINE_PROTO_INUSE(NAME) DEFINE_PCOUNTER(NAME)
-# define REF_PROTO_INUSE(NAME) PCOUNTER_MEMBER_INITIALIZER(NAME, .inuse)
 /* Called with local bh disabled */
-static inline void sock_prot_inuse_add(struct proto *prot, int inc)
-{
-	pcounter_add(&prot->inuse, inc);
-}
-static inline int sock_prot_inuse_init(struct proto *proto)
-{
-	return pcounter_alloc(&proto->inuse);
-}
-static inline int sock_prot_inuse_get(struct proto *proto)
-{
-	return pcounter_getval(&proto->inuse);
-}
-static inline void sock_prot_inuse_free(struct proto *proto)
-{
-	pcounter_free(&proto->inuse);
-}
+extern void sock_prot_inuse_add(struct net *net, struct proto *prot, int inc);
+extern int sock_prot_inuse_get(struct net *net, struct proto *proto);
 #else
-# define DEFINE_PROTO_INUSE(NAME)
-# define REF_PROTO_INUSE(NAME)
-static void inline sock_prot_inuse_add(struct proto *prot, int inc)
-{
-}
-static int inline sock_prot_inuse_init(struct proto *proto)
-{
-	return 0;
-}
-static void inline sock_prot_inuse_free(struct proto *proto)
+static void inline sock_prot_inuse_add(struct net *net, struct proto *prot,
+		int inc)
 {
 }
 #endif
@@ -850,6 +838,7 @@ extern struct sock		*sk_alloc(struct net *net, int family,
 					  gfp_t priority,
 					  struct proto *prot);
 extern void			sk_free(struct sock *sk);
+extern void			sk_release_kernel(struct sock *sk);
 extern struct sock		*sk_clone(const struct sock *sk,
 					  const gfp_t priority);
 
@@ -939,41 +928,6 @@ extern void sk_common_release(struct sock *sk);
 extern void sock_init_data(struct socket *sock, struct sock *sk);
 
 /**
- *	sk_filter - run a packet through a socket filter
- *	@sk: sock associated with &sk_buff
- *	@skb: buffer to filter
- *	@needlock: set to 1 if the sock is not locked by caller.
- *
- * Run the filter code and then cut skb->data to correct size returned by
- * sk_run_filter. If pkt_len is 0 we toss packet. If skb->len is smaller
- * than pkt_len we keep whole skb->data. This is the socket level
- * wrapper to sk_run_filter. It returns 0 if the packet should
- * be accepted or -EPERM if the packet should be tossed.
- *
- */
-
-static inline int sk_filter(struct sock *sk, struct sk_buff *skb)
-{
-	int err;
-	struct sk_filter *filter;
-	
-	err = security_sock_rcv_skb(sk, skb);
-	if (err)
-		return err;
-	
-	rcu_read_lock_bh();
-	filter = rcu_dereference(sk->sk_filter);
-	if (filter) {
-		unsigned int pkt_len = sk_run_filter(skb, filter->insns,
-				filter->len);
-		err = pkt_len ? pskb_trim(skb, pkt_len) : -EPERM;
-	}
- 	rcu_read_unlock_bh();
-
-	return err;
-}
-
-/**
  *	sk_filter_release: Release a socket filter
  *	@sk: socket
  *	@fp: filter to remove
@@ -1036,6 +990,11 @@ static inline void sock_put(struct sock *sk)
 extern int sk_receive_skb(struct sock *sk, struct sk_buff *skb,
 			  const int nested);
 
+static inline void sk_set_socket(struct sock *sk, struct socket *sock)
+{
+	sk->sk_socket = sock;
+}
+
 /* Detach socket from process context.
  * Announce socket dead, detach it from wait queue and inode.
  * Note that parent inode held reference count on this struct sock,
@@ -1047,7 +1006,7 @@ static inline void sock_orphan(struct sock *sk)
 {
 	write_lock_bh(&sk->sk_callback_lock);
 	sock_set_flag(sk, SOCK_DEAD);
-	sk->sk_socket = NULL;
+	sk_set_socket(sk, NULL);
 	sk->sk_sleep  = NULL;
 	write_unlock_bh(&sk->sk_callback_lock);
 }
@@ -1057,7 +1016,7 @@ static inline void sock_graft(struct sock *sk, struct socket *parent)
 	write_lock_bh(&sk->sk_callback_lock);
 	sk->sk_sleep = &parent->wait;
 	parent->sk = sk;
-	sk->sk_socket = parent;
+	sk_set_socket(sk, parent);
 	security_sock_graft(sk, parent);
 	write_unlock_bh(&sk->sk_callback_lock);
 }
@@ -1251,7 +1210,7 @@ static inline struct page *sk_stream_alloc_page(struct sock *sk)
 
 	page = alloc_pages(sk->sk_allocation, 0);
 	if (!page) {
-		sk->sk_prot->enter_memory_pressure();
+		sk->sk_prot->enter_memory_pressure(sk);
 		sk_stream_moderate_sndbuf(sk);
 	}
 	return page;
@@ -1333,6 +1292,36 @@ static inline void sk_eat_skb(struct sock *sk, struct sk_buff *skb, int copied_e
 }
 #endif
 
+static inline
+struct net *sock_net(const struct sock *sk)
+{
+#ifdef CONFIG_NET_NS
+	return sk->sk_net;
+#else
+	return &init_net;
+#endif
+}
+
+static inline
+void sock_net_set(struct sock *sk, struct net *net)
+{
+#ifdef CONFIG_NET_NS
+	sk->sk_net = net;
+#endif
+}
+
+/*
+ * Kernel sockets, f.e. rtnl or icmp_socket, are a part of a namespace.
+ * They should not hold a referrence to a namespace in order to allow
+ * to stop it.
+ * Sockets after sk_change_net should be released using sk_release_kernel
+ */
+static inline void sk_change_net(struct sock *sk, struct net *net)
+{
+	put_net(sock_net(sk));
+	sock_net_set(sk, hold_net(net));
+}
+
 extern void sock_enable_timestamp(struct sock *sk);
 extern int sock_get_timestamp(struct sock *, struct timeval __user *);
 extern int sock_get_timestampns(struct sock *, struct timespec __user *);
@@ -1346,30 +1335,6 @@ extern int net_msg_warn;
 
 #define LIMIT_NETDEBUG(fmt, args...) \
 	do { if (net_msg_warn && net_ratelimit()) printk(fmt,##args); } while(0)
-
-/*
- * Macros for sleeping on a socket. Use them like this:
- *
- * SOCK_SLEEP_PRE(sk)
- * if (condition)
- * 	schedule();
- * SOCK_SLEEP_POST(sk)
- *
- * N.B. These are now obsolete and were, afaik, only ever used in DECnet
- * and when the last use of them in DECnet has gone, I'm intending to
- * remove them.
- */
-
-#define SOCK_SLEEP_PRE(sk) 	{ struct task_struct *tsk = current; \
-				DECLARE_WAITQUEUE(wait, tsk); \
-				tsk->state = TASK_INTERRUPTIBLE; \
-				add_wait_queue((sk)->sk_sleep, &wait); \
-				release_sock(sk);
-
-#define SOCK_SLEEP_POST(sk)	tsk->state = TASK_RUNNING; \
-				remove_wait_queue((sk)->sk_sleep, &wait); \
-				lock_sock(sk); \
-				}
 
 extern __u32 sysctl_wmem_max;
 extern __u32 sysctl_rmem_max;

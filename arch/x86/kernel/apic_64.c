@@ -34,14 +34,16 @@
 #include <asm/mpspec.h>
 #include <asm/hpet.h>
 #include <asm/pgalloc.h>
-#include <asm/mach_apic.h>
 #include <asm/nmi.h>
 #include <asm/idle.h>
 #include <asm/proto.h>
 #include <asm/timex.h>
 #include <asm/apic.h>
 
-int disable_apic_timer __cpuinitdata;
+#include <mach_ipi.h>
+#include <mach_apic.h>
+
+static int disable_apic_timer __cpuinitdata;
 static int apic_calibrate_pmtmr __initdata;
 int disable_apic;
 
@@ -52,7 +54,10 @@ EXPORT_SYMBOL_GPL(local_apic_timer_c2_ok);
 /*
  * Debug level, exported for io_apic.c
  */
-int apic_verbosity;
+unsigned int apic_verbosity;
+
+/* Have we found an MP table */
+int smp_found_config;
 
 static struct resource lapic_resource = {
 	.name = "Local APIC",
@@ -82,6 +87,8 @@ static struct clock_event_device lapic_clockevent = {
 static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
 
 static unsigned long apic_phys;
+
+unsigned long mp_lapic_addr;
 
 /*
  * Get the LAPIC version
@@ -306,7 +313,7 @@ static void setup_APIC_timer(void)
 
 #define TICK_COUNT 100000000
 
-static void __init calibrate_APIC_clock(void)
+static int __init calibrate_APIC_clock(void)
 {
 	unsigned apic, apic_start;
 	unsigned long tsc, tsc_start;
@@ -352,13 +359,25 @@ static void __init calibrate_APIC_clock(void)
 		result / 1000 / 1000, result / 1000 % 1000);
 
 	/* Calculate the scaled math multiplication factor */
-	lapic_clockevent.mult = div_sc(result, NSEC_PER_SEC, 32);
+	lapic_clockevent.mult = div_sc(result, NSEC_PER_SEC,
+				       lapic_clockevent.shift);
 	lapic_clockevent.max_delta_ns =
 		clockevent_delta2ns(0x7FFFFF, &lapic_clockevent);
 	lapic_clockevent.min_delta_ns =
 		clockevent_delta2ns(0xF, &lapic_clockevent);
 
 	calibration_result = result / HZ;
+
+	/*
+	 * Do a sanity check on the APIC calibration result
+	 */
+	if (calibration_result < (1000000 / HZ)) {
+		printk(KERN_WARNING
+			"APIC frequency too slow, disabling apic timer\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 /*
@@ -385,14 +404,7 @@ void __init setup_boot_APIC_clock(void)
 	}
 
 	printk(KERN_INFO "Using local APIC timer interrupts.\n");
-	calibrate_APIC_clock();
-
-	/*
-	 * Do a sanity check on the APIC calibration result
-	 */
-	if (calibration_result < (1000000 / HZ)) {
-		printk(KERN_WARNING
-		       "APIC frequency too slow, disabling apic timer\n");
+	if (calibrate_APIC_clock()) {
 		/* No broadcast on UP ! */
 		if (num_possible_cpus() > 1)
 			setup_APIC_timer();
@@ -408,36 +420,13 @@ void __init setup_boot_APIC_clock(void)
 		lapic_clockevent.features &= ~CLOCK_EVT_FEAT_DUMMY;
 	else
 		printk(KERN_WARNING "APIC timer registered as dummy,"
-		       " due to nmi_watchdog=1!\n");
+			" due to nmi_watchdog=%d!\n", nmi_watchdog);
 
 	setup_APIC_timer();
 }
 
-/*
- * AMD C1E enabled CPUs have a real nasty problem: Some BIOSes set the
- * C1E flag only in the secondary CPU, so when we detect the wreckage
- * we already have enabled the boot CPU local apic timer. Check, if
- * disable_apic_timer is set and the DUMMY flag is cleared. If yes,
- * set the DUMMY flag again and force the broadcast mode in the
- * clockevents layer.
- */
-void __cpuinit check_boot_apic_timer_broadcast(void)
-{
-	if (!disable_apic_timer ||
-	    (lapic_clockevent.features & CLOCK_EVT_FEAT_DUMMY))
-		return;
-
-	printk(KERN_INFO "AMD C1E detected late. Force timer broadcast.\n");
-	lapic_clockevent.features |= CLOCK_EVT_FEAT_DUMMY;
-
-	local_irq_enable();
-	clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_FORCE, &boot_cpu_id);
-	local_irq_disable();
-}
-
 void __cpuinit setup_secondary_APIC_clock(void)
 {
-	check_boot_apic_timer_broadcast();
 	setup_APIC_timer();
 }
 
@@ -524,7 +513,7 @@ int setup_profiling_timer(unsigned int multiplier)
  */
 void clear_local_APIC(void)
 {
-	int maxlvt = lapic_get_maxlvt();
+	int maxlvt;
 	u32 v;
 
 	/* APIC hasn't been mapped yet */
@@ -640,10 +629,10 @@ int __init verify_local_APIC(void)
 	/*
 	 * The ID register is read/write in a real APIC.
 	 */
-	reg0 = apic_read(APIC_ID);
+	reg0 = read_apic_id();
 	apic_printk(APIC_DEBUG, "Getting ID: %x\n", reg0);
 	apic_write(APIC_ID, reg0 ^ APIC_ID_MASK);
-	reg1 = apic_read(APIC_ID);
+	reg1 = read_apic_id();
 	apic_printk(APIC_DEBUG, "Getting ID: %x\n", reg1);
 	apic_write(APIC_ID, reg0);
 	if (reg1 != (reg0 ^ APIC_ID_MASK))
@@ -728,6 +717,7 @@ void __cpuinit setup_local_APIC(void)
 	unsigned int value;
 	int i, j;
 
+	preempt_disable();
 	value = apic_read(APIC_LVR);
 
 	BUILD_BUG_ON((SPURIOUS_APIC_VECTOR & 0x0f) != 0x0f);
@@ -821,9 +811,10 @@ void __cpuinit setup_local_APIC(void)
 	else
 		value = APIC_DM_NMI | APIC_LVT_MASKED;
 	apic_write(APIC_LVT1, value);
+	preempt_enable();
 }
 
-void __cpuinit lapic_setup_esr(void)
+static void __cpuinit lapic_setup_esr(void)
 {
 	unsigned maxlvt = lapic_get_maxlvt();
 
@@ -838,7 +829,6 @@ void __cpuinit lapic_setup_esr(void)
 void __cpuinit end_local_APIC_setup(void)
 {
 	lapic_setup_esr();
-	nmi_watchdog_default();
 	setup_apic_nmi_watchdog(NULL);
 	apic_pm_activate();
 }
@@ -857,8 +847,32 @@ static int __init detect_init_APIC(void)
 	}
 
 	mp_lapic_addr = APIC_DEFAULT_PHYS_BASE;
-	boot_cpu_id = 0;
+	boot_cpu_physical_apicid = 0;
 	return 0;
+}
+
+void __init early_init_lapic_mapping(void)
+{
+	unsigned long phys_addr;
+
+	/*
+	 * If no local APIC can be found then go out
+	 * : it means there is no mpatable and MADT
+	 */
+	if (!smp_found_config)
+		return;
+
+	phys_addr = mp_lapic_addr;
+
+	set_fixmap_nocache(FIX_APIC_BASE, phys_addr);
+	apic_printk(APIC_VERBOSE, "mapped APIC to %16lx (%16lx)\n",
+		    APIC_BASE, phys_addr);
+
+	/*
+	 * Fetch the APIC ID of the BSP in case we have a
+	 * default configuration (or the MP table is broken).
+	 */
+	boot_cpu_physical_apicid = GET_APIC_ID(read_apic_id());
 }
 
 /**
@@ -881,16 +895,11 @@ void __init init_apic_mappings(void)
 	apic_printk(APIC_VERBOSE, "mapped APIC to %16lx (%16lx)\n",
 				APIC_BASE, apic_phys);
 
-	/* Put local APIC into the resource map. */
-	lapic_resource.start = apic_phys;
-	lapic_resource.end = lapic_resource.start + PAGE_SIZE - 1;
-	insert_resource(&iomem_resource, &lapic_resource);
-
 	/*
 	 * Fetch the APIC ID of the BSP in case we have a
 	 * default configuration (or the MP table is broken).
 	 */
-	boot_cpu_id = GET_APIC_ID(apic_read(APIC_ID));
+	boot_cpu_physical_apicid = GET_APIC_ID(read_apic_id());
 }
 
 /*
@@ -911,8 +920,10 @@ int __init APIC_init_uniprocessor(void)
 
 	verify_local_APIC();
 
-	phys_cpu_present_map = physid_mask_of_physid(boot_cpu_id);
-	apic_write(APIC_ID, SET_APIC_ID(boot_cpu_id));
+	connect_bsp_APIC();
+
+	physid_set_mask_of_physid(boot_cpu_physical_apicid, &phys_cpu_present_map);
+	apic_write(APIC_ID, SET_APIC_ID(boot_cpu_physical_apicid));
 
 	setup_local_APIC();
 
@@ -923,6 +934,8 @@ int __init APIC_init_uniprocessor(void)
 	if (!skip_ioapic_setup && nr_ioapics)
 		enable_IO_APIC();
 
+	if (!smp_found_config || skip_ioapic_setup || !nr_ioapics)
+		localise_nmi_watchdog();
 	end_local_APIC_setup();
 
 	if (smp_found_config && !skip_ioapic_setup && nr_ioapics)
@@ -990,6 +1003,14 @@ asmlinkage void smp_error_interrupt(void)
 	irq_exit();
 }
 
+/**
+ *  * connect_bsp_APIC - attach the APIC to the interrupt system
+ *   */
+void __init connect_bsp_APIC(void)
+{
+	enable_apic_mode();
+}
+
 void disconnect_bsp_APIC(int virt_wire_setup)
 {
 	/* Go back to Virtual Wire compatibility mode */
@@ -1029,6 +1050,49 @@ void disconnect_bsp_APIC(int virt_wire_setup)
 	apic_write(APIC_LVT1, value);
 }
 
+void __cpuinit generic_processor_info(int apicid, int version)
+{
+	int cpu;
+	cpumask_t tmp_map;
+
+	if (num_processors >= NR_CPUS) {
+		printk(KERN_WARNING "WARNING: NR_CPUS limit of %i reached."
+		       " Processor ignored.\n", NR_CPUS);
+		return;
+	}
+
+	num_processors++;
+	cpus_complement(tmp_map, cpu_present_map);
+	cpu = first_cpu(tmp_map);
+
+	physid_set(apicid, phys_cpu_present_map);
+	if (apicid == boot_cpu_physical_apicid) {
+		/*
+		 * x86_bios_cpu_apicid is required to have processors listed
+		 * in same order as logical cpu numbers. Hence the first
+		 * entry is BSP, and so on.
+		 */
+		cpu = 0;
+	}
+	if (apicid > max_physical_apicid)
+		max_physical_apicid = apicid;
+
+	/* are we being called early in kernel startup? */
+	if (early_per_cpu_ptr(x86_cpu_to_apicid)) {
+		u16 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
+		u16 *bios_cpu_apicid = early_per_cpu_ptr(x86_bios_cpu_apicid);
+
+		cpu_to_apicid[cpu] = apicid;
+		bios_cpu_apicid[cpu] = apicid;
+	} else {
+		per_cpu(x86_cpu_to_apicid, cpu) = apicid;
+		per_cpu(x86_bios_cpu_apicid, cpu) = apicid;
+	}
+
+	cpu_set(cpu, cpu_possible_map);
+	cpu_set(cpu, cpu_present_map);
+}
+
 /*
  * Power management
  */
@@ -1065,7 +1129,7 @@ static int lapic_suspend(struct sys_device *dev, pm_message_t state)
 
 	maxlvt = lapic_get_maxlvt();
 
-	apic_pm_state.apic_id = apic_read(APIC_ID);
+	apic_pm_state.apic_id = read_apic_id();
 	apic_pm_state.apic_taskpri = apic_read(APIC_TASKPRI);
 	apic_pm_state.apic_ldr = apic_read(APIC_LDR);
 	apic_pm_state.apic_dfr = apic_read(APIC_DFR);
@@ -1180,9 +1244,19 @@ __cpuinit int apic_is_clustered_box(void)
 {
 	int i, clusters, zeros;
 	unsigned id;
-	u16 *bios_cpu_apicid = x86_bios_cpu_apicid_early_ptr;
+	u16 *bios_cpu_apicid;
 	DECLARE_BITMAP(clustermap, NUM_APIC_CLUSTERS);
 
+	/*
+	 * there is not this kind of box with AMD CPU yet.
+	 * Some AMD box with quadcore cpu and 8 sockets apicid
+	 * will be [4, 0x23] or [8, 0x27] could be thought to
+	 * vsmp box still need checking...
+	 */
+	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) && !is_vsmp_box())
+		return 0;
+
+	bios_cpu_apicid = early_per_cpu_ptr(x86_bios_cpu_apicid);
 	bitmap_zero(clustermap, NUM_APIC_CLUSTERS);
 
 	for (i = 0; i < NR_CPUS; i++) {
@@ -1219,6 +1293,12 @@ __cpuinit int apic_is_clustered_box(void)
 			++zeros;
 	}
 
+	/* ScaleMP vSMPowered boxes have one cluster per board and TSCs are
+	 * not guaranteed to be synced between boards
+	 */
+	if (is_vsmp_box() && clusters > 1)
+		return 1;
+
 	/*
 	 * If clusters > 2, then should be multi-chassis.
 	 * May have to revisit this when multi-core + hyperthreaded CPUs come
@@ -1254,7 +1334,7 @@ early_param("apic", apic_set_verbosity);
 static __init int setup_disableapic(char *str)
 {
 	disable_apic = 1;
-	clear_cpu_cap(&boot_cpu_data, X86_FEATURE_APIC);
+	setup_clear_cpu_cap(X86_FEATURE_APIC);
 	return 0;
 }
 early_param("disableapic", setup_disableapic);
@@ -1290,3 +1370,21 @@ static __init int setup_apicpmtimer(char *s)
 }
 __setup("apicpmtimer", setup_apicpmtimer);
 
+static int __init lapic_insert_resource(void)
+{
+	if (!apic_phys)
+		return -1;
+
+	/* Put local APIC into the resource map. */
+	lapic_resource.start = apic_phys;
+	lapic_resource.end = lapic_resource.start + PAGE_SIZE - 1;
+	insert_resource(&iomem_resource, &lapic_resource);
+
+	return 0;
+}
+
+/*
+ * need call insert after e820_reserve_resources()
+ * that is using request_resource
+ */
+late_initcall(lapic_insert_resource);

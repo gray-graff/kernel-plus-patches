@@ -13,7 +13,7 @@
  * NTSC sliced VBI support by Christopher Neufeld <television@cneufeld.ca>
  * with additional fixes by Hans Verkuil <hverkuil@xs4all.nl>.
  *
- * CX23885 support by Steven Toth <stoth@hauppauge.com>.
+ * CX23885 support by Steven Toth <stoth@linuxtv.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -50,8 +50,7 @@ MODULE_LICENSE("GPL");
 
 static unsigned short normal_i2c[] = { 0x88 >> 1, I2C_CLIENT_END };
 
-
-int cx25840_debug;
+static int cx25840_debug;
 
 module_param_named(debug,cx25840_debug, int, 0644);
 
@@ -238,7 +237,7 @@ static void cx25840_initialize(struct i2c_client *client)
 	cx25840_write(client, 0x8d3, 0x1f);
 	cx25840_write(client, 0x8e3, 0x03);
 
-	cx25840_vbi_setup(client);
+	cx25840_std_setup(client);
 
 	/* trial and error says these are needed to get audio */
 	cx25840_write(client, 0x914, 0xa0);
@@ -338,7 +337,7 @@ static void cx23885_initialize(struct i2c_client *client)
 	finish_wait(&state->fw_wait, &wait);
 	destroy_workqueue(q);
 
-	cx25840_vbi_setup(client);
+	cx25840_std_setup(client);
 
 	/* (re)set input */
 	set_input(client, state->vid_input, state->aud_input);
@@ -349,10 +348,157 @@ static void cx23885_initialize(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+void cx25840_std_setup(struct i2c_client *client)
+{
+	struct cx25840_state *state = i2c_get_clientdata(client);
+	v4l2_std_id std = state->std;
+	int hblank, hactive, burst, vblank, vactive, sc;
+	int vblank656, src_decimation;
+	int luma_lpf, uv_lpf, comb;
+	u32 pll_int, pll_frac, pll_post;
+
+	/* datasheet startup, step 8d */
+	if (std & ~V4L2_STD_NTSC)
+		cx25840_write(client, 0x49f, 0x11);
+	else
+		cx25840_write(client, 0x49f, 0x14);
+
+	if (std & V4L2_STD_625_50) {
+		hblank = 132;
+		hactive = 720;
+		burst = 93;
+		vblank = 36;
+		vactive = 580;
+		vblank656 = 40;
+		src_decimation = 0x21f;
+		luma_lpf = 2;
+
+		if (std & V4L2_STD_SECAM) {
+			uv_lpf = 0;
+			comb = 0;
+			sc = 0x0a425f;
+		} else if (std == V4L2_STD_PAL_Nc) {
+			uv_lpf = 1;
+			comb = 0x20;
+			sc = 556453;
+		} else {
+			uv_lpf = 1;
+			comb = 0x20;
+			sc = 688739;
+		}
+	} else {
+		hactive = 720;
+		hblank = 122;
+		vactive = 487;
+		luma_lpf = 1;
+		uv_lpf = 1;
+
+		src_decimation = 0x21f;
+		if (std == V4L2_STD_PAL_60) {
+			vblank = 26;
+			vblank656 = 26;
+			burst = 0x5b;
+			luma_lpf = 2;
+			comb = 0x20;
+			sc = 688739;
+		} else if (std == V4L2_STD_PAL_M) {
+			vblank = 20;
+			vblank656 = 24;
+			burst = 0x61;
+			comb = 0x20;
+			sc = 555452;
+		} else {
+			vblank = 26;
+			vblank656 = 26;
+			burst = 0x5b;
+			comb = 0x66;
+			sc = 556063;
+		}
+	}
+
+	/* DEBUG: Displays configured PLL frequency */
+	pll_int = cx25840_read(client, 0x108);
+	pll_frac = cx25840_read4(client, 0x10c) & 0x1ffffff;
+	pll_post = cx25840_read(client, 0x109);
+	v4l_dbg(1, cx25840_debug, client,
+				"PLL regs = int: %u, frac: %u, post: %u\n",
+				pll_int, pll_frac, pll_post);
+
+	if (pll_post) {
+		int fin, fsc;
+		int pll = (28636363L * ((((u64)pll_int) << 25L) + pll_frac)) >> 25L;
+
+		pll /= pll_post;
+		v4l_dbg(1, cx25840_debug, client, "PLL = %d.%06d MHz\n",
+				pll / 1000000, pll % 1000000);
+		v4l_dbg(1, cx25840_debug, client, "PLL/8 = %d.%06d MHz\n",
+				pll / 8000000, (pll / 8) % 1000000);
+
+		fin = ((u64)src_decimation * pll) >> 12;
+		v4l_dbg(1, cx25840_debug, client,
+				"ADC Sampling freq = %d.%06d MHz\n",
+				fin / 1000000, fin % 1000000);
+
+		fsc = (((u64)sc) * pll) >> 24L;
+		v4l_dbg(1, cx25840_debug, client,
+				"Chroma sub-carrier freq = %d.%06d MHz\n",
+				fsc / 1000000, fsc % 1000000);
+
+		v4l_dbg(1, cx25840_debug, client, "hblank %i, hactive %i, "
+			"vblank %i, vactive %i, vblank656 %i, src_dec %i, "
+			"burst 0x%02x, luma_lpf %i, uv_lpf %i, comb 0x%02x, "
+			"sc 0x%06x\n",
+			hblank, hactive, vblank, vactive, vblank656,
+			src_decimation, burst, luma_lpf, uv_lpf, comb, sc);
+	}
+
+	/* Sets horizontal blanking delay and active lines */
+	cx25840_write(client, 0x470, hblank);
+	cx25840_write(client, 0x471,
+			0xff & (((hblank >> 8) & 0x3) | (hactive << 4)));
+	cx25840_write(client, 0x472, hactive >> 4);
+
+	/* Sets burst gate delay */
+	cx25840_write(client, 0x473, burst);
+
+	/* Sets vertical blanking delay and active duration */
+	cx25840_write(client, 0x474, vblank);
+	cx25840_write(client, 0x475,
+			0xff & (((vblank >> 8) & 0x3) | (vactive << 4)));
+	cx25840_write(client, 0x476, vactive >> 4);
+	cx25840_write(client, 0x477, vblank656);
+
+	/* Sets src decimation rate */
+	cx25840_write(client, 0x478, 0xff & src_decimation);
+	cx25840_write(client, 0x479, 0xff & (src_decimation >> 8));
+
+	/* Sets Luma and UV Low pass filters */
+	cx25840_write(client, 0x47a, luma_lpf << 6 | ((uv_lpf << 4) & 0x30));
+
+	/* Enables comb filters */
+	cx25840_write(client, 0x47b, comb);
+
+	/* Sets SC Step*/
+	cx25840_write(client, 0x47c, sc);
+	cx25840_write(client, 0x47d, 0xff & sc >> 8);
+	cx25840_write(client, 0x47e, 0xff & sc >> 16);
+
+	/* Sets VBI parameters */
+	if (std & V4L2_STD_625_50) {
+		cx25840_write(client, 0x47f, 0x01);
+		state->vbi_line_offset = 5;
+	} else {
+		cx25840_write(client, 0x47f, 0x00);
+		state->vbi_line_offset = 8;
+	}
+}
+
+/* ----------------------------------------------------------------------- */
+
 static void input_change(struct i2c_client *client)
 {
 	struct cx25840_state *state = i2c_get_clientdata(client);
-	v4l2_std_id std = cx25840_get_v4lstd(client);
+	v4l2_std_id std = state->std;
 
 	/* Follow step 8c and 8d of section 3.16 in the cx25840 datasheet */
 	if (std & V4L2_STD_SECAM) {
@@ -433,7 +579,7 @@ static int set_input(struct i2c_client *client, enum cx25840_video_input vid_inp
 		int chroma = vid_input & 0xf00;
 
 		if ((vid_input & ~0xff0) ||
-		    luma < CX25840_SVIDEO_LUMA1 || luma > CX25840_SVIDEO_LUMA4 ||
+		    luma < CX25840_SVIDEO_LUMA1 || luma > CX25840_SVIDEO_LUMA8 ||
 		    chroma < CX25840_SVIDEO_CHROMA4 || chroma > CX25840_SVIDEO_CHROMA8) {
 			v4l_err(client, "0x%04x is not a valid video input!\n",
 				vid_input);
@@ -523,32 +669,34 @@ static int set_input(struct i2c_client *client, enum cx25840_video_input vid_inp
 
 /* ----------------------------------------------------------------------- */
 
-static int set_v4lstd(struct i2c_client *client, v4l2_std_id std)
+static int set_v4lstd(struct i2c_client *client)
 {
-	u8 fmt=0; 	/* zero is autodetect */
+	struct cx25840_state *state = i2c_get_clientdata(client);
+	u8 fmt = 0; 	/* zero is autodetect */
+	u8 pal_m = 0;
 
 	/* First tests should be against specific std */
-	if (std == V4L2_STD_NTSC_M_JP) {
-		fmt=0x2;
-	} else if (std == V4L2_STD_NTSC_443) {
-		fmt=0x3;
-	} else if (std == V4L2_STD_PAL_M) {
-		fmt=0x5;
-	} else if (std == V4L2_STD_PAL_N) {
-		fmt=0x6;
-	} else if (std == V4L2_STD_PAL_Nc) {
-		fmt=0x7;
-	} else if (std == V4L2_STD_PAL_60) {
-		fmt=0x8;
+	if (state->std == V4L2_STD_NTSC_M_JP) {
+		fmt = 0x2;
+	} else if (state->std == V4L2_STD_NTSC_443) {
+		fmt = 0x3;
+	} else if (state->std == V4L2_STD_PAL_M) {
+		pal_m = 1;
+		fmt = 0x5;
+	} else if (state->std == V4L2_STD_PAL_N) {
+		fmt = 0x6;
+	} else if (state->std == V4L2_STD_PAL_Nc) {
+		fmt = 0x7;
+	} else if (state->std == V4L2_STD_PAL_60) {
+		fmt = 0x8;
 	} else {
 		/* Then, test against generic ones */
-		if (std & V4L2_STD_NTSC) {
-			fmt=0x1;
-		} else if (std & V4L2_STD_PAL) {
-			fmt=0x4;
-		} else if (std & V4L2_STD_SECAM) {
-			fmt=0xc;
-		}
+		if (state->std & V4L2_STD_NTSC)
+			fmt = 0x1;
+		else if (state->std & V4L2_STD_PAL)
+			fmt = 0x4;
+		else if (state->std & V4L2_STD_SECAM)
+			fmt = 0xc;
 	}
 
 	v4l_dbg(1, cx25840_debug, client, "changing video std to fmt %i\n",fmt);
@@ -563,40 +711,11 @@ static int set_v4lstd(struct i2c_client *client, v4l2_std_id std)
 		cx25840_and_or(client, 0x47b, ~6, 0);
 	}
 	cx25840_and_or(client, 0x400, ~0xf, fmt);
-	cx25840_vbi_setup(client);
+	cx25840_and_or(client, 0x403, ~0x3, pal_m);
+	cx25840_std_setup(client);
+	if (!state->is_cx25836)
+		input_change(client);
 	return 0;
-}
-
-v4l2_std_id cx25840_get_v4lstd(struct i2c_client * client)
-{
-	struct cx25840_state *state = i2c_get_clientdata(client);
-	/* check VID_FMT_SEL first */
-	u8 fmt = cx25840_read(client, 0x400) & 0xf;
-
-	if (!fmt) {
-		/* check AFD_FMT_STAT if set to autodetect */
-		fmt = cx25840_read(client, 0x40d) & 0xf;
-	}
-
-	switch (fmt) {
-	case 0x1:
-	{
-		/* if the audio std is A2-M, then this is the South Korean
-		   NTSC standard */
-		if (!state->is_cx25836 && cx25840_read(client, 0x805) == 2)
-			return V4L2_STD_NTSC_M_KR;
-		return V4L2_STD_NTSC_M;
-	}
-	case 0x2: return V4L2_STD_NTSC_M_JP;
-	case 0x3: return V4L2_STD_NTSC_443;
-	case 0x4: return V4L2_STD_PAL;
-	case 0x5: return V4L2_STD_PAL_M;
-	case 0x6: return V4L2_STD_PAL_N;
-	case 0x7: return V4L2_STD_PAL_Nc;
-	case 0x8: return V4L2_STD_PAL_60;
-	case 0xc: return V4L2_STD_SECAM;
-	default: return V4L2_STD_UNKNOWN;
-	}
 }
 
 /* ----------------------------------------------------------------------- */
@@ -718,9 +837,10 @@ static int get_v4lfmt(struct i2c_client *client, struct v4l2_format *fmt)
 
 static int set_v4lfmt(struct i2c_client *client, struct v4l2_format *fmt)
 {
+	struct cx25840_state *state = i2c_get_clientdata(client);
 	struct v4l2_pix_format *pix;
 	int HSC, VSC, Vsrc, Hsrc, filter, Vlines;
-	int is_50Hz = !(cx25840_get_v4lstd(client) & V4L2_STD_525_60);
+	int is_50Hz = !(state->std & V4L2_STD_525_60);
 
 	switch (fmt->type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
@@ -1084,6 +1204,8 @@ static int cx25840_command(struct i2c_client *client, unsigned int cmd,
 
 		switch (qc->id) {
 			case V4L2_CID_AUDIO_VOLUME:
+				return v4l2_ctrl_query_fill(qc, 0, 65535,
+					65535 / 100, state->default_volume);
 			case V4L2_CID_AUDIO_MUTE:
 			case V4L2_CID_AUDIO_BALANCE:
 			case V4L2_CID_AUDIO_BASS:
@@ -1096,12 +1218,15 @@ static int cx25840_command(struct i2c_client *client, unsigned int cmd,
 	}
 
 	case VIDIOC_G_STD:
-		*(v4l2_std_id *)arg = cx25840_get_v4lstd(client);
+		*(v4l2_std_id *)arg = state->std;
 		break;
 
 	case VIDIOC_S_STD:
+		if (state->radio == 0 && state->std == *(v4l2_std_id *)arg)
+			return 0;
 		state->radio = 0;
-		return set_v4lstd(client, *(v4l2_std_id *)arg);
+		state->std = *(v4l2_std_id *)arg;
+		return set_v4lstd(client);
 
 	case AUDC_SET_RADIO:
 		state->radio = 1;
@@ -1232,7 +1357,8 @@ static int cx25840_command(struct i2c_client *client, unsigned int cmd,
 
 /* ----------------------------------------------------------------------- */
 
-static int cx25840_probe(struct i2c_client *client)
+static int cx25840_probe(struct i2c_client *client,
+			 const struct i2c_device_id *did)
 {
 	struct cx25840_state *state;
 	u32 id;
@@ -1287,9 +1413,17 @@ static int cx25840_probe(struct i2c_client *client)
 	state->pvr150_workaround = 0;
 	state->audmode = V4L2_TUNER_MODE_LANG1;
 	state->unmute_volume = -1;
+	state->default_volume = 228 - cx25840_read(client, 0x8d4);
+	state->default_volume = ((state->default_volume / 2) + 23) << 9;
 	state->vbi_line_offset = 8;
 	state->id = id;
 	state->rev = device_id;
+
+	if (state->is_cx23885) {
+		/* Drive GPIO2 direction and values */
+		cx25840_write(client, 0x160, 0x1d);
+		cx25840_write(client, 0x164, 0x00);
+	}
 
 	return 0;
 }
@@ -1300,10 +1434,17 @@ static int cx25840_remove(struct i2c_client *client)
 	return 0;
 }
 
+static const struct i2c_device_id cx25840_id[] = {
+	{ "cx25840", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, cx25840_id);
+
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "cx25840",
 	.driverid = I2C_DRIVERID_CX25840,
 	.command = cx25840_command,
 	.probe = cx25840_probe,
 	.remove = cx25840_remove,
+	.id_table = cx25840_id,
 };

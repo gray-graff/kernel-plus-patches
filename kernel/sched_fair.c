@@ -62,16 +62,6 @@ const_debug unsigned int sysctl_sched_child_runs_first = 1;
 unsigned int __read_mostly sysctl_sched_compat_yield;
 
 /*
- * SCHED_BATCH wake-up granularity.
- * (default: 10 msec * (1 + ilog(ncpus)), units: nanoseconds)
- *
- * This option delays the preemption effects of decoupled workloads
- * and reduces their over-scheduling. Synchronous workloads will still
- * have immediate wakeup/sleep latencies.
- */
-unsigned int sysctl_sched_batch_wakeup_granularity = 10000000UL;
-
-/*
  * SCHED_OTHER wake-up granularity.
  * (default: 5 msec * (1 + ilog(ncpus)), units: nanoseconds)
  *
@@ -87,6 +77,11 @@ const_debug unsigned int sysctl_sched_migration_cost = 500000UL;
  * CFS operations on generic schedulable entities:
  */
 
+static inline struct task_struct *task_of(struct sched_entity *se)
+{
+	return container_of(se, struct task_struct, se);
+}
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 
 /* cpu runqueue to which this cfs_rq is attached */
@@ -98,6 +93,54 @@ static inline struct rq *rq_of(struct cfs_rq *cfs_rq)
 /* An entity is a task if it doesn't "own" a runqueue */
 #define entity_is_task(se)	(!se->my_q)
 
+/* Walk up scheduling entities hierarchy */
+#define for_each_sched_entity(se) \
+		for (; se; se = se->parent)
+
+static inline struct cfs_rq *task_cfs_rq(struct task_struct *p)
+{
+	return p->se.cfs_rq;
+}
+
+/* runqueue on which this entity is (to be) queued */
+static inline struct cfs_rq *cfs_rq_of(struct sched_entity *se)
+{
+	return se->cfs_rq;
+}
+
+/* runqueue "owned" by this group */
+static inline struct cfs_rq *group_cfs_rq(struct sched_entity *grp)
+{
+	return grp->my_q;
+}
+
+/* Given a group's cfs_rq on one cpu, return its corresponding cfs_rq on
+ * another cpu ('this_cpu')
+ */
+static inline struct cfs_rq *cpu_cfs_rq(struct cfs_rq *cfs_rq, int this_cpu)
+{
+	return cfs_rq->tg->cfs_rq[this_cpu];
+}
+
+/* Iterate thr' all leaf cfs_rq's on a runqueue */
+#define for_each_leaf_cfs_rq(rq, cfs_rq) \
+	list_for_each_entry_rcu(cfs_rq, &rq->leaf_cfs_rq_list, leaf_cfs_rq_list)
+
+/* Do the two (enqueued) entities belong to the same group ? */
+static inline int
+is_same_group(struct sched_entity *se, struct sched_entity *pse)
+{
+	if (se->cfs_rq == pse->cfs_rq)
+		return 1;
+
+	return 0;
+}
+
+static inline struct sched_entity *parent_entity(struct sched_entity *se)
+{
+	return se->parent;
+}
+
 #else	/* CONFIG_FAIR_GROUP_SCHED */
 
 static inline struct rq *rq_of(struct cfs_rq *cfs_rq)
@@ -107,12 +150,48 @@ static inline struct rq *rq_of(struct cfs_rq *cfs_rq)
 
 #define entity_is_task(se)	1
 
-#endif	/* CONFIG_FAIR_GROUP_SCHED */
+#define for_each_sched_entity(se) \
+		for (; se; se = NULL)
 
-static inline struct task_struct *task_of(struct sched_entity *se)
+static inline struct cfs_rq *task_cfs_rq(struct task_struct *p)
 {
-	return container_of(se, struct task_struct, se);
+	return &task_rq(p)->cfs;
 }
+
+static inline struct cfs_rq *cfs_rq_of(struct sched_entity *se)
+{
+	struct task_struct *p = task_of(se);
+	struct rq *rq = task_rq(p);
+
+	return &rq->cfs;
+}
+
+/* runqueue "owned" by this group */
+static inline struct cfs_rq *group_cfs_rq(struct sched_entity *grp)
+{
+	return NULL;
+}
+
+static inline struct cfs_rq *cpu_cfs_rq(struct cfs_rq *cfs_rq, int this_cpu)
+{
+	return &cpu_rq(this_cpu)->cfs;
+}
+
+#define for_each_leaf_cfs_rq(rq, cfs_rq) \
+		for (cfs_rq = &rq->cfs; cfs_rq; cfs_rq = NULL)
+
+static inline int
+is_same_group(struct sched_entity *se, struct sched_entity *pse)
+{
+	return 1;
+}
+
+static inline struct sched_entity *parent_entity(struct sched_entity *se)
+{
+	return NULL;
+}
+
+#endif	/* CONFIG_FAIR_GROUP_SCHED */
 
 
 /**************************************************************
@@ -255,6 +334,34 @@ int sched_nr_latency_handler(struct ctl_table *table, int write,
 #endif
 
 /*
+ * delta *= w / rw
+ */
+static inline unsigned long
+calc_delta_weight(unsigned long delta, struct sched_entity *se)
+{
+	for_each_sched_entity(se) {
+		delta = calc_delta_mine(delta,
+				se->load.weight, &cfs_rq_of(se)->load);
+	}
+
+	return delta;
+}
+
+/*
+ * delta *= rw / w
+ */
+static inline unsigned long
+calc_delta_fair(unsigned long delta, struct sched_entity *se)
+{
+	for_each_sched_entity(se) {
+		delta = calc_delta_mine(delta,
+				cfs_rq_of(se)->load.weight, &se->load);
+	}
+
+	return delta;
+}
+
+/*
  * The idea is to set a period in which each task runs once.
  *
  * When there are too many tasks (sysctl_sched_nr_latency) we have to stretch
@@ -283,29 +390,80 @@ static u64 __sched_period(unsigned long nr_running)
  */
 static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	return calc_delta_mine(__sched_period(cfs_rq->nr_running),
-			       se->load.weight, &cfs_rq->load);
+	return calc_delta_weight(__sched_period(cfs_rq->nr_running), se);
 }
 
 /*
- * We calculate the vruntime slice.
+ * We calculate the vruntime slice of a to be inserted task
  *
- * vs = s/w = p/rw
+ * vs = s*rw/w = p
  */
-static u64 __sched_vslice(unsigned long rq_weight, unsigned long nr_running)
-{
-	u64 vslice = __sched_period(nr_running);
-
-	vslice *= NICE_0_LOAD;
-	do_div(vslice, rq_weight);
-
-	return vslice;
-}
-
 static u64 sched_vslice_add(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	return __sched_vslice(cfs_rq->load.weight + se->load.weight,
-			cfs_rq->nr_running + 1);
+	unsigned long nr_running = cfs_rq->nr_running;
+
+	if (!se->on_rq)
+		nr_running++;
+
+	return __sched_period(nr_running);
+}
+
+/*
+ * The goal of calc_delta_asym() is to be asymmetrically around NICE_0_LOAD, in
+ * that it favours >=0 over <0.
+ *
+ *   -20         |
+ *               |
+ *     0 --------+-------
+ *             .'
+ *    19     .'
+ *
+ */
+static unsigned long
+calc_delta_asym(unsigned long delta, struct sched_entity *se)
+{
+	struct load_weight lw = {
+		.weight = NICE_0_LOAD,
+		.inv_weight = 1UL << (WMULT_SHIFT-NICE_0_SHIFT)
+	};
+
+	for_each_sched_entity(se) {
+		struct load_weight *se_lw = &se->load;
+		unsigned long rw = cfs_rq_of(se)->load.weight;
+
+#ifdef CONFIG_FAIR_SCHED_GROUP
+		struct cfs_rq *cfs_rq = se->my_q;
+		struct task_group *tg = NULL
+
+		if (cfs_rq)
+			tg = cfs_rq->tg;
+
+		if (tg && tg->shares < NICE_0_LOAD) {
+			/*
+			 * scale shares to what it would have been had
+			 * tg->weight been NICE_0_LOAD:
+			 *
+			 *   weight = 1024 * shares / tg->weight
+			 */
+			lw.weight *= se->load.weight;
+			lw.weight /= tg->shares;
+
+			lw.inv_weight = 0;
+
+			se_lw = &lw;
+			rw += lw.weight - se->load.weight;
+		} else
+#endif
+
+		if (se->load.weight < NICE_0_LOAD) {
+			se_lw = &lw;
+			rw += NICE_0_LOAD - se->load.weight;
+		}
+
+		delta = calc_delta_mine(delta, rw, se_lw);
+	}
+
+	return delta;
 }
 
 /*
@@ -322,11 +480,7 @@ __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 
 	curr->sum_exec_runtime += delta_exec;
 	schedstat_add(cfs_rq, exec_clock, delta_exec);
-	delta_exec_weighted = delta_exec;
-	if (unlikely(curr->load.weight != NICE_0_LOAD)) {
-		delta_exec_weighted = calc_delta_fair(delta_exec_weighted,
-							&curr->load);
-	}
+	delta_exec_weighted = calc_delta_fair(delta_exec, curr);
 	curr->vruntime += delta_exec_weighted;
 }
 
@@ -413,20 +567,43 @@ update_stats_curr_start(struct cfs_rq *cfs_rq, struct sched_entity *se)
  * Scheduling class queueing methods:
  */
 
+#if defined CONFIG_SMP && defined CONFIG_FAIR_GROUP_SCHED
+static void
+add_cfs_task_weight(struct cfs_rq *cfs_rq, unsigned long weight)
+{
+	cfs_rq->task_weight += weight;
+}
+#else
+static inline void
+add_cfs_task_weight(struct cfs_rq *cfs_rq, unsigned long weight)
+{
+}
+#endif
+
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	update_load_add(&cfs_rq->load, se->load.weight);
+	if (!parent_entity(se))
+		inc_cpu_load(rq_of(cfs_rq), se->load.weight);
+	if (entity_is_task(se))
+		add_cfs_task_weight(cfs_rq, se->load.weight);
 	cfs_rq->nr_running++;
 	se->on_rq = 1;
+	list_add(&se->group_node, &cfs_rq->tasks);
 }
 
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	update_load_sub(&cfs_rq->load, se->load.weight);
+	if (!parent_entity(se))
+		dec_cpu_load(rq_of(cfs_rq), se->load.weight);
+	if (entity_is_task(se))
+		add_cfs_task_weight(cfs_rq, -se->load.weight);
 	cfs_rq->nr_running--;
 	se->on_rq = 0;
+	list_del_init(&se->group_node);
 }
 
 static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -510,8 +687,17 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 
 	if (!initial) {
 		/* sleeps upto a single latency don't count. */
-		if (sched_feat(NEW_FAIR_SLEEPERS))
-			vruntime -= sysctl_sched_latency;
+		if (sched_feat(NEW_FAIR_SLEEPERS)) {
+			unsigned long thresh = sysctl_sched_latency;
+
+			/*
+			 * convert the sleeper threshold into virtual time
+			 */
+			if (sched_feat(NORMALIZED_SLEEPER))
+				thresh = calc_delta_fair(thresh, se);
+
+			vruntime -= thresh;
+		}
 
 		/* ensure we never gain time by being placed backwards. */
 		vruntime = max_vruntime(se->vruntime, vruntime);
@@ -527,6 +713,7 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int wakeup)
 	 * Update run-time statistics of the 'current'.
 	 */
 	update_curr(cfs_rq);
+	account_entity_enqueue(cfs_rq, se);
 
 	if (wakeup) {
 		place_entity(cfs_rq, se, 0);
@@ -537,22 +724,6 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int wakeup)
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
 		__enqueue_entity(cfs_rq, se);
-	account_entity_enqueue(cfs_rq, se);
-}
-
-static void update_avg(u64 *avg, u64 sample)
-{
-	s64 diff = sample - *avg;
-	*avg += diff >> 3;
-}
-
-static void update_avg_stats(struct cfs_rq *cfs_rq, struct sched_entity *se)
-{
-	if (!se->last_wakeup)
-		return;
-
-	update_avg(&se->avg_overlap, se->sum_exec_runtime - se->last_wakeup);
-	se->last_wakeup = 0;
 }
 
 static void
@@ -565,7 +736,6 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int sleep)
 
 	update_stats_dequeue(cfs_rq, se);
 	if (sleep) {
-		update_avg_stats(cfs_rq, se);
 #ifdef CONFIG_SCHEDSTATS
 		if (entity_is_task(se)) {
 			struct task_struct *tsk = task_of(se);
@@ -630,18 +800,13 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 static struct sched_entity *
 pick_next(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	s64 diff, gran;
+	struct rq *rq = rq_of(cfs_rq);
+	u64 pair_slice = rq->clock - cfs_rq->pair_start;
 
-	if (!cfs_rq->next)
+	if (!cfs_rq->next || pair_slice > sched_slice(cfs_rq, cfs_rq->next)) {
+		cfs_rq->pair_start = rq->clock;
 		return se;
-
-	diff = cfs_rq->next->vruntime - se->vruntime;
-	if (diff < 0)
-		return se;
-
-	gran = calc_delta_fair(sysctl_sched_wakeup_granularity, &cfs_rq->load);
-	if (diff > gran)
-		return se;
+	}
 
 	return cfs_rq->next;
 }
@@ -690,8 +855,10 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 * queued ticks are scheduled to match the slice, so don't bother
 	 * validating it and just reschedule.
 	 */
-	if (queued)
-		return resched_task(rq_of(cfs_rq)->curr);
+	if (queued) {
+		resched_task(rq_of(cfs_rq)->curr);
+		return;
+	}
 	/*
 	 * don't let the period tick interfere with the hrtick preemption
 	 */
@@ -708,105 +875,9 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
  * CFS operations on tasks:
  */
 
-#ifdef CONFIG_FAIR_GROUP_SCHED
-
-/* Walk up scheduling entities hierarchy */
-#define for_each_sched_entity(se) \
-		for (; se; se = se->parent)
-
-static inline struct cfs_rq *task_cfs_rq(struct task_struct *p)
-{
-	return p->se.cfs_rq;
-}
-
-/* runqueue on which this entity is (to be) queued */
-static inline struct cfs_rq *cfs_rq_of(struct sched_entity *se)
-{
-	return se->cfs_rq;
-}
-
-/* runqueue "owned" by this group */
-static inline struct cfs_rq *group_cfs_rq(struct sched_entity *grp)
-{
-	return grp->my_q;
-}
-
-/* Given a group's cfs_rq on one cpu, return its corresponding cfs_rq on
- * another cpu ('this_cpu')
- */
-static inline struct cfs_rq *cpu_cfs_rq(struct cfs_rq *cfs_rq, int this_cpu)
-{
-	return cfs_rq->tg->cfs_rq[this_cpu];
-}
-
-/* Iterate thr' all leaf cfs_rq's on a runqueue */
-#define for_each_leaf_cfs_rq(rq, cfs_rq) \
-	list_for_each_entry_rcu(cfs_rq, &rq->leaf_cfs_rq_list, leaf_cfs_rq_list)
-
-/* Do the two (enqueued) entities belong to the same group ? */
-static inline int
-is_same_group(struct sched_entity *se, struct sched_entity *pse)
-{
-	if (se->cfs_rq == pse->cfs_rq)
-		return 1;
-
-	return 0;
-}
-
-static inline struct sched_entity *parent_entity(struct sched_entity *se)
-{
-	return se->parent;
-}
-
-#else	/* CONFIG_FAIR_GROUP_SCHED */
-
-#define for_each_sched_entity(se) \
-		for (; se; se = NULL)
-
-static inline struct cfs_rq *task_cfs_rq(struct task_struct *p)
-{
-	return &task_rq(p)->cfs;
-}
-
-static inline struct cfs_rq *cfs_rq_of(struct sched_entity *se)
-{
-	struct task_struct *p = task_of(se);
-	struct rq *rq = task_rq(p);
-
-	return &rq->cfs;
-}
-
-/* runqueue "owned" by this group */
-static inline struct cfs_rq *group_cfs_rq(struct sched_entity *grp)
-{
-	return NULL;
-}
-
-static inline struct cfs_rq *cpu_cfs_rq(struct cfs_rq *cfs_rq, int this_cpu)
-{
-	return &cpu_rq(this_cpu)->cfs;
-}
-
-#define for_each_leaf_cfs_rq(rq, cfs_rq) \
-		for (cfs_rq = &rq->cfs; cfs_rq; cfs_rq = NULL)
-
-static inline int
-is_same_group(struct sched_entity *se, struct sched_entity *pse)
-{
-	return 1;
-}
-
-static inline struct sched_entity *parent_entity(struct sched_entity *se)
-{
-	return NULL;
-}
-
-#endif	/* CONFIG_FAIR_GROUP_SCHED */
-
 #ifdef CONFIG_SCHED_HRTICK
 static void hrtick_start_fair(struct rq *rq, struct task_struct *p)
 {
-	int requeue = rq->curr == p;
 	struct sched_entity *se = &p->se;
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
 
@@ -827,13 +898,13 @@ static void hrtick_start_fair(struct rq *rq, struct task_struct *p)
 		 * Don't schedule slices shorter than 10000ns, that just
 		 * doesn't make sense. Rely on vruntime for fairness.
 		 */
-		if (!requeue)
-			delta = max(10000LL, delta);
+		if (rq->curr != p)
+			delta = max_t(s64, 10000LL, delta);
 
-		hrtick_start(rq, delta, requeue);
+		hrtick_start(rq, delta);
 	}
 }
-#else
+#else /* !CONFIG_SCHED_HRTICK */
 static inline void
 hrtick_start_fair(struct rq *rq, struct task_struct *p)
 {
@@ -901,7 +972,7 @@ static void yield_task_fair(struct rq *rq)
 		return;
 
 	if (likely(!sysctl_sched_compat_yield) && curr->policy != SCHED_BATCH) {
-		__update_rq_clock(rq);
+		update_rq_clock(rq);
 		/*
 		 * Update run-time statistics of the 'current'.
 		 */
@@ -916,7 +987,7 @@ static void yield_task_fair(struct rq *rq)
 	/*
 	 * Already in the rightmost position?
 	 */
-	if (unlikely(rightmost->vruntime < se->vruntime))
+	if (unlikely(!rightmost || rightmost->vruntime < se->vruntime))
 		return;
 
 	/*
@@ -932,6 +1003,8 @@ static void yield_task_fair(struct rq *rq)
  * not idle and an idle cpu is available.  The span of cpus to
  * search starts with cpus closest then further out as needed,
  * so we always favor a closer, idle cpu.
+ * Domains may include CPUs that are not usable for migration,
+ * hence we need to mask them out (cpu_active_map)
  *
  * Returns the CPU we should wake onto.
  */
@@ -951,13 +1024,16 @@ static int wake_idle(int cpu, struct task_struct *p)
 	 * sibling runqueue info. This will avoid the checks and cache miss
 	 * penalities associated with that.
 	 */
-	if (idle_cpu(cpu) || cpu_rq(cpu)->nr_running > 1)
+	if (idle_cpu(cpu) || cpu_rq(cpu)->cfs.nr_running > 1)
 		return cpu;
 
 	for_each_domain(cpu, sd) {
-		if (sd->flags & SD_WAKE_IDLE) {
+		if ((sd->flags & SD_WAKE_IDLE)
+		    || ((sd->flags & SD_WAKE_IDLE_FAR)
+			&& !task_hot(p, task_rq(p)->clock, sd))) {
 			cpus_and(tmp, sd->span, p->cpus_allowed);
-			for_each_cpu_mask(i, tmp) {
+			cpus_and(tmp, tmp, cpu_active_map);
+			for_each_cpu_mask_nr(i, tmp) {
 				if (idle_cpu(i)) {
 					if (i != task_cpu(p)) {
 						schedstat_inc(p,
@@ -972,7 +1048,7 @@ static int wake_idle(int cpu, struct task_struct *p)
 	}
 	return cpu;
 }
-#else
+#else /* !ARCH_HAS_SCHED_WAKE_IDLE*/
 static inline int wake_idle(int cpu, struct task_struct *p)
 {
 	return cpu;
@@ -983,6 +1059,89 @@ static inline int wake_idle(int cpu, struct task_struct *p)
 
 static const struct sched_class fair_sched_class;
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+/*
+ * effective_load() calculates the load change as seen from the root_task_group
+ *
+ * Adding load to a group doesn't make a group heavier, but can cause movement
+ * of group shares between cpus. Assuming the shares were perfectly aligned one
+ * can calculate the shift in shares.
+ *
+ * The problem is that perfectly aligning the shares is rather expensive, hence
+ * we try to avoid doing that too often - see update_shares(), which ratelimits
+ * this change.
+ *
+ * We compensate this by not only taking the current delta into account, but
+ * also considering the delta between when the shares were last adjusted and
+ * now.
+ *
+ * We still saw a performance dip, some tracing learned us that between
+ * cgroup:/ and cgroup:/foo balancing the number of affine wakeups increased
+ * significantly. Therefore try to bias the error in direction of failing
+ * the affine wakeup.
+ *
+ */
+static long effective_load(struct task_group *tg, int cpu,
+		long wl, long wg)
+{
+	struct sched_entity *se = tg->se[cpu];
+	long more_w;
+
+	if (!tg->parent)
+		return wl;
+
+	/*
+	 * By not taking the decrease of shares on the other cpu into
+	 * account our error leans towards reducing the affine wakeups.
+	 */
+	if (!wl && sched_feat(ASYM_EFF_LOAD))
+		return wl;
+
+	/*
+	 * Instead of using this increment, also add the difference
+	 * between when the shares were last updated and now.
+	 */
+	more_w = se->my_q->load.weight - se->my_q->rq_weight;
+	wl += more_w;
+	wg += more_w;
+
+	for_each_sched_entity(se) {
+#define D(n) (likely(n) ? (n) : 1)
+
+		long S, rw, s, a, b;
+
+		S = se->my_q->tg->shares;
+		s = se->my_q->shares;
+		rw = se->my_q->rq_weight;
+
+		a = S*(rw + wl);
+		b = S*rw + s*wg;
+
+		wl = s*(a-b)/D(b);
+		/*
+		 * Assume the group is already running and will
+		 * thus already be accounted for in the weight.
+		 *
+		 * That is, moving shares between CPUs, does not
+		 * alter the group weight.
+		 */
+		wg = 0;
+#undef D
+	}
+
+	return wl;
+}
+
+#else
+
+static inline unsigned long effective_load(struct task_group *tg, int cpu,
+		unsigned long wl, unsigned long wg)
+{
+	return wl;
+}
+
+#endif
+
 static int
 wake_affine(struct rq *rq, struct sched_domain *this_sd, struct rq *this_rq,
 	    struct task_struct *p, int prev_cpu, int this_cpu, int sync,
@@ -990,36 +1149,50 @@ wake_affine(struct rq *rq, struct sched_domain *this_sd, struct rq *this_rq,
 	    unsigned int imbalance)
 {
 	struct task_struct *curr = this_rq->curr;
+	struct task_group *tg;
 	unsigned long tl = this_load;
 	unsigned long tl_per_task;
+	unsigned long weight;
+	int balanced;
 
-	if (!(this_sd->flags & SD_WAKE_AFFINE))
+	if (!(this_sd->flags & SD_WAKE_AFFINE) || !sched_feat(AFFINE_WAKEUPS))
 		return 0;
-
-	/*
-	 * If the currently running task will sleep within
-	 * a reasonable amount of time then attract this newly
-	 * woken task:
-	 */
-	if (sync && curr->sched_class == &fair_sched_class) {
-		if (curr->se.avg_overlap < sysctl_sched_migration_cost &&
-				p->se.avg_overlap < sysctl_sched_migration_cost)
-			return 1;
-	}
-
-	schedstat_inc(p, se.nr_wakeups_affine_attempts);
-	tl_per_task = cpu_avg_load_per_task(this_cpu);
 
 	/*
 	 * If sync wakeup then subtract the (maximum possible)
 	 * effect of the currently running task from the load
 	 * of the current CPU:
 	 */
-	if (sync)
-		tl -= current->se.load.weight;
+	if (sync) {
+		tg = task_group(current);
+		weight = current->se.load.weight;
+
+		tl += effective_load(tg, this_cpu, -weight, -weight);
+		load += effective_load(tg, prev_cpu, 0, -weight);
+	}
+
+	tg = task_group(p);
+	weight = p->se.load.weight;
+
+	balanced = 100*(tl + effective_load(tg, this_cpu, weight, weight)) <=
+		imbalance*(load + effective_load(tg, prev_cpu, 0, weight));
+
+	/*
+	 * If the currently running task will sleep within
+	 * a reasonable amount of time then attract this newly
+	 * woken task:
+	 */
+	if (sync && balanced) {
+		if (curr->se.avg_overlap < sysctl_sched_migration_cost &&
+		    p->se.avg_overlap < sysctl_sched_migration_cost)
+			return 1;
+	}
+
+	schedstat_inc(p, se.nr_wakeups_affine_attempts);
+	tl_per_task = cpu_avg_load_per_task(this_cpu);
 
 	if ((tl <= load && tl + target_load(prev_cpu, idx) <= tl_per_task) ||
-			100*(tl + p->se.load.weight) <= imbalance*load) {
+			balanced) {
 		/*
 		 * This domain has SD_WAKE_AFFINE and
 		 * p is cache cold in this domain, and
@@ -1099,6 +1272,61 @@ out:
 }
 #endif /* CONFIG_SMP */
 
+static unsigned long wakeup_gran(struct sched_entity *se)
+{
+	unsigned long gran = sysctl_sched_wakeup_granularity;
+
+	/*
+	 * More easily preempt - nice tasks, while not making it harder for
+	 * + nice tasks.
+	 */
+	if (sched_feat(ASYM_GRAN))
+		gran = calc_delta_asym(sysctl_sched_wakeup_granularity, se);
+	else
+		gran = calc_delta_fair(sysctl_sched_wakeup_granularity, se);
+
+	return gran;
+}
+
+/*
+ * Should 'se' preempt 'curr'.
+ *
+ *             |s1
+ *        |s2
+ *   |s3
+ *         g
+ *      |<--->|c
+ *
+ *  w(c, s1) = -1
+ *  w(c, s2) =  0
+ *  w(c, s3) =  1
+ *
+ */
+static int
+wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
+{
+	s64 gran, vdiff = curr->vruntime - se->vruntime;
+
+	if (vdiff < 0)
+		return -1;
+
+	gran = wakeup_gran(curr);
+	if (vdiff > gran)
+		return 1;
+
+	return 0;
+}
+
+/* return depth at which a sched entity is present in the hierarchy */
+static inline int depth_se(struct sched_entity *se)
+{
+	int depth = 0;
+
+	for_each_sched_entity(se)
+		depth++;
+
+	return depth;
+}
 
 /*
  * Preempt the current task with a newly woken task if needed:
@@ -1108,7 +1336,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p)
 	struct task_struct *curr = rq->curr;
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
 	struct sched_entity *se = &curr->se, *pse = &p->se;
-	unsigned long gran;
+	int se_depth, pse_depth;
 
 	if (unlikely(rt_prio(p->prio))) {
 		update_rq_clock(rq);
@@ -1117,7 +1345,6 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p)
 		return;
 	}
 
-	se->last_wakeup = se->sum_exec_runtime;
 	if (unlikely(se == pse))
 		return;
 
@@ -1133,20 +1360,33 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p)
 	if (!sched_feat(WAKEUP_PREEMPT))
 		return;
 
+	/*
+	 * preemption test can be made between sibling entities who are in the
+	 * same cfs_rq i.e who have a common parent. Walk up the hierarchy of
+	 * both tasks until we find their ancestors who are siblings of common
+	 * parent.
+	 */
+
+	/* First walk up until both entities are at same depth */
+	se_depth = depth_se(se);
+	pse_depth = depth_se(pse);
+
+	while (se_depth > pse_depth) {
+		se_depth--;
+		se = parent_entity(se);
+	}
+
+	while (pse_depth > se_depth) {
+		pse_depth--;
+		pse = parent_entity(pse);
+	}
+
 	while (!is_same_group(se, pse)) {
 		se = parent_entity(se);
 		pse = parent_entity(pse);
 	}
 
-	gran = sysctl_sched_wakeup_granularity;
-	/*
-	 * More easily preempt - nice tasks, while not making
-	 * it harder for + nice tasks.
-	 */
-	if (unlikely(se->load.weight > NICE_0_LOAD))
-		gran = calc_delta_fair(gran, &se->load);
-
-	if (pse->vruntime + gran < se->vruntime)
+	if (wakeup_preempt_entity(se, pse) == 1)
 		resched_task(curr);
 }
 
@@ -1197,15 +1437,27 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev)
  * the current task:
  */
 static struct task_struct *
-__load_balance_iterator(struct cfs_rq *cfs_rq, struct rb_node *curr)
+__load_balance_iterator(struct cfs_rq *cfs_rq, struct list_head *next)
 {
-	struct task_struct *p;
+	struct task_struct *p = NULL;
+	struct sched_entity *se;
 
-	if (!curr)
+	if (next == &cfs_rq->tasks)
 		return NULL;
 
-	p = rb_entry(curr, struct task_struct, se.run_node);
-	cfs_rq->rb_load_balance_curr = rb_next(curr);
+	/* Skip over entities that are not tasks */
+	do {
+		se = list_entry(next, struct sched_entity, group_node);
+		next = next->next;
+	} while (next != &cfs_rq->tasks && !entity_is_task(se));
+
+	if (next == &cfs_rq->tasks)
+		return NULL;
+
+	cfs_rq->balance_iterator = next;
+
+	if (entity_is_task(se))
+		p = task_of(se);
 
 	return p;
 }
@@ -1214,85 +1466,92 @@ static struct task_struct *load_balance_start_fair(void *arg)
 {
 	struct cfs_rq *cfs_rq = arg;
 
-	return __load_balance_iterator(cfs_rq, first_fair(cfs_rq));
+	return __load_balance_iterator(cfs_rq, cfs_rq->tasks.next);
 }
 
 static struct task_struct *load_balance_next_fair(void *arg)
 {
 	struct cfs_rq *cfs_rq = arg;
 
-	return __load_balance_iterator(cfs_rq, cfs_rq->rb_load_balance_curr);
+	return __load_balance_iterator(cfs_rq, cfs_rq->balance_iterator);
+}
+
+static unsigned long
+__load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
+		unsigned long max_load_move, struct sched_domain *sd,
+		enum cpu_idle_type idle, int *all_pinned, int *this_best_prio,
+		struct cfs_rq *cfs_rq)
+{
+	struct rq_iterator cfs_rq_iterator;
+
+	cfs_rq_iterator.start = load_balance_start_fair;
+	cfs_rq_iterator.next = load_balance_next_fair;
+	cfs_rq_iterator.arg = cfs_rq;
+
+	return balance_tasks(this_rq, this_cpu, busiest,
+			max_load_move, sd, idle, all_pinned,
+			this_best_prio, &cfs_rq_iterator);
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-static int cfs_rq_best_prio(struct cfs_rq *cfs_rq)
-{
-	struct sched_entity *curr;
-	struct task_struct *p;
-
-	if (!cfs_rq->nr_running || !first_fair(cfs_rq))
-		return MAX_PRIO;
-
-	curr = cfs_rq->curr;
-	if (!curr)
-		curr = __pick_next_entity(cfs_rq);
-
-	p = task_of(curr);
-
-	return p->prio;
-}
-#endif
-
 static unsigned long
 load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		  unsigned long max_load_move,
 		  struct sched_domain *sd, enum cpu_idle_type idle,
 		  int *all_pinned, int *this_best_prio)
 {
-	struct cfs_rq *busy_cfs_rq;
 	long rem_load_move = max_load_move;
-	struct rq_iterator cfs_rq_iterator;
+	int busiest_cpu = cpu_of(busiest);
+	struct task_group *tg;
 
-	cfs_rq_iterator.start = load_balance_start_fair;
-	cfs_rq_iterator.next = load_balance_next_fair;
+	rcu_read_lock();
+	update_h_load(busiest_cpu);
 
-	for_each_leaf_cfs_rq(busiest, busy_cfs_rq) {
-#ifdef CONFIG_FAIR_GROUP_SCHED
-		struct cfs_rq *this_cfs_rq;
-		long imbalance;
-		unsigned long maxload;
+	list_for_each_entry(tg, &task_groups, list) {
+		struct cfs_rq *busiest_cfs_rq = tg->cfs_rq[busiest_cpu];
+		unsigned long busiest_h_load = busiest_cfs_rq->h_load;
+		unsigned long busiest_weight = busiest_cfs_rq->load.weight;
+		u64 rem_load, moved_load;
 
-		this_cfs_rq = cpu_cfs_rq(busy_cfs_rq, this_cpu);
-
-		imbalance = busy_cfs_rq->load.weight - this_cfs_rq->load.weight;
-		/* Don't pull if this_cfs_rq has more load than busy_cfs_rq */
-		if (imbalance <= 0)
+		/*
+		 * empty group
+		 */
+		if (!busiest_cfs_rq->task_weight)
 			continue;
 
-		/* Don't pull more than imbalance/2 */
-		imbalance /= 2;
-		maxload = min(rem_load_move, imbalance);
+		rem_load = (u64)rem_load_move * busiest_weight;
+		rem_load = div_u64(rem_load, busiest_h_load + 1);
 
-		*this_best_prio = cfs_rq_best_prio(this_cfs_rq);
-#else
-# define maxload rem_load_move
-#endif
-		/*
-		 * pass busy_cfs_rq argument into
-		 * load_balance_[start|next]_fair iterators
-		 */
-		cfs_rq_iterator.arg = busy_cfs_rq;
-		rem_load_move -= balance_tasks(this_rq, this_cpu, busiest,
-					       maxload, sd, idle, all_pinned,
-					       this_best_prio,
-					       &cfs_rq_iterator);
+		moved_load = __load_balance_fair(this_rq, this_cpu, busiest,
+				rem_load, sd, idle, all_pinned, this_best_prio,
+				tg->cfs_rq[busiest_cpu]);
 
-		if (rem_load_move <= 0)
+		if (!moved_load)
+			continue;
+
+		moved_load *= busiest_h_load;
+		moved_load = div_u64(moved_load, busiest_weight + 1);
+
+		rem_load_move -= moved_load;
+		if (rem_load_move < 0)
 			break;
 	}
+	rcu_read_unlock();
 
 	return max_load_move - rem_load_move;
 }
+#else
+static unsigned long
+load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
+		  unsigned long max_load_move,
+		  struct sched_domain *sd, enum cpu_idle_type idle,
+		  int *all_pinned, int *this_best_prio)
+{
+	return __load_balance_fair(this_rq, this_cpu, busiest,
+			max_load_move, sd, idle, all_pinned,
+			this_best_prio, &busiest->cfs);
+}
+#endif
 
 static int
 move_one_task_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
@@ -1317,7 +1576,7 @@ move_one_task_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 
 	return 0;
 }
-#endif
+#endif /* CONFIG_SMP */
 
 /*
  * scheduler tick hitting a task of our scheduling class:
@@ -1465,9 +1724,6 @@ static void print_cfs_stats(struct seq_file *m, int cpu)
 {
 	struct cfs_rq *cfs_rq;
 
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	print_cfs_rq(m, cpu, &cpu_rq(cpu)->cfs);
-#endif
 	rcu_read_lock();
 	for_each_leaf_cfs_rq(cpu_rq(cpu), cfs_rq)
 		print_cfs_rq(m, cpu, cfs_rq);

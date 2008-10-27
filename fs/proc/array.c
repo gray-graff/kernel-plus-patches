@@ -73,12 +73,14 @@
 #include <linux/signal.h>
 #include <linux/highmem.h>
 #include <linux/file.h>
+#include <linux/fdtable.h>
 #include <linux/times.h>
 #include <linux/cpuset.h>
 #include <linux/rcupdate.h>
 #include <linux/delayacct.h>
 #include <linux/seq_file.h>
 #include <linux/pid_namespace.h>
+#include <linux/tracehook.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>
@@ -167,8 +169,12 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	rcu_read_lock();
 	ppid = pid_alive(p) ?
 		task_tgid_nr_ns(rcu_dereference(p->real_parent), ns) : 0;
-	tpid = pid_alive(p) && p->ptrace ?
-		task_pid_nr_ns(rcu_dereference(p->parent), ns) : 0;
+	tpid = 0;
+	if (pid_alive(p)) {
+		struct task_struct *tracer = tracehook_tracer_task(p);
+		if (tracer)
+			tpid = task_pid_nr_ns(tracer, ns);
+	}
 	seq_printf(m,
 		"State:\t%s\n"
 		"Tgid:\t%d\n"
@@ -287,7 +293,7 @@ static void render_cap_t(struct seq_file *m, const char *header,
 	seq_printf(m, "%s", header);
 	CAP_FOR_EACH_U32(__capi) {
 		seq_printf(m, "%08x",
-			   a->cap[(_LINUX_CAPABILITY_U32S-1) - __capi]);
+			   a->cap[(_KERNEL_CAPABILITY_U32S-1) - __capi]);
 	}
 	seq_printf(m, "\n");
 }
@@ -297,6 +303,7 @@ static inline void task_cap(struct seq_file *m, struct task_struct *p)
 	render_cap_t(m, "CapInh:\t", &p->cap_inheritable);
 	render_cap_t(m, "CapPrm:\t", &p->cap_permitted);
 	render_cap_t(m, "CapEff:\t", &p->cap_effective);
+	render_cap_t(m, "CapBnd:\t", &p->cap_bset);
 }
 
 static inline void task_context_switch_counts(struct seq_file *m,
@@ -328,65 +335,6 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 #endif
 	task_context_switch_counts(m, task);
 	return 0;
-}
-
-/*
- * Use precise platform statistics if available:
- */
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING
-static cputime_t task_utime(struct task_struct *p)
-{
-	return p->utime;
-}
-
-static cputime_t task_stime(struct task_struct *p)
-{
-	return p->stime;
-}
-#else
-static cputime_t task_utime(struct task_struct *p)
-{
-	clock_t utime = cputime_to_clock_t(p->utime),
-		total = utime + cputime_to_clock_t(p->stime);
-	u64 temp;
-
-	/*
-	 * Use CFS's precise accounting:
-	 */
-	temp = (u64)nsec_to_clock_t(p->se.sum_exec_runtime);
-
-	if (total) {
-		temp *= utime;
-		do_div(temp, total);
-	}
-	utime = (clock_t)temp;
-
-	p->prev_utime = max(p->prev_utime, clock_t_to_cputime(utime));
-	return p->prev_utime;
-}
-
-static cputime_t task_stime(struct task_struct *p)
-{
-	clock_t stime;
-
-	/*
-	 * Use CFS's precise accounting. (we subtract utime from
-	 * the total, to make sure the total observed by userspace
-	 * grows monotonically - apps rely on that):
-	 */
-	stime = nsec_to_clock_t(p->se.sum_exec_runtime) -
-			cputime_to_clock_t(task_utime(p));
-
-	if (stime >= 0)
-		p->prev_stime = max(p->prev_stime, clock_t_to_cputime(stime));
-
-	return p->prev_stime;
-}
-#endif
-
-static cputime_t task_gtime(struct task_struct *p)
-{
-	return p->gtime;
 }
 
 static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
@@ -425,12 +373,13 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	cutime = cstime = utime = stime = cputime_zero;
 	cgtime = gtime = cputime_zero;
 
-	rcu_read_lock();
 	if (lock_task_sighand(task, &flags)) {
 		struct signal_struct *sig = task->signal;
 
 		if (sig->tty) {
-			tty_pgrp = pid_nr_ns(sig->tty->pgrp, ns);
+			struct pid *pgrp = tty_get_pgrp(sig->tty);
+			tty_pgrp = pid_nr_ns(pgrp, ns);
+			put_pid(pgrp);
 			tty_nr = new_encode_dev(tty_devnum(sig->tty));
 		}
 
@@ -469,7 +418,6 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 
 		unlock_task_sighand(task, &flags);
 	}
-	rcu_read_unlock();
 
 	if (!whole || num_threads < 2)
 		wchan = get_wchan(task);

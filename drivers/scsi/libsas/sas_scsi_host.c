@@ -24,6 +24,8 @@
  */
 
 #include <linux/kthread.h>
+#include <linux/firmware.h>
+#include <linux/ctype.h>
 
 #include "sas_internal.h"
 
@@ -341,7 +343,7 @@ static enum task_disposition sas_scsi_find_task(struct sas_task *task)
 						       flags);
 				SAS_DPRINTK("%s: task 0x%p aborted from "
 					    "task_queue\n",
-					    __FUNCTION__, task);
+					    __func__, task);
 				return TASK_IS_ABORTED;
 			}
 		}
@@ -349,13 +351,13 @@ static enum task_disposition sas_scsi_find_task(struct sas_task *task)
 	}
 
 	for (i = 0; i < 5; i++) {
-		SAS_DPRINTK("%s: aborting task 0x%p\n", __FUNCTION__, task);
+		SAS_DPRINTK("%s: aborting task 0x%p\n", __func__, task);
 		res = si->dft->lldd_abort_task(task);
 
 		spin_lock_irqsave(&task->task_state_lock, flags);
 		if (task->task_state_flags & SAS_TASK_STATE_DONE) {
 			spin_unlock_irqrestore(&task->task_state_lock, flags);
-			SAS_DPRINTK("%s: task 0x%p is done\n", __FUNCTION__,
+			SAS_DPRINTK("%s: task 0x%p is done\n", __func__,
 				    task);
 			return TASK_IS_DONE;
 		}
@@ -363,24 +365,24 @@ static enum task_disposition sas_scsi_find_task(struct sas_task *task)
 
 		if (res == TMF_RESP_FUNC_COMPLETE) {
 			SAS_DPRINTK("%s: task 0x%p is aborted\n",
-				    __FUNCTION__, task);
+				    __func__, task);
 			return TASK_IS_ABORTED;
 		} else if (si->dft->lldd_query_task) {
 			SAS_DPRINTK("%s: querying task 0x%p\n",
-				    __FUNCTION__, task);
+				    __func__, task);
 			res = si->dft->lldd_query_task(task);
 			switch (res) {
 			case TMF_RESP_FUNC_SUCC:
 				SAS_DPRINTK("%s: task 0x%p at LU\n",
-					    __FUNCTION__, task);
+					    __func__, task);
 				return TASK_IS_AT_LU;
 			case TMF_RESP_FUNC_COMPLETE:
 				SAS_DPRINTK("%s: task 0x%p not at LU\n",
-					    __FUNCTION__, task);
+					    __func__, task);
 				return TASK_IS_NOT_AT_LU;
 			case TMF_RESP_FUNC_FAILED:
                                 SAS_DPRINTK("%s: task 0x%p failed to abort\n",
-                                                __FUNCTION__, task);
+                                                __func__, task);
                                 return TASK_ABORT_FAILED;
                         }
 
@@ -543,7 +545,7 @@ Again:
 
 		if (need_reset) {
 			SAS_DPRINTK("%s: task 0x%p requests reset\n",
-				    __FUNCTION__, task);
+				    __func__, task);
 			goto reset;
 		}
 
@@ -554,13 +556,13 @@ Again:
 
 		switch (res) {
 		case TASK_IS_DONE:
-			SAS_DPRINTK("%s: task 0x%p is done\n", __FUNCTION__,
+			SAS_DPRINTK("%s: task 0x%p is done\n", __func__,
 				    task);
 			sas_eh_finish_cmd(cmd);
 			continue;
 		case TASK_IS_ABORTED:
 			SAS_DPRINTK("%s: task 0x%p is aborted\n",
-				    __FUNCTION__, task);
+				    __func__, task);
 			sas_eh_finish_cmd(cmd);
 			continue;
 		case TASK_IS_AT_LU:
@@ -631,7 +633,7 @@ Again:
 	}
 	return list_empty(work_q);
 clear_q:
-	SAS_DPRINTK("--- Exit %s -- clear_q\n", __FUNCTION__);
+	SAS_DPRINTK("--- Exit %s -- clear_q\n", __func__);
 	list_for_each_entry_safe(cmd, n, work_q, eh_entry)
 		sas_eh_finish_cmd(cmd);
 
@@ -648,7 +650,7 @@ void sas_scsi_recover_host(struct Scsi_Host *shost)
 	list_splice_init(&shost->eh_cmd_q, &eh_work_q);
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
-	SAS_DPRINTK("Enter %s\n", __FUNCTION__);
+	SAS_DPRINTK("Enter %s\n", __func__);
 	/*
 	 * Deal with commands that still have SAS tasks (i.e. they didn't
 	 * complete via the normal sas_task completion mechanism)
@@ -667,7 +669,7 @@ void sas_scsi_recover_host(struct Scsi_Host *shost)
 
 out:
 	scsi_eh_flush_done_q(&ha->eh_done_q);
-	SAS_DPRINTK("--- Exit %s\n", __FUNCTION__);
+	SAS_DPRINTK("--- Exit %s\n", __func__);
 	return;
 }
 
@@ -988,7 +990,7 @@ int __sas_task_abort(struct sas_task *task)
 	if (task->task_state_flags & SAS_TASK_STATE_ABORTED ||
 	    task->task_state_flags & SAS_TASK_STATE_DONE) {
 		spin_unlock_irqrestore(&task->task_state_lock, flags);
-		SAS_DPRINTK("%s: Task %p already finished.\n", __FUNCTION__,
+		SAS_DPRINTK("%s: Task %p already finished.\n", __func__,
 			    task);
 		return 0;
 	}
@@ -1063,6 +1065,45 @@ void sas_target_destroy(struct scsi_target *starget)
 
 	return;
 }
+
+static void sas_parse_addr(u8 *sas_addr, const char *p)
+{
+	int i;
+	for (i = 0; i < SAS_ADDR_SIZE; i++) {
+		u8 h, l;
+		if (!*p)
+			break;
+		h = isdigit(*p) ? *p-'0' : toupper(*p)-'A'+10;
+		p++;
+		l = isdigit(*p) ? *p-'0' : toupper(*p)-'A'+10;
+		p++;
+		sas_addr[i] = (h<<4) | l;
+	}
+}
+
+#define SAS_STRING_ADDR_SIZE	16
+
+int sas_request_addr(struct Scsi_Host *shost, u8 *addr)
+{
+	int res;
+	const struct firmware *fw;
+
+	res = request_firmware(&fw, "sas_addr", &shost->shost_gendev);
+	if (res)
+		return res;
+
+	if (fw->size < SAS_STRING_ADDR_SIZE) {
+		res = -ENODEV;
+		goto out;
+	}
+
+	sas_parse_addr(addr, fw->data);
+
+out:
+	release_firmware(fw);
+	return res;
+}
+EXPORT_SYMBOL_GPL(sas_request_addr);
 
 EXPORT_SYMBOL_GPL(sas_queuecommand);
 EXPORT_SYMBOL_GPL(sas_target_alloc);

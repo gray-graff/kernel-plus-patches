@@ -156,17 +156,14 @@ struct ipv4_config
 };
 
 extern struct ipv4_config ipv4_config;
-DECLARE_SNMP_STAT(struct ipstats_mib, ip_statistics);
-#define IP_INC_STATS(field)		SNMP_INC_STATS(ip_statistics, field)
-#define IP_INC_STATS_BH(field)		SNMP_INC_STATS_BH(ip_statistics, field)
-#define IP_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(ip_statistics, field)
-#define IP_ADD_STATS_BH(field, val)	SNMP_ADD_STATS_BH(ip_statistics, field, val)
-DECLARE_SNMP_STAT(struct linux_mib, net_statistics);
-#define NET_INC_STATS(field)		SNMP_INC_STATS(net_statistics, field)
-#define NET_INC_STATS_BH(field)		SNMP_INC_STATS_BH(net_statistics, field)
-#define NET_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(net_statistics, field)
-#define NET_ADD_STATS_BH(field, adnd)	SNMP_ADD_STATS_BH(net_statistics, field, adnd)
-#define NET_ADD_STATS_USER(field, adnd)	SNMP_ADD_STATS_USER(net_statistics, field, adnd)
+#define IP_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.ip_statistics, field)
+#define IP_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.ip_statistics, field)
+#define IP_ADD_STATS_BH(net, field, val) SNMP_ADD_STATS_BH((net)->mib.ip_statistics, field, val)
+#define NET_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.net_statistics, field)
+#define NET_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.net_statistics, field)
+#define NET_INC_STATS_USER(net, field) 	SNMP_INC_STATS_USER((net)->mib.net_statistics, field)
+#define NET_ADD_STATS_BH(net, field, adnd) SNMP_ADD_STATS_BH((net)->mib.net_statistics, field, adnd)
+#define NET_ADD_STATS_USER(net, field, adnd) SNMP_ADD_STATS_USER((net)->mib.net_statistics, field, adnd)
 
 extern unsigned long snmp_fold_field(void *mib[], int offt);
 extern int snmp_mib_init(void *ptr[2], size_t mibsize);
@@ -191,6 +188,8 @@ extern int sysctl_ip_dynaddr;
 
 extern void ipfrag_init(void);
 
+extern void ip_static_sysctl_init(void);
+
 #ifdef CONFIG_INET
 #include <net/dst.h>
 
@@ -210,7 +209,7 @@ int ip_dont_fragment(struct sock *sk, struct dst_entry *dst)
 {
 	return (inet_sk(sk)->pmtudisc == IP_PMTUDISC_DO ||
 		(inet_sk(sk)->pmtudisc == IP_PMTUDISC_WANT &&
-		 !(dst_metric(dst, RTAX_LOCK)&(1<<RTAX_MTU))));
+		 !(dst_metric_locked(dst, RTAX_MTU))));
 }
 
 extern void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more);
@@ -347,10 +346,11 @@ extern int ip_forward(struct sk_buff *skb);
 extern void ip_options_build(struct sk_buff *skb, struct ip_options *opt, __be32 daddr, struct rtable *rt, int is_frag);
 extern int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb);
 extern void ip_options_fragment(struct sk_buff *skb);
-extern int ip_options_compile(struct ip_options *opt, struct sk_buff *skb);
-extern int ip_options_get(struct ip_options **optp,
+extern int ip_options_compile(struct net *net,
+			      struct ip_options *opt, struct sk_buff *skb);
+extern int ip_options_get(struct net *net, struct ip_options **optp,
 			  unsigned char *data, int optlen);
-extern int ip_options_get_from_user(struct ip_options **optp,
+extern int ip_options_get_from_user(struct net *net, struct ip_options **optp,
 				    unsigned char __user *data, int optlen);
 extern void ip_options_undo(struct ip_options * opt);
 extern void ip_forward_options(struct sk_buff *skb);
@@ -361,7 +361,8 @@ extern int ip_options_rcv_srr(struct sk_buff *skb);
  */
 
 extern void	ip_cmsg_recv(struct msghdr *msg, struct sk_buff *skb);
-extern int	ip_cmsg_send(struct msghdr *msg, struct ipcm_cookie *ipc);
+extern int	ip_cmsg_send(struct net *net,
+			     struct msghdr *msg, struct ipcm_cookie *ipc);
 extern int	ip_setsockopt(struct sock *sk, int level, int optname, char __user *optval, int optlen);
 extern int	ip_getsockopt(struct sock *sk, int level, int optname, char __user *optval, int __user *optlen);
 extern int	compat_ip_setsockopt(struct sock *sk, int level,

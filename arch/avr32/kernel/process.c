@@ -18,10 +18,10 @@
 #include <asm/sysreg.h>
 #include <asm/ocd.h>
 
+#include <mach/pm.h>
+
 void (*pm_power_off)(void) = NULL;
 EXPORT_SYMBOL(pm_power_off);
-
-extern void cpu_idle_sleep(void);
 
 /*
  * This file handles the architecture-dependent parts of process handling..
@@ -31,7 +31,7 @@ void cpu_idle(void)
 {
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_stop_sched_tick();
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched())
 			cpu_idle_sleep();
 		tick_nohz_restart_sched_tick();
@@ -54,6 +54,8 @@ void machine_halt(void)
 
 void machine_power_off(void)
 {
+	if (pm_power_off)
+		pm_power_off();
 }
 
 void machine_restart(char *cmd)

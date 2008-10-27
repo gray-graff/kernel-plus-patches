@@ -325,13 +325,11 @@ static int onenand_wait(struct mtd_info *mtd, int state)
 
 	ctrl = this->read_word(this->base + ONENAND_REG_CTRL_STATUS);
 
-	if (ctrl & ONENAND_CTRL_ERROR) {
-		printk(KERN_ERR "onenand_wait: controller error = 0x%04x\n", ctrl);
-		if (ctrl & ONENAND_CTRL_LOCK)
-			printk(KERN_ERR "onenand_wait: it's locked error.\n");
-		return -EIO;
-	}
-
+	/*
+	 * In the Spec. it checks the controller status first
+	 * However if you get the correct information in case of
+	 * power off recovery (POR) test, it should read ECC status first
+	 */
 	if (interrupt & ONENAND_INT_READ) {
 		int ecc = this->read_word(this->base + ONENAND_REG_ECC_STATUS);
 		if (ecc) {
@@ -346,6 +344,15 @@ static int onenand_wait(struct mtd_info *mtd, int state)
 		}
 	} else if (state == FL_READING) {
 		printk(KERN_ERR "onenand_wait: read timeout! ctrl=0x%04x intr=0x%04x\n", ctrl, interrupt);
+		return -EIO;
+	}
+
+	/* If there's controller error, it's a real error */
+	if (ctrl & ONENAND_CTRL_ERROR) {
+		printk(KERN_ERR "onenand_wait: controller error = 0x%04x\n",
+			ctrl);
+		if (ctrl & ONENAND_CTRL_LOCK)
+			printk(KERN_ERR "onenand_wait: it's locked error.\n");
 		return -EIO;
 	}
 
@@ -1120,20 +1127,24 @@ static int onenand_bbt_wait(struct mtd_info *mtd, int state)
 	interrupt = this->read_word(this->base + ONENAND_REG_INTERRUPT);
 	ctrl = this->read_word(this->base + ONENAND_REG_CTRL_STATUS);
 
-	/* Initial bad block case: 0x2400 or 0x0400 */
-	if (ctrl & ONENAND_CTRL_ERROR) {
-		printk(KERN_DEBUG "onenand_bbt_wait: controller error = 0x%04x\n", ctrl);
-		return ONENAND_BBT_READ_ERROR;
-	}
-
 	if (interrupt & ONENAND_INT_READ) {
 		int ecc = this->read_word(this->base + ONENAND_REG_ECC_STATUS);
-		if (ecc & ONENAND_ECC_2BIT_ALL)
+		if (ecc & ONENAND_ECC_2BIT_ALL) {
+			printk(KERN_INFO "onenand_bbt_wait: ecc error = 0x%04x"
+				", controller error 0x%04x\n", ecc, ctrl);
 			return ONENAND_BBT_READ_ERROR;
+		}
 	} else {
 		printk(KERN_ERR "onenand_bbt_wait: read timeout!"
 			"ctrl=0x%04x intr=0x%04x\n", ctrl, interrupt);
 		return ONENAND_BBT_READ_FATAL_ERROR;
+	}
+
+	/* Initial bad block case: 0x2400 or 0x0400 */
+	if (ctrl & ONENAND_CTRL_ERROR) {
+		printk(KERN_DEBUG "onenand_bbt_wait: "
+			"controller error = 0x%04x\n", ctrl);
+		return ONENAND_BBT_READ_ERROR;
 	}
 
 	return 0;
@@ -1336,7 +1347,7 @@ static int onenand_panic_write(struct mtd_info *mtd, loff_t to, size_t len,
 	}
 
 	/* Reject writes, which are not page aligned */
-        if (unlikely(NOTALIGNED(to)) || unlikely(NOTALIGNED(len))) {
+        if (unlikely(NOTALIGNED(to) || NOTALIGNED(len))) {
                 printk(KERN_ERR "onenand_panic_write: Attempt to write not page aligned data\n");
                 return -EINVAL;
         }
@@ -1466,7 +1477,7 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 	}
 
 	/* Reject writes, which are not page aligned */
-        if (unlikely(NOTALIGNED(to)) || unlikely(NOTALIGNED(len))) {
+        if (unlikely(NOTALIGNED(to) || NOTALIGNED(len))) {
                 printk(KERN_ERR "onenand_write_ops_nolock: Attempt to write not page aligned data\n");
                 return -EINVAL;
         }
@@ -2052,7 +2063,7 @@ static int onenand_unlock(struct mtd_info *mtd, loff_t ofs, size_t len)
  *
  * Check lock status
  */
-static void onenand_check_lock_status(struct onenand_chip *this)
+static int onenand_check_lock_status(struct onenand_chip *this)
 {
 	unsigned int value, block, status;
 	unsigned int end;
@@ -2070,9 +2081,13 @@ static void onenand_check_lock_status(struct onenand_chip *this)
 
 		/* Check lock status */
 		status = this->read_word(this->base + ONENAND_REG_WP_STATUS);
-		if (!(status & ONENAND_WP_US))
+		if (!(status & ONENAND_WP_US)) {
 			printk(KERN_ERR "block = %d, wp status = 0x%x\n", block, status);
+			return 0;
+		}
 	}
+
+	return 1;
 }
 
 /**
@@ -2081,9 +2096,11 @@ static void onenand_check_lock_status(struct onenand_chip *this)
  *
  * Unlock all blocks
  */
-static int onenand_unlock_all(struct mtd_info *mtd)
+static void onenand_unlock_all(struct mtd_info *mtd)
 {
 	struct onenand_chip *this = mtd->priv;
+	loff_t ofs = 0;
+	size_t len = this->chipsize;
 
 	if (this->options & ONENAND_HAS_UNLOCK_ALL) {
 		/* Set start block address */
@@ -2099,23 +2116,19 @@ static int onenand_unlock_all(struct mtd_info *mtd)
 		    & ONENAND_CTRL_ONGO)
 			continue;
 
+		/* Check lock status */
+		if (onenand_check_lock_status(this))
+			return;
+
 		/* Workaround for all block unlock in DDP */
 		if (ONENAND_IS_DDP(this)) {
-			/* 1st block on another chip */
-			loff_t ofs = this->chipsize >> 1;
-			size_t len = mtd->erasesize;
-
-			onenand_do_lock_cmd(mtd, ofs, len, ONENAND_CMD_UNLOCK);
+			/* All blocks on another chip */
+			ofs = this->chipsize >> 1;
+			len = this->chipsize >> 1;
 		}
-
-		onenand_check_lock_status(this);
-
-		return 0;
 	}
 
-	onenand_do_lock_cmd(mtd, 0x0, this->chipsize, ONENAND_CMD_UNLOCK);
-
-	return 0;
+	onenand_do_lock_cmd(mtd, ofs, len, ONENAND_CMD_UNLOCK);
 }
 
 #ifdef CONFIG_MTD_ONENAND_OTP

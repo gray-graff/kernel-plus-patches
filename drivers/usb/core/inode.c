@@ -463,13 +463,13 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 	inode = usbfs_get_inode(sb, S_IFDIR | 0755, 0);
 
 	if (!inode) {
-		dbg("%s: could not get inode!",__FUNCTION__);
+		dbg("%s: could not get inode!",__func__);
 		return -ENOMEM;
 	}
 
 	root = d_alloc_root(inode);
 	if (!root) {
-		dbg("%s: could not get root dentry!",__FUNCTION__);
+		dbg("%s: could not get root dentry!",__func__);
 		iput(inode);
 		return -ENOMEM;
 	}
@@ -712,25 +712,11 @@ static void usbfs_add_device(struct usb_device *dev)
 
 static void usbfs_remove_device(struct usb_device *dev)
 {
-	struct dev_state *ds;
-	struct siginfo sinfo;
-
 	if (dev->usbfs_dentry) {
 		fs_remove_file (dev->usbfs_dentry);
 		dev->usbfs_dentry = NULL;
 	}
-	while (!list_empty(&dev->filelist)) {
-		ds = list_entry(dev->filelist.next, struct dev_state, list);
-		wake_up_all(&ds->wait);
-		list_del_init(&ds->list);
-		if (ds->discsignr) {
-			sinfo.si_signo = ds->discsignr;
-			sinfo.si_errno = EPIPE;
-			sinfo.si_code = SI_ASYNCIO;
-			sinfo.si_addr = ds->disccontext;
-			kill_pid_info_as_uid(ds->discsignr, &sinfo, ds->disc_pid, ds->disc_uid, ds->disc_euid, ds->secid);
-		}
-	}
+	usb_fs_classdev_common_remove(dev);
 }
 
 static int usbfs_notify(struct notifier_block *self, unsigned long action, void *dev)
@@ -773,7 +759,7 @@ int __init usbfs_init(void)
 	usb_register_notify(&usbfs_nb);
 
 	/* create mount point for usbfs */
-	usbdir = proc_mkdir("usb", proc_bus);
+	usbdir = proc_mkdir("bus/usb", NULL);
 
 	return 0;
 }
@@ -783,6 +769,6 @@ void usbfs_cleanup(void)
 	usb_unregister_notify(&usbfs_nb);
 	unregister_filesystem(&usb_fs_type);
 	if (usbdir)
-		remove_proc_entry("usb", proc_bus);
+		remove_proc_entry("bus/usb", NULL);
 }
 

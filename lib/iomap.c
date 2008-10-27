@@ -40,8 +40,7 @@ static void bad_io_access(unsigned long port, const char *access)
 	static int count = 10;
 	if (count) {
 		count--;
-		printk(KERN_ERR "Bad IO access at port %#lx (%s)\n", port, access);
-		WARN_ON(1);
+		WARN(1, KERN_ERR "Bad IO access at port %#lx (%s)\n", port, access);
 	}
 }
 
@@ -257,7 +256,7 @@ EXPORT_SYMBOL(ioport_unmap);
 void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long maxlen)
 {
 	resource_size_t start = pci_resource_start(dev, bar);
-	unsigned long len = pci_resource_len(dev, bar);
+	resource_size_t len = pci_resource_len(dev, bar);
 	unsigned long flags = pci_resource_flags(dev, bar);
 
 	if (!len || !start)

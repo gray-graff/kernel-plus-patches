@@ -22,6 +22,8 @@
 
 #include <asm/io.h>
 
+#define DRV_NAME "sc1200"
+
 #define SC1200_REV_A	0x00
 #define SC1200_REV_B1	0x01
 #define SC1200_REV_B3	0x02
@@ -165,7 +167,7 @@ static void sc1200_set_dma_mode(ide_drive_t *drive, const u8 mode)
  *
  *  returns 1 on error, 0 otherwise
  */
-static int sc1200_ide_dma_end (ide_drive_t *drive)
+static int sc1200_dma_end(ide_drive_t *drive)
 {
 	ide_hwif_t *hwif = HWIF(drive);
 	unsigned long dma_base = hwif->dma_base;
@@ -214,7 +216,7 @@ static void sc1200_set_pio_mode(ide_drive_t *drive, const u8 pio)
 		printk("SC1200: %s: changing (U)DMA mode\n", drive->name);
 		ide_dma_off_quietly(drive);
 		if (ide_set_dma_mode(drive, mode) == 0 && drive->using_dma)
-			hwif->dma_host_set(drive, 1);
+			hwif->dma_ops->dma_host_set(drive, 1);
 		return;
 	}
 
@@ -234,19 +236,9 @@ static int sc1200_suspend (struct pci_dev *dev, pm_message_t state)
 	 * we only save state when going from full power to less
 	 */
 	if (state.event == PM_EVENT_ON) {
-		struct sc1200_saved_state *ss;
+		struct ide_host *host = pci_get_drvdata(dev);
+		struct sc1200_saved_state *ss = host->host_priv;
 		unsigned int r;
-
-		/*
-		 * allocate a permanent save area, if not already allocated
-		 */
-		ss = (struct sc1200_saved_state *)pci_get_drvdata(dev);
-		if (ss == NULL) {
-			ss = kmalloc(sizeof(*ss), GFP_KERNEL);
-			if (ss == NULL)
-				return -ENOMEM;
-			pci_set_drvdata(dev, ss);
-		}
 
 		/*
 		 * save timing registers
@@ -263,7 +255,8 @@ static int sc1200_suspend (struct pci_dev *dev, pm_message_t state)
 
 static int sc1200_resume (struct pci_dev *dev)
 {
-	struct sc1200_saved_state *ss;
+	struct ide_host *host = pci_get_drvdata(dev);
+	struct sc1200_saved_state *ss = host->host_priv;
 	unsigned int r;
 	int i;
 
@@ -271,44 +264,41 @@ static int sc1200_resume (struct pci_dev *dev)
 	if (i)
 		return i;
 
-	ss = (struct sc1200_saved_state *)pci_get_drvdata(dev);
-
 	/*
 	 * restore timing registers
 	 * (this may be unnecessary if BIOS also does it)
 	 */
-	if (ss) {
-		for (r = 0; r < 8; r++)
-			pci_write_config_dword(dev, 0x40 + r * 4, ss->regs[r]);
-	}
+	for (r = 0; r < 8; r++)
+		pci_write_config_dword(dev, 0x40 + r * 4, ss->regs[r]);
 
 	return 0;
 }
 #endif
 
-/*
- * This gets invoked by the IDE driver once for each channel,
- * and performs channel-specific pre-initialization before drive probing.
- */
-static void __devinit init_hwif_sc1200 (ide_hwif_t *hwif)
-{
-	hwif->set_pio_mode = &sc1200_set_pio_mode;
-	hwif->set_dma_mode = &sc1200_set_dma_mode;
+static const struct ide_port_ops sc1200_port_ops = {
+	.set_pio_mode		= sc1200_set_pio_mode,
+	.set_dma_mode		= sc1200_set_dma_mode,
+	.udma_filter		= sc1200_udma_filter,
+};
 
-	if (hwif->dma_base == 0)
-		return;
-
-	hwif->udma_filter = sc1200_udma_filter;
-	hwif->ide_dma_end   = &sc1200_ide_dma_end;
-}
+static const struct ide_dma_ops sc1200_dma_ops = {
+	.dma_host_set		= ide_dma_host_set,
+	.dma_setup		= ide_dma_setup,
+	.dma_exec_cmd		= ide_dma_exec_cmd,
+	.dma_start		= ide_dma_start,
+	.dma_end		= sc1200_dma_end,
+	.dma_test_irq		= ide_dma_test_irq,
+	.dma_lost_irq		= ide_dma_lost_irq,
+	.dma_timeout		= ide_dma_timeout,
+};
 
 static const struct ide_port_info sc1200_chipset __devinitdata = {
-	.name		= "SC1200",
-	.init_hwif	= init_hwif_sc1200,
+	.name		= DRV_NAME,
+	.port_ops	= &sc1200_port_ops,
+	.dma_ops	= &sc1200_dma_ops,
 	.host_flags	= IDE_HFLAG_SERIALIZE |
 			  IDE_HFLAG_POST_SET_MODE |
-			  IDE_HFLAG_ABUSE_DMA_MODES |
-			  IDE_HFLAG_BOOTABLE,
+			  IDE_HFLAG_ABUSE_DMA_MODES,
 	.pio_mask	= ATA_PIO4,
 	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA2,
@@ -316,7 +306,19 @@ static const struct ide_port_info sc1200_chipset __devinitdata = {
 
 static int __devinit sc1200_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	return ide_setup_pci_device(dev, &sc1200_chipset);
+	struct sc1200_saved_state *ss = NULL;
+	int rc;
+
+#ifdef CONFIG_PM
+	ss = kmalloc(sizeof(*ss), GFP_KERNEL);
+	if (ss == NULL)
+		return -ENOMEM;
+#endif
+	rc = ide_pci_init_one(dev, &sc1200_chipset, ss);
+	if (rc)
+		kfree(ss);
+
+	return rc;
 }
 
 static const struct pci_device_id sc1200_pci_tbl[] = {
@@ -329,6 +331,7 @@ static struct pci_driver driver = {
 	.name		= "SC1200_IDE",
 	.id_table	= sc1200_pci_tbl,
 	.probe		= sc1200_init_one,
+	.remove		= ide_pci_remove,
 #ifdef CONFIG_PM
 	.suspend	= sc1200_suspend,
 	.resume		= sc1200_resume,
@@ -340,7 +343,13 @@ static int __init sc1200_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit sc1200_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(sc1200_ide_init);
+module_exit(sc1200_ide_exit);
 
 MODULE_AUTHOR("Mark Lord");
 MODULE_DESCRIPTION("PCI driver module for NS SC1200 IDE");

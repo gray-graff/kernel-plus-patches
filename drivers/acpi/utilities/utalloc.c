@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2007, R. Byron Moore
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -147,7 +147,7 @@ acpi_status acpi_ut_delete_caches(void)
 
 	if (acpi_gbl_display_final_mem_stats) {
 		ACPI_STRCPY(buffer, "MEMORY");
-		acpi_db_display_statistics(buffer);
+		(void)acpi_db_display_statistics(buffer);
 	}
 #endif
 
@@ -242,6 +242,12 @@ acpi_ut_initialize_buffer(struct acpi_buffer * buffer,
 {
 	acpi_status status = AE_OK;
 
+	/* Parameter validation */
+
+	if (!buffer || !required_length) {
+		return (AE_BAD_PARAMETER);
+	}
+
 	switch (buffer->length) {
 	case ACPI_NO_BUFFER:
 
@@ -309,7 +315,8 @@ acpi_ut_initialize_buffer(struct acpi_buffer * buffer,
  *
  ******************************************************************************/
 
-void *acpi_ut_allocate(acpi_size size, u32 component, char *module, u32 line)
+void *acpi_ut_allocate(acpi_size size,
+		       u32 component, const char *module, u32 line)
 {
 	void *allocation;
 
@@ -353,7 +360,7 @@ void *acpi_ut_allocate(acpi_size size, u32 component, char *module, u32 line)
  ******************************************************************************/
 
 void *acpi_ut_allocate_zeroed(acpi_size size,
-			      u32 component, char *module, u32 line)
+			      u32 component, const char *module, u32 line)
 {
 	void *allocation;
 

@@ -11,6 +11,8 @@
 #include <linux/ide.h>
 #include <linux/init.h>
 
+#define DRV_NAME "atiixp"
+
 #define ATIIXP_IDE_PIO_TIMING		0x40
 #define ATIIXP_IDE_MDMA_TIMING		0x44
 #define ATIIXP_IDE_PIO_CONTROL		0x48
@@ -117,7 +119,7 @@ static void atiixp_set_dma_mode(ide_drive_t *drive, const u8 speed)
 	spin_unlock_irqrestore(&atiixp_lock, flags);
 }
 
-static u8 __devinit atiixp_cable_detect(ide_hwif_t *hwif)
+static u8 atiixp_cable_detect(ide_hwif_t *hwif)
 {
 	struct pci_dev *pdev = to_pci_dev(hwif->dev);
 	u8 udma_mode = 0, ch = hwif->channel;
@@ -130,37 +132,27 @@ static u8 __devinit atiixp_cable_detect(ide_hwif_t *hwif)
 		return ATA_CBL_PATA40;
 }
 
-/**
- *	init_hwif_atiixp		-	fill in the hwif for the ATIIXP
- *	@hwif: IDE interface
- *
- *	Set up the ide_hwif_t for the ATIIXP interface according to the
- *	capabilities of the hardware.
- */
-
-static void __devinit init_hwif_atiixp(ide_hwif_t *hwif)
-{
-	hwif->set_pio_mode = &atiixp_set_pio_mode;
-	hwif->set_dma_mode = &atiixp_set_dma_mode;
-
-	hwif->cable_detect = atiixp_cable_detect;
-}
+static const struct ide_port_ops atiixp_port_ops = {
+	.set_pio_mode		= atiixp_set_pio_mode,
+	.set_dma_mode		= atiixp_set_dma_mode,
+	.cable_detect		= atiixp_cable_detect,
+};
 
 static const struct ide_port_info atiixp_pci_info[] __devinitdata = {
-	{	/* 0 */
-		.name		= "ATIIXP",
-		.init_hwif	= init_hwif_atiixp,
+	{	/* 0: IXP200/300/400/700 */
+		.name		= DRV_NAME,
 		.enablebits	= {{0x48,0x01,0x00}, {0x48,0x08,0x00}},
-		.host_flags	= IDE_HFLAG_LEGACY_IRQS | IDE_HFLAG_BOOTABLE,
+		.port_ops	= &atiixp_port_ops,
+		.host_flags	= IDE_HFLAG_LEGACY_IRQS,
 		.pio_mask	= ATA_PIO4,
 		.mwdma_mask	= ATA_MWDMA2,
 		.udma_mask	= ATA_UDMA5,
-	},{	/* 1 */
-		.name		= "SB600_PATA",
-		.init_hwif	= init_hwif_atiixp,
+	},
+	{	/* 1: IXP600 */
+		.name		= DRV_NAME,
 		.enablebits	= {{0x48,0x01,0x00}, {0x00,0x00,0x00}},
- 		.host_flags	= IDE_HFLAG_SINGLE | IDE_HFLAG_LEGACY_IRQS |
-				  IDE_HFLAG_BOOTABLE,
+		.port_ops	= &atiixp_port_ops,
+		.host_flags	= IDE_HFLAG_SINGLE | IDE_HFLAG_LEGACY_IRQS,
 		.pio_mask	= ATA_PIO4,
 		.mwdma_mask	= ATA_MWDMA2,
 		.udma_mask	= ATA_UDMA5,
@@ -178,7 +170,7 @@ static const struct ide_port_info atiixp_pci_info[] __devinitdata = {
 
 static int __devinit atiixp_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	return ide_setup_pci_device(dev, &atiixp_pci_info[id->driver_data]);
+	return ide_pci_init_one(dev, &atiixp_pci_info[id->driver_data], NULL);
 }
 
 static const struct pci_device_id atiixp_pci_tbl[] = {
@@ -195,6 +187,7 @@ static struct pci_driver driver = {
 	.name		= "ATIIXP_IDE",
 	.id_table	= atiixp_pci_tbl,
 	.probe		= atiixp_init_one,
+	.remove		= ide_pci_remove,
 };
 
 static int __init atiixp_ide_init(void)
@@ -202,7 +195,13 @@ static int __init atiixp_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit atiixp_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(atiixp_ide_init);
+module_exit(atiixp_ide_exit);
 
 MODULE_AUTHOR("HUI YU");
 MODULE_DESCRIPTION("PCI driver module for ATI IXP IDE");

@@ -34,9 +34,9 @@
 /* How many pages do we try to swap or page in/out together? */
 int page_cluster;
 
-static DEFINE_PER_CPU(struct pagevec, lru_add_pvecs) = { 0, };
-static DEFINE_PER_CPU(struct pagevec, lru_add_active_pvecs) = { 0, };
-static DEFINE_PER_CPU(struct pagevec, lru_rotate_pvecs) = { 0, };
+static DEFINE_PER_CPU(struct pagevec, lru_add_pvecs);
+static DEFINE_PER_CPU(struct pagevec, lru_add_active_pvecs);
+static DEFINE_PER_CPU(struct pagevec, lru_rotate_pvecs);
 
 /*
  * This path almost never happens for VM activity - pages are normally
@@ -132,34 +132,21 @@ static void pagevec_move_tail(struct pagevec *pvec)
  * Writeback is about to end against a page which has been marked for immediate
  * reclaim.  If it still appears to be reclaimable, move it to the tail of the
  * inactive list.
- *
- * Returns zero if it cleared PG_writeback.
  */
-int rotate_reclaimable_page(struct page *page)
+void  rotate_reclaimable_page(struct page *page)
 {
-	struct pagevec *pvec;
-	unsigned long flags;
+	if (!PageLocked(page) && !PageDirty(page) && !PageActive(page) &&
+	    PageLRU(page)) {
+		struct pagevec *pvec;
+		unsigned long flags;
 
-	if (PageLocked(page))
-		return 1;
-	if (PageDirty(page))
-		return 1;
-	if (PageActive(page))
-		return 1;
-	if (!PageLRU(page))
-		return 1;
-
-	page_cache_get(page);
-	local_irq_save(flags);
-	pvec = &__get_cpu_var(lru_rotate_pvecs);
-	if (!pagevec_add(pvec, page))
-		pagevec_move_tail(pvec);
-	local_irq_restore(flags);
-
-	if (!test_clear_page_writeback(page))
-		BUG();
-
-	return 0;
+		page_cache_get(page);
+		local_irq_save(flags);
+		pvec = &__get_cpu_var(lru_rotate_pvecs);
+		if (!pagevec_add(pvec, page))
+			pagevec_move_tail(pvec);
+		local_irq_restore(flags);
+	}
 }
 
 /*
@@ -291,9 +278,10 @@ int lru_add_drain_all(void)
  * Avoid taking zone->lru_lock if possible, but if it is taken, retain it
  * for the remainder of the operation.
  *
- * The locking in this function is against shrink_cache(): we recheck the
- * page count inside the lock to see whether shrink_cache grabbed the page
- * via the LRU.  If it did, give up: shrink_cache will free it.
+ * The locking in this function is against shrink_inactive_list(): we recheck
+ * the page count inside the lock to see whether shrink_inactive_list()
+ * grabbed the page via the LRU.  If it did, give up: shrink_inactive_list()
+ * will free it.
  */
 void release_pages(struct page **pages, int nr, int cold)
 {
@@ -456,7 +444,7 @@ void pagevec_strip(struct pagevec *pvec)
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		struct page *page = pvec->pages[i];
 
-		if (PagePrivate(page) && !TestSetPageLocked(page)) {
+		if (PagePrivate(page) && trylock_page(page)) {
 			if (PagePrivate(page))
 				try_to_release_page(page, 0);
 			unlock_page(page);
@@ -506,7 +494,7 @@ EXPORT_SYMBOL(pagevec_lookup_tag);
  */
 #define ACCT_THRESHOLD	max(16, NR_CPUS * 2)
 
-static DEFINE_PER_CPU(long, committed_space) = 0;
+static DEFINE_PER_CPU(long, committed_space);
 
 void vm_acct_memory(long pages)
 {
@@ -516,7 +504,7 @@ void vm_acct_memory(long pages)
 	local = &__get_cpu_var(committed_space);
 	*local += pages;
 	if (*local > ACCT_THRESHOLD || *local < -ACCT_THRESHOLD) {
-		atomic_add(*local, &vm_committed_space);
+		atomic_long_add(*local, &vm_committed_space);
 		*local = 0;
 	}
 	preempt_enable();
@@ -533,7 +521,7 @@ static int cpu_swap_callback(struct notifier_block *nfb,
 
 	committed = &per_cpu(committed_space, (long)hcpu);
 	if (action == CPU_DEAD || action == CPU_DEAD_FROZEN) {
-		atomic_add(*committed, &vm_committed_space);
+		atomic_long_add(*committed, &vm_committed_space);
 		*committed = 0;
 		drain_cpu_pagevecs((long)hcpu);
 	}

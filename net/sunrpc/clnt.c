@@ -25,6 +25,7 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/kallsyms.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/smp_lock.h>
@@ -43,7 +44,7 @@
 
 #define dprint_status(t)					\
 	dprintk("RPC: %5u %s (status %d)\n", t->tk_pid,		\
-			__FUNCTION__, t->tk_status)
+			__func__, t->tk_status)
 
 /*
  * All RPC clients are linked into this list
@@ -58,7 +59,6 @@ static void	call_start(struct rpc_task *task);
 static void	call_reserve(struct rpc_task *task);
 static void	call_reserveresult(struct rpc_task *task);
 static void	call_allocate(struct rpc_task *task);
-static void	call_encode(struct rpc_task *task);
 static void	call_decode(struct rpc_task *task);
 static void	call_bind(struct rpc_task *task);
 static void	call_bind_status(struct rpc_task *task);
@@ -70,9 +70,9 @@ static void	call_refreshresult(struct rpc_task *task);
 static void	call_timeout(struct rpc_task *task);
 static void	call_connect(struct rpc_task *task);
 static void	call_connect_status(struct rpc_task *task);
-static __be32 *	call_header(struct rpc_task *task);
-static __be32 *	call_verify(struct rpc_task *task);
 
+static __be32	*rpc_encode_header(struct rpc_task *task);
+static __be32	*rpc_verify_header(struct rpc_task *task);
 static int	rpc_ping(struct rpc_clnt *clnt, int flags);
 
 static void rpc_register_client(struct rpc_clnt *clnt)
@@ -324,6 +324,8 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 		clnt->cl_autobind = 1;
 	if (args->flags & RPC_CLNT_CREATE_DISCRTRY)
 		clnt->cl_discrtry = 1;
+	if (!(args->flags & RPC_CLNT_CREATE_QUIET))
+		clnt->cl_chatty = 1;
 
 	return clnt;
 }
@@ -368,7 +370,7 @@ out_no_path:
 out_no_stats:
 	kfree(new);
 out_no_clnt:
-	dprintk("RPC:       %s: returned error %d\n", __FUNCTION__, err);
+	dprintk("RPC:       %s: returned error %d\n", __func__, err);
 	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(rpc_clone_client);
@@ -544,7 +546,7 @@ EXPORT_SYMBOL_GPL(rpc_run_task);
  * @msg: RPC call parameters
  * @flags: RPC call flags
  */
-int rpc_call_sync(struct rpc_clnt *clnt, struct rpc_message *msg, int flags)
+int rpc_call_sync(struct rpc_clnt *clnt, const struct rpc_message *msg, int flags)
 {
 	struct rpc_task	*task;
 	struct rpc_task_setup task_setup_data = {
@@ -575,7 +577,7 @@ EXPORT_SYMBOL_GPL(rpc_call_sync);
  * @data: user call data
  */
 int
-rpc_call_async(struct rpc_clnt *clnt, struct rpc_message *msg, int flags,
+rpc_call_async(struct rpc_clnt *clnt, const struct rpc_message *msg, int flags,
 	       const struct rpc_call_ops *tk_ops, void *data)
 {
 	struct rpc_task	*task;
@@ -690,6 +692,21 @@ rpc_restart_call(struct rpc_task *task)
 }
 EXPORT_SYMBOL_GPL(rpc_restart_call);
 
+#ifdef RPC_DEBUG
+static const char *rpc_proc_name(const struct rpc_task *task)
+{
+	const struct rpc_procinfo *proc = task->tk_msg.rpc_proc;
+
+	if (proc) {
+		if (proc->p_name)
+			return proc->p_name;
+		else
+			return "NULL";
+	} else
+		return "no proc";
+}
+#endif
+
 /*
  * 0.  Initial state
  *
@@ -701,9 +718,9 @@ call_start(struct rpc_task *task)
 {
 	struct rpc_clnt	*clnt = task->tk_client;
 
-	dprintk("RPC: %5u call_start %s%d proc %d (%s)\n", task->tk_pid,
+	dprintk("RPC: %5u call_start %s%d proc %s (%s)\n", task->tk_pid,
 			clnt->cl_protname, clnt->cl_vers,
-			task->tk_msg.rpc_proc->p_proc,
+			rpc_proc_name(task),
 			(RPC_IS_ASYNC(task) ? "async" : "sync"));
 
 	/* Increment call count */
@@ -752,7 +769,7 @@ call_reserveresult(struct rpc_task *task)
 		}
 
 		printk(KERN_ERR "%s: status=%d, but no request slot, exiting\n",
-				__FUNCTION__, status);
+				__func__, status);
 		rpc_exit(task, -EIO);
 		return;
 	}
@@ -763,7 +780,7 @@ call_reserveresult(struct rpc_task *task)
 	 */
 	if (task->tk_rqstp) {
 		printk(KERN_ERR "%s: status=%d, request allocated anyway\n",
-				__FUNCTION__, status);
+				__func__, status);
 		xprt_release(task);
 	}
 
@@ -775,7 +792,7 @@ call_reserveresult(struct rpc_task *task)
 		break;
 	default:
 		printk(KERN_ERR "%s: unrecognized error %d, exiting\n",
-				__FUNCTION__, status);
+				__func__, status);
 		break;
 	}
 	rpc_exit(task, status);
@@ -861,7 +878,7 @@ rpc_xdr_buf_init(struct xdr_buf *buf, void *start, size_t len)
  * 3.	Encode arguments of an RPC call
  */
 static void
-call_encode(struct rpc_task *task)
+rpc_xdr_encode(struct rpc_task *task)
 {
 	struct rpc_rqst	*req = task->tk_rqstp;
 	kxdrproc_t	encode;
@@ -876,23 +893,19 @@ call_encode(struct rpc_task *task)
 			 (char *)req->rq_buffer + req->rq_callsize,
 			 req->rq_rcvsize);
 
-	/* Encode header and provided arguments */
-	encode = task->tk_msg.rpc_proc->p_encode;
-	if (!(p = call_header(task))) {
-		printk(KERN_INFO "RPC: call_header failed, exit EIO\n");
+	p = rpc_encode_header(task);
+	if (p == NULL) {
+		printk(KERN_INFO "RPC: couldn't encode RPC header, exit EIO\n");
 		rpc_exit(task, -EIO);
 		return;
 	}
+
+	encode = task->tk_msg.rpc_proc->p_encode;
 	if (encode == NULL)
 		return;
 
 	task->tk_status = rpcauth_wrap_req(task, encode, req, p,
 			task->tk_msg.rpc_argp);
-	if (task->tk_status == -ENOMEM) {
-		/* XXX: Is this sane? */
-		rpc_delay(task, 3*HZ);
-		task->tk_status = -EAGAIN;
-	}
 }
 
 /*
@@ -929,11 +942,9 @@ call_bind_status(struct rpc_task *task)
 	}
 
 	switch (task->tk_status) {
-	case -EAGAIN:
-		dprintk("RPC: %5u rpcbind waiting for another request "
-				"to finish\n", task->tk_pid);
-		/* avoid busy-waiting here -- could be a network outage. */
-		rpc_delay(task, 5*HZ);
+	case -ENOMEM:
+		dprintk("RPC: %5u rpcbind out of memory\n", task->tk_pid);
+		rpc_delay(task, HZ >> 2);
 		goto retry_timeout;
 	case -EACCES:
 		dprintk("RPC: %5u remote rpcbind: RPC program/version "
@@ -1046,10 +1057,16 @@ call_transmit(struct rpc_task *task)
 	/* Encode here so that rpcsec_gss can use correct sequence number. */
 	if (rpc_task_need_encode(task)) {
 		BUG_ON(task->tk_rqstp->rq_bytes_sent != 0);
-		call_encode(task);
+		rpc_xdr_encode(task);
 		/* Did the encode result in an error condition? */
-		if (task->tk_status != 0)
+		if (task->tk_status != 0) {
+			/* Was the error nonfatal? */
+			if (task->tk_status == -EAGAIN)
+				rpc_delay(task, HZ >> 4);
+			else
+				rpc_exit(task, task->tk_status);
 			return;
+		}
 	}
 	xprt_transmit(task);
 	if (task->tk_status < 0)
@@ -1062,7 +1079,7 @@ call_transmit(struct rpc_task *task)
 	if (task->tk_msg.rpc_proc->p_decode != NULL)
 		return;
 	task->tk_action = rpc_exit_task;
-	rpc_wake_up_task(task);
+	rpc_wake_up_queued_task(&task->tk_xprt->pending, task);
 }
 
 /*
@@ -1116,7 +1133,8 @@ call_status(struct rpc_task *task)
 	case -ETIMEDOUT:
 		task->tk_action = call_timeout;
 		if (task->tk_client->cl_discrtry)
-			xprt_force_disconnect(task->tk_xprt);
+			xprt_conditional_disconnect(task->tk_xprt,
+					req->rq_connect_cookie);
 		break;
 	case -ECONNREFUSED:
 	case -ENOTCONN:
@@ -1131,7 +1149,8 @@ call_status(struct rpc_task *task)
 		rpc_exit(task, status);
 		break;
 	default:
-		printk("%s: RPC call returned error %d\n",
+		if (clnt->cl_chatty)
+			printk("%s: RPC call returned error %d\n",
 			       clnt->cl_protname, -status);
 		rpc_exit(task, status);
 	}
@@ -1156,7 +1175,8 @@ call_timeout(struct rpc_task *task)
 	task->tk_timeouts++;
 
 	if (RPC_IS_SOFT(task)) {
-		printk(KERN_NOTICE "%s: server %s not responding, timed out\n",
+		if (clnt->cl_chatty)
+			printk(KERN_NOTICE "%s: server %s not responding, timed out\n",
 				clnt->cl_protname, clnt->cl_server);
 		rpc_exit(task, -EIO);
 		return;
@@ -1164,10 +1184,16 @@ call_timeout(struct rpc_task *task)
 
 	if (!(task->tk_flags & RPC_CALL_MAJORSEEN)) {
 		task->tk_flags |= RPC_CALL_MAJORSEEN;
-		printk(KERN_NOTICE "%s: server %s not responding, still trying\n",
+		if (clnt->cl_chatty)
+			printk(KERN_NOTICE "%s: server %s not responding, still trying\n",
 			clnt->cl_protname, clnt->cl_server);
 	}
 	rpc_force_rebind(clnt);
+	/*
+	 * Did our request time out due to an RPCSEC_GSS out-of-sequence
+	 * event? RFC2203 requires the server to drop all such requests.
+	 */
+	rpcauth_invalcred(task);
 
 retry:
 	clnt->cl_stats->rpcretrans++;
@@ -1190,21 +1216,10 @@ call_decode(struct rpc_task *task)
 			task->tk_pid, task->tk_status);
 
 	if (task->tk_flags & RPC_CALL_MAJORSEEN) {
-		printk(KERN_NOTICE "%s: server %s OK\n",
-			clnt->cl_protname, clnt->cl_server);
+		if (clnt->cl_chatty)
+			printk(KERN_NOTICE "%s: server %s OK\n",
+				clnt->cl_protname, clnt->cl_server);
 		task->tk_flags &= ~RPC_CALL_MAJORSEEN;
-	}
-
-	if (task->tk_status < 12) {
-		if (!RPC_IS_SOFT(task)) {
-			task->tk_action = call_bind;
-			clnt->cl_stats->rpcretrans++;
-			goto out_retry;
-		}
-		dprintk("RPC:       %s: too small RPC reply size (%d bytes)\n",
-				clnt->cl_protname, task->tk_status);
-		task->tk_action = call_timeout;
-		goto out_retry;
 	}
 
 	/*
@@ -1218,8 +1233,19 @@ call_decode(struct rpc_task *task)
 	WARN_ON(memcmp(&req->rq_rcv_buf, &req->rq_private_buf,
 				sizeof(req->rq_rcv_buf)) != 0);
 
-	/* Verify the RPC header */
-	p = call_verify(task);
+	if (req->rq_rcv_buf.len < 12) {
+		if (!RPC_IS_SOFT(task)) {
+			task->tk_action = call_bind;
+			clnt->cl_stats->rpcretrans++;
+			goto out_retry;
+		}
+		dprintk("RPC:       %s: too small RPC reply size (%d bytes)\n",
+				clnt->cl_protname, task->tk_status);
+		task->tk_action = call_timeout;
+		goto out_retry;
+	}
+
+	p = rpc_verify_header(task);
 	if (IS_ERR(p)) {
 		if (p == ERR_PTR(-EAGAIN))
 			goto out_retry;
@@ -1236,10 +1262,14 @@ call_decode(struct rpc_task *task)
 			task->tk_status);
 	return;
 out_retry:
-	req->rq_received = req->rq_private_buf.len = 0;
 	task->tk_status = 0;
-	if (task->tk_client->cl_discrtry)
-		xprt_force_disconnect(task->tk_xprt);
+	/* Note: rpc_verify_header() may have freed the RPC slot */
+	if (task->tk_rqstp == req) {
+		req->rq_received = req->rq_rcv_buf.len = 0;
+		if (task->tk_client->cl_discrtry)
+			xprt_conditional_disconnect(task->tk_xprt,
+					req->rq_connect_cookie);
+	}
 }
 
 /*
@@ -1280,11 +1310,8 @@ call_refreshresult(struct rpc_task *task)
 	return;
 }
 
-/*
- * Call header serialization
- */
 static __be32 *
-call_header(struct rpc_task *task)
+rpc_encode_header(struct rpc_task *task)
 {
 	struct rpc_clnt *clnt = task->tk_client;
 	struct rpc_rqst	*req = task->tk_rqstp;
@@ -1304,11 +1331,8 @@ call_header(struct rpc_task *task)
 	return p;
 }
 
-/*
- * Reply header verification
- */
 static __be32 *
-call_verify(struct rpc_task *task)
+rpc_verify_header(struct rpc_task *task)
 {
 	struct kvec *iov = &task->tk_rqstp->rq_rcv_buf.head[0];
 	int len = task->tk_rqstp->rq_rcv_buf.len >> 2;
@@ -1323,7 +1347,7 @@ call_verify(struct rpc_task *task)
 		 *   undefined results
 		 */
 		dprintk("RPC: %5u %s: XDR representation not a multiple of"
-		       " 4 bytes: 0x%x\n", task->tk_pid, __FUNCTION__,
+		       " 4 bytes: 0x%x\n", task->tk_pid, __func__,
 		       task->tk_rqstp->rq_rcv_buf.len);
 		goto out_eio;
 	}
@@ -1333,7 +1357,7 @@ call_verify(struct rpc_task *task)
 
 	if ((n = ntohl(*p++)) != RPC_REPLY) {
 		dprintk("RPC: %5u %s: not an RPC reply: %x\n",
-				task->tk_pid, __FUNCTION__, n);
+				task->tk_pid, __func__, n);
 		goto out_garbage;
 	}
 	if ((n = ntohl(*p++)) != RPC_MSG_ACCEPTED) {
@@ -1345,13 +1369,13 @@ call_verify(struct rpc_task *task)
 			case RPC_MISMATCH:
 				dprintk("RPC: %5u %s: RPC call version "
 						"mismatch!\n",
-						task->tk_pid, __FUNCTION__);
+						task->tk_pid, __func__);
 				error = -EPROTONOSUPPORT;
 				goto out_err;
 			default:
 				dprintk("RPC: %5u %s: RPC call rejected, "
 						"unknown error: %x\n",
-						task->tk_pid, __FUNCTION__, n);
+						task->tk_pid, __func__, n);
 				goto out_eio;
 		}
 		if (--len < 0)
@@ -1365,7 +1389,7 @@ call_verify(struct rpc_task *task)
 				break;
 			task->tk_cred_retry--;
 			dprintk("RPC: %5u %s: retry stale creds\n",
-					task->tk_pid, __FUNCTION__);
+					task->tk_pid, __func__);
 			rpcauth_invalcred(task);
 			/* Ensure we obtain a new XID! */
 			xprt_release(task);
@@ -1378,25 +1402,25 @@ call_verify(struct rpc_task *task)
 				break;
 			task->tk_garb_retry--;
 			dprintk("RPC: %5u %s: retry garbled creds\n",
-					task->tk_pid, __FUNCTION__);
+					task->tk_pid, __func__);
 			task->tk_action = call_bind;
 			goto out_retry;
 		case RPC_AUTH_TOOWEAK:
-			printk(KERN_NOTICE "call_verify: server %s requires stronger "
+			printk(KERN_NOTICE "RPC: server %s requires stronger "
 			       "authentication.\n", task->tk_client->cl_server);
 			break;
 		default:
 			dprintk("RPC: %5u %s: unknown auth error: %x\n",
-					task->tk_pid, __FUNCTION__, n);
+					task->tk_pid, __func__, n);
 			error = -EIO;
 		}
 		dprintk("RPC: %5u %s: call rejected %d\n",
-				task->tk_pid, __FUNCTION__, n);
+				task->tk_pid, __func__, n);
 		goto out_err;
 	}
 	if (!(p = rpcauth_checkverf(task, p))) {
 		dprintk("RPC: %5u %s: auth check failed\n",
-				task->tk_pid, __FUNCTION__);
+				task->tk_pid, __func__);
 		goto out_garbage;		/* bad verifier, retry */
 	}
 	len = p - (__be32 *)iov->iov_base - 1;
@@ -1407,24 +1431,24 @@ call_verify(struct rpc_task *task)
 		return p;
 	case RPC_PROG_UNAVAIL:
 		dprintk("RPC: %5u %s: program %u is unsupported by server %s\n",
-				task->tk_pid, __FUNCTION__,
+				task->tk_pid, __func__,
 				(unsigned int)task->tk_client->cl_prog,
 				task->tk_client->cl_server);
 		error = -EPFNOSUPPORT;
 		goto out_err;
 	case RPC_PROG_MISMATCH:
 		dprintk("RPC: %5u %s: program %u, version %u unsupported by "
-				"server %s\n", task->tk_pid, __FUNCTION__,
+				"server %s\n", task->tk_pid, __func__,
 				(unsigned int)task->tk_client->cl_prog,
 				(unsigned int)task->tk_client->cl_vers,
 				task->tk_client->cl_server);
 		error = -EPROTONOSUPPORT;
 		goto out_err;
 	case RPC_PROC_UNAVAIL:
-		dprintk("RPC: %5u %s: proc %p unsupported by program %u, "
+		dprintk("RPC: %5u %s: proc %s unsupported by program %u, "
 				"version %u on server %s\n",
-				task->tk_pid, __FUNCTION__,
-				task->tk_msg.rpc_proc,
+				task->tk_pid, __func__,
+				rpc_proc_name(task),
 				task->tk_client->cl_prog,
 				task->tk_client->cl_vers,
 				task->tk_client->cl_server);
@@ -1432,11 +1456,11 @@ call_verify(struct rpc_task *task)
 		goto out_err;
 	case RPC_GARBAGE_ARGS:
 		dprintk("RPC: %5u %s: server saw garbage\n",
-				task->tk_pid, __FUNCTION__);
+				task->tk_pid, __func__);
 		break;			/* retry */
 	default:
 		dprintk("RPC: %5u %s: server accept status: %x\n",
-				task->tk_pid, __FUNCTION__, n);
+				task->tk_pid, __func__, n);
 		/* Also retry */
 	}
 
@@ -1445,7 +1469,7 @@ out_garbage:
 	if (task->tk_garb_retry) {
 		task->tk_garb_retry--;
 		dprintk("RPC: %5u %s: retrying\n",
-				task->tk_pid, __FUNCTION__);
+				task->tk_pid, __func__);
 		task->tk_action = call_bind;
 out_retry:
 		return ERR_PTR(-EAGAIN);
@@ -1455,11 +1479,11 @@ out_eio:
 out_err:
 	rpc_exit(task, error);
 	dprintk("RPC: %5u %s: call failed with error %d\n", task->tk_pid,
-			__FUNCTION__, error);
+			__func__, error);
 	return ERR_PTR(error);
 out_overflow:
 	dprintk("RPC: %5u %s: server reply was truncated.\n", task->tk_pid,
-			__FUNCTION__);
+			__func__);
 	goto out_garbage;
 }
 
@@ -1507,44 +1531,53 @@ struct rpc_task *rpc_call_null(struct rpc_clnt *clnt, struct rpc_cred *cred, int
 EXPORT_SYMBOL_GPL(rpc_call_null);
 
 #ifdef RPC_DEBUG
+static void rpc_show_header(void)
+{
+	printk(KERN_INFO "-pid- flgs status -client- --rqstp- "
+		"-timeout ---ops--\n");
+}
+
+static void rpc_show_task(const struct rpc_clnt *clnt,
+			  const struct rpc_task *task)
+{
+	const char *rpc_waitq = "none";
+	char *p, action[KSYM_SYMBOL_LEN];
+
+	if (RPC_IS_QUEUED(task))
+		rpc_waitq = rpc_qname(task->tk_waitqueue);
+
+	/* map tk_action pointer to a function name; then trim off
+	 * the "+0x0 [sunrpc]" */
+	sprint_symbol(action, (unsigned long)task->tk_action);
+	p = strchr(action, '+');
+	if (p)
+		*p = '\0';
+
+	printk(KERN_INFO "%5u %04x %6d %8p %8p %8ld %8p %sv%u %s a:%s q:%s\n",
+		task->tk_pid, task->tk_flags, task->tk_status,
+		clnt, task->tk_rqstp, task->tk_timeout, task->tk_ops,
+		clnt->cl_protname, clnt->cl_vers, rpc_proc_name(task),
+		action, rpc_waitq);
+}
+
 void rpc_show_tasks(void)
 {
 	struct rpc_clnt *clnt;
-	struct rpc_task *t;
+	struct rpc_task *task;
+	int header = 0;
 
 	spin_lock(&rpc_client_lock);
-	if (list_empty(&all_clients))
-		goto out;
-	printk("-pid- proc flgs status -client- -prog- --rqstp- -timeout "
-		"-rpcwait -action- ---ops--\n");
 	list_for_each_entry(clnt, &all_clients, cl_clients) {
-		if (list_empty(&clnt->cl_tasks))
-			continue;
 		spin_lock(&clnt->cl_lock);
-		list_for_each_entry(t, &clnt->cl_tasks, tk_task) {
-			const char *rpc_waitq = "none";
-			int proc;
-
-			if (t->tk_msg.rpc_proc)
-				proc = t->tk_msg.rpc_proc->p_proc;
-			else
-				proc = -1;
-
-			if (RPC_IS_QUEUED(t))
-				rpc_waitq = rpc_qname(t->u.tk_wait.rpc_waitq);
-
-			printk("%5u %04d %04x %6d %8p %6d %8p %8ld %8s %8p %8p\n",
-				t->tk_pid, proc,
-				t->tk_flags, t->tk_status,
-				t->tk_client,
-				(t->tk_client ? t->tk_client->cl_prog : 0),
-				t->tk_rqstp, t->tk_timeout,
-				rpc_waitq,
-				t->tk_action, t->tk_ops);
+		list_for_each_entry(task, &clnt->cl_tasks, tk_task) {
+			if (!header) {
+				rpc_show_header();
+				header++;
+			}
+			rpc_show_task(clnt, task);
 		}
 		spin_unlock(&clnt->cl_lock);
 	}
-out:
 	spin_unlock(&rpc_client_lock);
 }
 #endif

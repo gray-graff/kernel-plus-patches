@@ -9,7 +9,6 @@
 #include <linux/pci.h>
 #include <linux/irq.h>
 #include <asm/sections.h>
-#include <asm/semaphore.h>
 #include <asm/processor.h>
 #include <asm/uaccess.h>
 #include <asm/checksum.h>
@@ -20,8 +19,6 @@
 
 extern int dump_fpu(struct pt_regs *, elf_fpregset_t *);
 extern struct hw_interrupt_type no_irq_type;
-
-EXPORT_SYMBOL(sh_mv);
 
 /* platform dependent support */
 EXPORT_SYMBOL(dump_fpu);
@@ -47,12 +44,6 @@ EXPORT_SYMBOL(__copy_user);
 #ifdef CONFIG_MMU
 EXPORT_SYMBOL(get_vm_area);
 #endif
-
-/* semaphore exports */
-EXPORT_SYMBOL(__up);
-EXPORT_SYMBOL(__down);
-EXPORT_SYMBOL(__down_interruptible);
-EXPORT_SYMBOL(__down_trylock);
 
 EXPORT_SYMBOL(__udelay);
 EXPORT_SYMBOL(__ndelay);
@@ -116,9 +107,11 @@ DECLARE_EXPORT(__movmemSI12_i4);
  * GCC >= 4.2 emits these for division, as do GCC 4.1.x versions of the ST
  * compiler which include backported patches.
  */
-DECLARE_EXPORT(__sdivsi3_i4i);
 DECLARE_EXPORT(__udiv_qrnnd_16);
+#if !defined(CONFIG_CPU_SH2)
+DECLARE_EXPORT(__sdivsi3_i4i);
 DECLARE_EXPORT(__udivsi3_i4i);
+#endif
 #endif
 #else /* GCC 3.x */
 DECLARE_EXPORT(__movstr_i4_even);

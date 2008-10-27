@@ -2107,6 +2107,7 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 			aggregator = __get_first_agg(port);
 			ad_agg_selection_logic(aggregator);
 		}
+		bond_3ad_set_carrier(bond);
 	}
 
 	// for each port run the state machines
@@ -2429,7 +2430,7 @@ int bond_3ad_lacpdu_recv(struct sk_buff *skb, struct net_device *dev, struct pac
 	struct slave *slave = NULL;
 	int ret = NET_RX_DROP;
 
-	if (dev->nd_net != &init_net)
+	if (dev_net(dev) != &init_net)
 		goto out;
 
 	if (!(dev->flags & IFF_MASTER))

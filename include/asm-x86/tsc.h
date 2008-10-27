@@ -32,7 +32,7 @@ static inline cycles_t get_cycles(void)
 	return ret;
 }
 
-static inline cycles_t vget_cycles(void)
+static __always_inline cycles_t vget_cycles(void)
 {
 	/*
 	 * We only do VDSOs on TSC capable CPUs, so this shouldnt
@@ -42,13 +42,12 @@ static inline cycles_t vget_cycles(void)
 	if (!cpu_has_tsc)
 		return 0;
 #endif
-	return (cycles_t) __native_read_tsc();
+	return (cycles_t)__native_read_tsc();
 }
 
 extern void tsc_init(void);
 extern void mark_tsc_unstable(char *reason);
 extern int unsynchronized_tsc(void);
-extern void init_tsc_clocksource(void);
 int check_tsc_unstable(void);
 
 /*
@@ -58,7 +57,6 @@ int check_tsc_unstable(void);
 extern void check_tsc_sync_source(int cpu);
 extern void check_tsc_sync_target(void);
 
-extern void tsc_calibrate(void);
 extern int notsc_setup(char *);
 
 #endif

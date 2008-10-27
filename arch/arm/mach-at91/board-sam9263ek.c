@@ -32,7 +32,7 @@
 
 #include <video/atmel_lcdc.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/setup.h>
 #include <asm/mach-types.h>
 #include <asm/irq.h>
@@ -41,31 +41,26 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/arch/board.h>
-#include <asm/arch/gpio.h>
-#include <asm/arch/at91sam926x_mc.h>
+#include <mach/board.h>
+#include <mach/gpio.h>
+#include <mach/at91sam9_smc.h>
 
 #include "generic.h"
 
-
-/*
- * Serial port configuration.
- *    0 .. 2 = USART0 .. USART2
- *    3      = DBGU
- */
-static struct at91_uart_config __initdata ek_uart_config = {
-	.console_tty	= 0,				/* ttyS0 */
-	.nr_tty		= 2,
-	.tty_map	= { 3, 0, -1, -1, }		/* ttyS0, ..., ttyS3 */
-};
 
 static void __init ek_map_io(void)
 {
 	/* Initialize processor: 16.367 MHz crystal */
 	at91sam9263_initialize(16367660);
 
-	/* Setup the serial ports and console */
-	at91_init_serial(&ek_uart_config);
+	/* DGBU on ttyS0. (Rx & Tx only) */
+	at91_register_uart(0, 0, 0);
+
+	/* USART0 on ttyS1. (Rx, Tx, RTS, CTS) */
+	at91_register_uart(AT91SAM9263_ID_US0, 1, ATMEL_UART_CTS | ATMEL_UART_RTS);
+
+	/* set serial console to ttyS0 (ie, DBGU) */
+	at91_set_serial_console(0);
 }
 
 static void __init ek_init_irq(void)
@@ -192,14 +187,14 @@ static struct mtd_partition * __init nand_partitions(int size, int *num_partitio
 	return ek_nand_partition;
 }
 
-static struct at91_nand_data __initdata ek_nand_data = {
+static struct atmel_nand_data __initdata ek_nand_data = {
 	.ale		= 21,
 	.cle		= 22,
 //	.det_pin	= ... not connected
 	.rdy_pin	= AT91_PIN_PA22,
 	.enable_pin	= AT91_PIN_PD15,
 	.partition_info	= nand_partitions,
-#if defined(CONFIG_MTD_NAND_AT91_BUSWIDTH_16)
+#if defined(CONFIG_MTD_NAND_ATMEL_BUSWIDTH_16)
 	.bus_width_16	= 1,
 #else
 	.bus_width_16	= 0,
@@ -341,7 +336,7 @@ static struct gpio_led ek_leds[] = {
 		.name			= "ds3",
 		.gpio			= AT91_PIN_PB7,
 		.default_trigger	= "heartbeat",
-	},
+	}
 };
 
 

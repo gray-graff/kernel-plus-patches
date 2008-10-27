@@ -191,9 +191,9 @@ void line_flush_chars(struct tty_struct *tty)
 	line_flush_buffer(tty);
 }
 
-void line_put_char(struct tty_struct *tty, unsigned char ch)
+int line_put_char(struct tty_struct *tty, unsigned char ch)
 {
-	line_write(tty, &ch, sizeof(ch));
+	return line_write(tty, &ch, sizeof(ch));
 }
 
 int line_write(struct tty_struct *tty, const unsigned char *buf, int len)
@@ -304,7 +304,7 @@ int line_ioctl(struct tty_struct *tty, struct file * file,
 				break;
 		if (i == ARRAY_SIZE(tty_ioctls)) {
 			printk(KERN_ERR "%s: %s: unknown ioctl: 0x%x\n",
-			       __FUNCTION__, tty->name, cmd);
+			       __func__, tty->name, cmd);
 		}
 		ret = -ENOIOCTLCMD;
 		break;
@@ -362,19 +362,7 @@ static irqreturn_t line_write_interrupt(int irq, void *data)
 	if (tty == NULL)
 		return IRQ_NONE;
 
-	if (test_bit(TTY_DO_WRITE_WAKEUP, &tty->flags) &&
-	   (tty->ldisc.write_wakeup != NULL))
-		(tty->ldisc.write_wakeup)(tty);
-
-	/*
-	 * BLOCKING mode
-	 * In blocking mode, everything sleeps on tty->write_wait.
-	 * Sleeping in the console driver would break non-blocking
-	 * writes.
-	 */
-
-	if (waitqueue_active(&tty->write_wait))
-		wake_up_interruptible(&tty->write_wait);
+	tty_wakeup(tty);
 	return IRQ_HANDLED;
 }
 

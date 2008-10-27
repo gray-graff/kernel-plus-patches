@@ -39,7 +39,6 @@
 #include <pcmcia/cs_types.h>
 #include <pcmcia/cs.h>
 #include <pcmcia/ss.h>
-#include <pcmcia/bulkmem.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/bus_ops.h>
 #include "cs_internal.h"
@@ -56,7 +55,7 @@
 #define PCMCIA_IRQ		AU1000_GPIO_4
 
 #if 0
-#define DEBUG(x,args...)	printk(__FUNCTION__ ": " x,##args)
+#define DEBUG(x, args...)	printk(__func__ ": " x, ##args)
 #else
 #define DEBUG(x,args...)
 #endif

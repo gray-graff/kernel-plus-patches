@@ -293,7 +293,7 @@ void pmb_unmap(unsigned long addr)
 	} while (pmbe);
 }
 
-static void pmb_cache_ctor(struct kmem_cache *cachep, void *pmb)
+static void pmb_cache_ctor(void *pmb)
 {
 	struct pmb_entry *pmbe = pmb;
 
@@ -385,7 +385,7 @@ static const struct file_operations pmb_debugfs_fops = {
 	.open		= pmb_debugfs_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
-	.release	= seq_release,
+	.release	= single_release,
 };
 
 static int __init pmb_debugfs_init(void)
@@ -393,7 +393,7 @@ static int __init pmb_debugfs_init(void)
 	struct dentry *dentry;
 
 	dentry = debugfs_create_file("pmb", S_IFREG | S_IRUGO,
-				     NULL, NULL, &pmb_debugfs_fops);
+				     sh_debugfs_root, NULL, &pmb_debugfs_fops);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 

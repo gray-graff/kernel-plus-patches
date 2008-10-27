@@ -1,4 +1,4 @@
-/*  $Id: setup.c,v 1.126 2001/11/13 00:49:27 davem Exp $
+/*
  *  linux/arch/sparc/kernel/setup.c
  *
  *  Copyright (C) 1995  David S. Miller (davem@caip.rutgers.edu)
@@ -67,7 +67,7 @@ struct screen_info screen_info = {
 extern unsigned long trapbase;
 
 /* Pretty sick eh? */
-void prom_sync_me(void)
+static void prom_sync_me(void)
 {
 	unsigned long prom_tbr, flags;
 
@@ -97,7 +97,7 @@ void prom_sync_me(void)
 	return;
 }
 
-unsigned int boot_flags __initdata = 0;
+static unsigned int boot_flags __initdata = 0;
 #define BOOTME_DEBUG  0x1
 
 /* Exported for mm/init.c:paging_init. */
@@ -180,11 +180,9 @@ static void __init boot_flags_init(char *commands)
 
 /* This routine will in the future do all the nasty prom stuff
  * to probe for the mmu type and its parameters, etc. This will
- * also be where SMP things happen plus the Sparc specific memory
- * physical memory probe as on the alpha.
+ * also be where SMP things happen.
  */
 
-extern int prom_probe_memory(void);
 extern void sun4c_probe_vac(void);
 extern char cputypval;
 extern unsigned long start, end;
@@ -268,7 +266,6 @@ void __init setup_arch(char **cmdline_p)
 	if (ARCH_SUN4C_SUN4)
 		sun4c_probe_vac();
 	load_mmu();
-	(void) prom_probe_memory();
 
 	phys_base = 0xffffffffUL;
 	highest_paddr = 0UL;

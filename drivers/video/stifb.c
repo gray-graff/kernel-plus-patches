@@ -164,11 +164,11 @@ static int __initdata stifb_bpp_pref[MAX_STI_ROMS];
 # define  DEBUG_ON()  debug_on=1
 # define WRITE_BYTE(value,fb,reg)	do { if (debug_on) \
 						printk(KERN_DEBUG "%30s: WRITE_BYTE(0x%06x) = 0x%02x (old=0x%02x)\n", \
-							__FUNCTION__, reg, value, READ_BYTE(fb,reg)); 		  \
+							__func__, reg, value, READ_BYTE(fb,reg)); 		  \
 					gsc_writeb((value),(fb)->info.fix.mmio_start + (reg)); } while (0)
 # define WRITE_WORD(value,fb,reg)	do { if (debug_on) \
 						printk(KERN_DEBUG "%30s: WRITE_WORD(0x%06x) = 0x%08x (old=0x%08x)\n", \
-							__FUNCTION__, reg, value, READ_WORD(fb,reg)); 		  \
+							__func__, reg, value, READ_WORD(fb,reg)); 		  \
 					gsc_writel((value),(fb)->info.fix.mmio_start + (reg)); } while (0)
 #endif /* DEBUG_STIFB_REGS */
 
@@ -1078,8 +1078,7 @@ static struct fb_ops stifb_ops = {
  *  Initialization
  */
 
-int __init
-stifb_init_fb(struct sti_struct *sti, int bpp_pref)
+static int __init stifb_init_fb(struct sti_struct *sti, int bpp_pref)
 {
 	struct fb_fix_screeninfo *fix;
 	struct fb_var_screeninfo *var;
@@ -1315,8 +1314,7 @@ static int stifb_disabled __initdata;
 int __init
 stifb_setup(char *options);
 
-int __init
-stifb_init(void)
+static int __init stifb_init(void)
 {
 	struct sti_struct *sti;
 	struct sti_struct *def_sti;

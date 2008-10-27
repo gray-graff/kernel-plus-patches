@@ -40,7 +40,7 @@
 
 unsigned int video_debug;
 static unsigned int gbuffers      = 8;
-static unsigned int noninterlaced = 0;
+static unsigned int noninterlaced; /* 0 */
 static unsigned int gbufsize      = 720*576*4;
 static unsigned int gbufsize_max  = 720*576*4;
 static char secam[] = "--";
@@ -626,13 +626,8 @@ void saa7134_set_tvnorm_hw(struct saa7134_dev *dev)
 {
 	saa7134_set_decoder(dev);
 
-	if (card_in(dev, dev->ctl_input).tv) {
-		if ((card(dev).tuner_type == TUNER_PHILIPS_TDA8290)
-				&& ((card(dev).tuner_config == 1)
-				||  (card(dev).tuner_config == 2)))
-			saa7134_set_gpio(dev, 22, 5);
+	if (card_in(dev, dev->ctl_input).tv)
 		saa7134_i2c_call_clients(dev, VIDIOC_S_STD, &dev->tvnorm->id);
-	}
 }
 
 static void set_h_prescale(struct saa7134_dev *dev, int task, int prescale)
@@ -1117,10 +1112,8 @@ static struct videobuf_queue_ops video_qops = {
 
 /* ------------------------------------------------------------------ */
 
-int saa7134_g_ctrl(struct file *file, void *priv, struct v4l2_control *c)
+int saa7134_g_ctrl_internal(struct saa7134_dev *dev, struct saa7134_fh *fh, struct v4l2_control *c)
 {
-	struct saa7134_fh *fh = priv;
-	struct saa7134_dev *dev = fh->dev;
 	const struct v4l2_queryctrl* ctrl;
 
 	ctrl = ctrl_by_id(c->id);
@@ -1165,20 +1158,31 @@ int saa7134_g_ctrl(struct file *file, void *priv, struct v4l2_control *c)
 	}
 	return 0;
 }
-EXPORT_SYMBOL_GPL(saa7134_g_ctrl);
+EXPORT_SYMBOL_GPL(saa7134_g_ctrl_internal);
 
-int saa7134_s_ctrl(struct file *file, void *f, struct v4l2_control *c)
+static int saa7134_g_ctrl(struct file *file, void *priv, struct v4l2_control *c)
+{
+	struct saa7134_fh *fh = priv;
+
+	return saa7134_g_ctrl_internal(fh->dev, fh, c);
+}
+
+int saa7134_s_ctrl_internal(struct saa7134_dev *dev,  struct saa7134_fh *fh, struct v4l2_control *c)
 {
 	const struct v4l2_queryctrl* ctrl;
-	struct saa7134_fh *fh = f;
-	struct saa7134_dev *dev = fh->dev;
 	unsigned long flags;
 	int restart_overlay = 0;
-	int err = -EINVAL;
+	int err;
 
-	err = v4l2_prio_check(&dev->prio, &fh->prio);
-	if (0 != err)
-		return err;
+	/* When called from the empress code fh == NULL.
+	   That needs to be fixed somehow, but for now this is
+	   good enough. */
+	if (fh) {
+		err = v4l2_prio_check(&dev->prio, &fh->prio);
+		if (0 != err)
+			return err;
+	}
+	err = -EINVAL;
 
 	mutex_lock(&dev->lock);
 
@@ -1279,7 +1283,14 @@ error:
 	mutex_unlock(&dev->lock);
 	return err;
 }
-EXPORT_SYMBOL_GPL(saa7134_s_ctrl);
+EXPORT_SYMBOL_GPL(saa7134_s_ctrl_internal);
+
+static int saa7134_s_ctrl(struct file *file, void *f, struct v4l2_control *c)
+{
+	struct saa7134_fh *fh = f;
+
+	return saa7134_s_ctrl_internal(fh->dev, fh, c);
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -1350,14 +1361,14 @@ static int video_open(struct inode *inode, struct file *file)
 	fh->height   = 576;
 	v4l2_prio_open(&dev->prio,&fh->prio);
 
-	videobuf_queue_pci_init(&fh->cap, &video_qops,
-			    dev->pci, &dev->slock,
+	videobuf_queue_sg_init(&fh->cap, &video_qops,
+			    &dev->pci->dev, &dev->slock,
 			    V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			    V4L2_FIELD_INTERLACED,
 			    sizeof(struct saa7134_buf),
 			    fh);
-	videobuf_queue_pci_init(&fh->vbi, &saa7134_vbi_qops,
-			    dev->pci, &dev->slock,
+	videobuf_queue_sg_init(&fh->vbi, &saa7134_vbi_qops,
+			    &dev->pci->dev, &dev->slock,
 			    V4L2_BUF_TYPE_VBI_CAPTURE,
 			    V4L2_FIELD_SEQ_TB,
 			    sizeof(struct saa7134_buf),
@@ -1501,7 +1512,7 @@ static int video_mmap(struct file *file, struct vm_area_struct * vma)
 
 /* ------------------------------------------------------------------ */
 
-static int saa7134_try_get_set_fmt_vbi(struct file *file, void *priv,
+static int saa7134_try_get_set_fmt_vbi_cap(struct file *file, void *priv,
 						struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
@@ -1521,7 +1532,7 @@ static int saa7134_try_get_set_fmt_vbi(struct file *file, void *priv,
 	return 0;
 }
 
-static int saa7134_g_fmt_cap(struct file *file, void *priv,
+static int saa7134_g_fmt_vid_cap(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
@@ -1537,7 +1548,7 @@ static int saa7134_g_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int saa7134_g_fmt_overlay(struct file *file, void *priv,
+static int saa7134_g_fmt_vid_overlay(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
@@ -1551,7 +1562,7 @@ static int saa7134_g_fmt_overlay(struct file *file, void *priv,
 	return 0;
 }
 
-static int saa7134_try_fmt_cap(struct file *file, void *priv,
+static int saa7134_try_fmt_vid_cap(struct file *file, void *priv,
 						struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
@@ -1602,7 +1613,7 @@ static int saa7134_try_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int saa7134_try_fmt_overlay(struct file *file, void *priv,
+static int saa7134_try_fmt_vid_overlay(struct file *file, void *priv,
 						struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
@@ -1616,13 +1627,13 @@ static int saa7134_try_fmt_overlay(struct file *file, void *priv,
 	return verify_preview(dev, &f->fmt.win);
 }
 
-static int saa7134_s_fmt_cap(struct file *file, void *priv,
+static int saa7134_s_fmt_vid_cap(struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
 	int err;
 
-	err = saa7134_try_fmt_cap(file, priv, f);
+	err = saa7134_try_fmt_vid_cap(file, priv, f);
 	if (0 != err)
 		return err;
 
@@ -1633,13 +1644,13 @@ static int saa7134_s_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int saa7134_s_fmt_overlay(struct file *file, void *priv,
+static int saa7134_s_fmt_vid_overlay(struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct saa7134_fh *fh = priv;
 	struct saa7134_dev *dev = fh->dev;
 	int err;
-	unsigned int flags;
+	unsigned long flags;
 
 	if (saa7134_no_overlay > 0) {
 		printk(KERN_ERR "V4L2_BUF_TYPE_VIDEO_OVERLAY: no_overlay\n");
@@ -2033,7 +2044,7 @@ static int saa7134_s_priority(struct file *file, void *f,
 	return v4l2_prio_change(&dev->prio, &fh->prio, prio);
 }
 
-static int saa7134_enum_fmt_cap(struct file *file, void  *priv,
+static int saa7134_enum_fmt_vid_cap(struct file *file, void  *priv,
 					struct v4l2_fmtdesc *f)
 {
 	if (f->index >= FORMATS)
@@ -2047,7 +2058,7 @@ static int saa7134_enum_fmt_cap(struct file *file, void  *priv,
 	return 0;
 }
 
-static int saa7134_enum_fmt_overlay(struct file *file, void  *priv,
+static int saa7134_enum_fmt_vid_overlay(struct file *file, void  *priv,
 					struct v4l2_fmtdesc *f)
 {
 	if (saa7134_no_overlay > 0) {
@@ -2066,7 +2077,7 @@ static int saa7134_enum_fmt_overlay(struct file *file, void  *priv,
 	return 0;
 }
 
-static int saa7134_enum_fmt_vbi(struct file *file, void  *priv,
+static int saa7134_enum_fmt_vbi_cap(struct file *file, void  *priv,
 					struct v4l2_fmtdesc *f)
 {
 	if (0 != f->index)
@@ -2213,6 +2224,32 @@ static int saa7134_g_parm(struct file *file, void *fh,
 	return 0;
 }
 
+#ifdef CONFIG_VIDEO_ADV_DEBUG
+static int vidioc_g_register (struct file *file, void *priv,
+			      struct v4l2_register *reg)
+{
+	struct saa7134_fh *fh = priv;
+	struct saa7134_dev *dev = fh->dev;
+
+	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+		return -EINVAL;
+	reg->val = saa_readb(reg->reg);
+	return 0;
+}
+
+static int vidioc_s_register (struct file *file, void *priv,
+				struct v4l2_register *reg)
+{
+	struct saa7134_fh *fh = priv;
+	struct saa7134_dev *dev = fh->dev;
+
+	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+		return -EINVAL;
+	saa_writeb(reg->reg&0xffffff, reg->val);
+	return 0;
+}
+#endif
+
 static int radio_querycap(struct file *file, void *priv,
 					struct v4l2_capability *cap)
 {
@@ -2332,39 +2369,20 @@ static const struct file_operations video_fops =
 	.llseek   = no_llseek,
 };
 
-static const struct file_operations radio_fops =
-{
-	.owner	  = THIS_MODULE,
-	.open	  = video_open,
-	.release  = video_release,
-	.ioctl	  = video_ioctl2,
-	.compat_ioctl	= v4l_compat_ioctl32,
-	.llseek   = no_llseek,
-};
-
-/* ----------------------------------------------------------- */
-/* exported stuff                                              */
-
-struct video_device saa7134_video_template =
-{
-	.name				= "saa7134-video",
-	.type				= VID_TYPE_CAPTURE|VID_TYPE_TUNER |
-					VID_TYPE_CLIPPING|VID_TYPE_SCALES,
-	.fops				= &video_fops,
-	.minor				= -1,
+static const struct v4l2_ioctl_ops video_ioctl_ops = {
 	.vidioc_querycap		= saa7134_querycap,
-	.vidioc_enum_fmt_cap		= saa7134_enum_fmt_cap,
-	.vidioc_g_fmt_cap		= saa7134_g_fmt_cap,
-	.vidioc_try_fmt_cap		= saa7134_try_fmt_cap,
-	.vidioc_s_fmt_cap		= saa7134_s_fmt_cap,
-	.vidioc_enum_fmt_overlay	= saa7134_enum_fmt_overlay,
-	.vidioc_g_fmt_overlay		= saa7134_g_fmt_overlay,
-	.vidioc_try_fmt_overlay		= saa7134_try_fmt_overlay,
-	.vidioc_s_fmt_overlay		= saa7134_s_fmt_overlay,
-	.vidioc_enum_fmt_vbi		= saa7134_enum_fmt_vbi,
-	.vidioc_g_fmt_vbi		= saa7134_try_get_set_fmt_vbi,
-	.vidioc_try_fmt_vbi		= saa7134_try_get_set_fmt_vbi,
-	.vidioc_s_fmt_vbi		= saa7134_try_get_set_fmt_vbi,
+	.vidioc_enum_fmt_vid_cap	= saa7134_enum_fmt_vid_cap,
+	.vidioc_g_fmt_vid_cap		= saa7134_g_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap		= saa7134_try_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap		= saa7134_s_fmt_vid_cap,
+	.vidioc_enum_fmt_vid_overlay	= saa7134_enum_fmt_vid_overlay,
+	.vidioc_g_fmt_vid_overlay	= saa7134_g_fmt_vid_overlay,
+	.vidioc_try_fmt_vid_overlay	= saa7134_try_fmt_vid_overlay,
+	.vidioc_s_fmt_vid_overlay	= saa7134_s_fmt_vid_overlay,
+	.vidioc_enum_fmt_vbi_cap	= saa7134_enum_fmt_vbi_cap,
+	.vidioc_g_fmt_vbi_cap		= saa7134_try_get_set_fmt_vbi_cap,
+	.vidioc_try_fmt_vbi_cap		= saa7134_try_get_set_fmt_vbi_cap,
+	.vidioc_s_fmt_vbi_cap		= saa7134_try_get_set_fmt_vbi_cap,
 	.vidioc_g_audio			= saa7134_g_audio,
 	.vidioc_s_audio			= saa7134_s_audio,
 	.vidioc_cropcap			= saa7134_cropcap,
@@ -2396,16 +2414,22 @@ struct video_device saa7134_video_template =
 	.vidioc_g_parm			= saa7134_g_parm,
 	.vidioc_g_frequency		= saa7134_g_frequency,
 	.vidioc_s_frequency		= saa7134_s_frequency,
-	.tvnorms			= SAA7134_NORMS,
-	.current_norm			= V4L2_STD_PAL,
+#ifdef CONFIG_VIDEO_ADV_DEBUG
+	.vidioc_g_register              = vidioc_g_register,
+	.vidioc_s_register              = vidioc_s_register,
+#endif
 };
 
-struct video_device saa7134_radio_template =
-{
-	.name			= "saa7134-radio",
-	.type			= VID_TYPE_TUNER,
-	.fops			= &radio_fops,
-	.minor			= -1,
+static const struct file_operations radio_fops = {
+	.owner	  = THIS_MODULE,
+	.open	  = video_open,
+	.release  = video_release,
+	.ioctl	  = video_ioctl2,
+	.compat_ioctl	= v4l_compat_ioctl32,
+	.llseek   = no_llseek,
+};
+
+static const struct v4l2_ioctl_ops radio_ioctl_ops = {
 	.vidioc_querycap	= radio_querycap,
 	.vidioc_g_tuner		= radio_g_tuner,
 	.vidioc_enum_input	= radio_enum_input,
@@ -2420,6 +2444,25 @@ struct video_device saa7134_radio_template =
 	.vidioc_s_ctrl		= saa7134_s_ctrl,
 	.vidioc_g_frequency	= saa7134_g_frequency,
 	.vidioc_s_frequency	= saa7134_s_frequency,
+};
+
+/* ----------------------------------------------------------- */
+/* exported stuff                                              */
+
+struct video_device saa7134_video_template = {
+	.name				= "saa7134-video",
+	.fops				= &video_fops,
+	.ioctl_ops 			= &video_ioctl_ops,
+	.minor				= -1,
+	.tvnorms			= SAA7134_NORMS,
+	.current_norm			= V4L2_STD_PAL,
+};
+
+struct video_device saa7134_radio_template = {
+	.name			= "saa7134-radio",
+	.fops			= &radio_fops,
+	.ioctl_ops 		= &radio_ioctl_ops,
+	.minor			= -1,
 };
 
 int saa7134_video_init1(struct saa7134_dev *dev)
@@ -2463,13 +2506,14 @@ int saa7134_videoport_init(struct saa7134_dev *dev)
 	int vo = saa7134_boards[dev->board].video_out;
 	int video_reg;
 	unsigned int vid_port_opts = saa7134_boards[dev->board].vid_port_opts;
+
+	/* Configure videoport */
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL0, video_out[vo][0]);
 	video_reg = video_out[vo][1];
 	if (vid_port_opts & SET_T_CODE_POLARITY_NON_INVERTED)
 		video_reg &= ~VP_T_CODE_P_INVERTED;
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL1, video_reg);
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL2, video_out[vo][2]);
-	saa_writeb(SAA7134_VIDEO_PORT_CTRL3, video_out[vo][3]);
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL4, video_out[vo][4]);
 	video_reg = video_out[vo][5];
 	if (vid_port_opts & SET_CLOCK_NOT_DELAYED)
@@ -2485,6 +2529,9 @@ int saa7134_videoport_init(struct saa7134_dev *dev)
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL6, video_reg);
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL7, video_out[vo][7]);
 	saa_writeb(SAA7134_VIDEO_PORT_CTRL8, video_out[vo][8]);
+
+	/* Start videoport */
+	saa_writeb(SAA7134_VIDEO_PORT_CTRL3, video_out[vo][3]);
 
 	return 0;
 }

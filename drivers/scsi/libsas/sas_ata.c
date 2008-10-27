@@ -74,7 +74,7 @@ static enum ata_completion_errors sas_to_ata_err(struct task_status_struct *ts)
 		case SAS_OPEN_TO:
 		case SAS_OPEN_REJECT:
 			SAS_DPRINTK("%s: Saw error %d.  What to do?\n",
-				    __FUNCTION__, ts->stat);
+				    __func__, ts->stat);
 			return AC_ERR_OTHER;
 
 		case SAS_ABORTED_TASK:
@@ -115,7 +115,7 @@ static void sas_ata_task_done(struct sas_task *task)
 	} else if (stat->stat != SAM_STAT_GOOD) {
 		ac = sas_to_ata_err(stat);
 		if (ac) {
-			SAS_DPRINTK("%s: SAS error %x\n", __FUNCTION__,
+			SAS_DPRINTK("%s: SAS error %x\n", __func__,
 				    stat->stat);
 			/* We saw a SAS error. Send a vague error. */
 			qc->err_mask = ac;
@@ -225,10 +225,12 @@ static unsigned int sas_ata_qc_issue(struct ata_queued_cmd *qc)
 	return 0;
 }
 
-static u8 sas_ata_check_status(struct ata_port *ap)
+static bool sas_ata_qc_fill_rtf(struct ata_queued_cmd *qc)
 {
-	struct domain_device *dev = ap->private_data;
-	return dev->sata_dev.tf.command;
+	struct domain_device *dev = qc->ap->private_data;
+
+	memcpy(&qc->result_tf, &dev->sata_dev.tf, sizeof(qc->result_tf));
+	return true;
 }
 
 static void sas_ata_phy_reset(struct ata_port *ap)
@@ -242,20 +244,20 @@ static void sas_ata_phy_reset(struct ata_port *ap)
 		res = i->dft->lldd_I_T_nexus_reset(dev);
 
 	if (res != TMF_RESP_FUNC_COMPLETE)
-		SAS_DPRINTK("%s: Unable to reset I T nexus?\n", __FUNCTION__);
+		SAS_DPRINTK("%s: Unable to reset I T nexus?\n", __func__);
 
 	switch (dev->sata_dev.command_set) {
 		case ATA_COMMAND_SET:
-			SAS_DPRINTK("%s: Found ATA device.\n", __FUNCTION__);
+			SAS_DPRINTK("%s: Found ATA device.\n", __func__);
 			ap->link.device[0].class = ATA_DEV_ATA;
 			break;
 		case ATAPI_COMMAND_SET:
-			SAS_DPRINTK("%s: Found ATAPI device.\n", __FUNCTION__);
+			SAS_DPRINTK("%s: Found ATAPI device.\n", __func__);
 			ap->link.device[0].class = ATA_DEV_ATAPI;
 			break;
 		default:
 			SAS_DPRINTK("%s: Unknown SATA command set: %d.\n",
-				    __FUNCTION__,
+				    __func__,
 				    dev->sata_dev.command_set);
 			ap->link.device[0].class = ATA_DEV_UNKNOWN;
 			break;
@@ -292,18 +294,12 @@ static void sas_ata_post_internal(struct ata_queued_cmd *qc)
 	}
 }
 
-static void sas_ata_tf_read(struct ata_port *ap, struct ata_taskfile *tf)
-{
-	struct domain_device *dev = ap->private_data;
-	memcpy(tf, &dev->sata_dev.tf, sizeof (*tf));
-}
-
 static int sas_ata_scr_write(struct ata_port *ap, unsigned int sc_reg_in,
 			      u32 val)
 {
 	struct domain_device *dev = ap->private_data;
 
-	SAS_DPRINTK("STUB %s\n", __FUNCTION__);
+	SAS_DPRINTK("STUB %s\n", __func__);
 	switch (sc_reg_in) {
 		case SCR_STATUS:
 			dev->sata_dev.sstatus = val;
@@ -328,7 +324,7 @@ static int sas_ata_scr_read(struct ata_port *ap, unsigned int sc_reg_in,
 {
 	struct domain_device *dev = ap->private_data;
 
-	SAS_DPRINTK("STUB %s\n", __FUNCTION__);
+	SAS_DPRINTK("STUB %s\n", __func__);
 	switch (sc_reg_in) {
 		case SCR_STATUS:
 			*val = dev->sata_dev.sstatus;
@@ -348,14 +344,11 @@ static int sas_ata_scr_read(struct ata_port *ap, unsigned int sc_reg_in,
 }
 
 static struct ata_port_operations sas_sata_ops = {
-	.check_status		= sas_ata_check_status,
-	.check_altstatus	= sas_ata_check_status,
-	.dev_select		= ata_noop_dev_select,
 	.phy_reset		= sas_ata_phy_reset,
 	.post_internal_cmd	= sas_ata_post_internal,
-	.tf_read		= sas_ata_tf_read,
 	.qc_prep		= ata_noop_qc_prep,
 	.qc_issue		= sas_ata_qc_issue,
+	.qc_fill_rtf		= sas_ata_qc_fill_rtf,
 	.port_start		= ata_sas_port_start,
 	.port_stop		= ata_sas_port_stop,
 	.scr_read		= sas_ata_scr_read,
@@ -698,7 +691,7 @@ static int sas_discover_sata_dev(struct domain_device *dev)
 		/* incomplete response */
 		SAS_DPRINTK("sending SET FEATURE/PUP_STBY_SPIN_UP to "
 			    "dev %llx\n", SAS_ADDR(dev->sas_addr));
-		if (!le16_to_cpu(identify_x[83] & (1<<6)))
+		if (!(identify_x[83] & cpu_to_le16(1<<6)))
 			goto cont1;
 		res = sas_issue_ata_cmd(dev, ATA_SET_FEATURES,
 					ATA_FEATURE_PUP_STBY_SPIN_UP,

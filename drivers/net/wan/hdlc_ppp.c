@@ -9,19 +9,18 @@
  * as published by the Free Software Foundation.
  */
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/slab.h>
-#include <linux/poll.h>
 #include <linux/errno.h>
-#include <linux/if_arp.h>
-#include <linux/init.h>
-#include <linux/skbuff.h>
-#include <linux/pkt_sched.h>
-#include <linux/inetdevice.h>
-#include <linux/lapb.h>
-#include <linux/rtnetlink.h>
 #include <linux/hdlc.h>
+#include <linux/if_arp.h>
+#include <linux/inetdevice.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/pkt_sched.h>
+#include <linux/poll.h>
+#include <linux/rtnetlink.h>
+#include <linux/skbuff.h>
+#include <linux/slab.h>
 #include <net/syncppp.h>
 
 struct ppp_state {
@@ -45,7 +44,7 @@ static int ppp_open(struct net_device *dev)
 	int (*old_ioctl)(struct net_device *, struct ifreq *, int);
 	int result;
 
-	dev->priv = &state(hdlc)->syncppp_ptr;
+	dev->ml_priv = &state(hdlc)->syncppp_ptr;
 	state(hdlc)->syncppp_ptr = &state(hdlc)->pppdev;
 	state(hdlc)->pppdev.dev = dev;
 

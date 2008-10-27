@@ -91,7 +91,8 @@ static struct alias_pav_group *_find_group(struct alias_lcu *lcu,
 	else
 		search_unit_addr = uid->base_unit_addr;
 	list_for_each_entry(pos, &lcu->grouplist, group) {
-		if (pos->uid.base_unit_addr == search_unit_addr)
+		if (pos->uid.base_unit_addr == search_unit_addr &&
+		    !strncmp(pos->uid.vduit, uid->vduit, sizeof(uid->vduit)))
 			return pos;
 	};
 	return NULL;
@@ -332,6 +333,7 @@ static int _add_device_to_lcu(struct alias_lcu *lcu,
 			group->uid.base_unit_addr = uid->real_unit_addr;
 		else
 			group->uid.base_unit_addr = uid->base_unit_addr;
+		memcpy(group->uid.vduit, uid->vduit, sizeof(uid->vduit));
 		INIT_LIST_HEAD(&group->group);
 		INIT_LIST_HEAD(&group->baselist);
 		INIT_LIST_HEAD(&group->aliaslist);
@@ -745,6 +747,19 @@ static void flush_all_alias_devices_on_lcu(struct alias_lcu *lcu)
 	spin_unlock_irqrestore(&lcu->lock, flags);
 }
 
+static void __stop_device_on_lcu(struct dasd_device *device,
+				 struct dasd_device *pos)
+{
+	/* If pos == device then device is already locked! */
+	if (pos == device) {
+		pos->stopped |= DASD_STOPPED_SU;
+		return;
+	}
+	spin_lock(get_ccwdev_lock(pos->cdev));
+	pos->stopped |= DASD_STOPPED_SU;
+	spin_unlock(get_ccwdev_lock(pos->cdev));
+}
+
 /*
  * This function is called in interrupt context, so the
  * cdev lock for device is already locked!
@@ -755,35 +770,15 @@ static void _stop_all_devices_on_lcu(struct alias_lcu *lcu,
 	struct alias_pav_group *pavgroup;
 	struct dasd_device *pos;
 
-	list_for_each_entry(pos, &lcu->active_devices, alias_list) {
-		if (pos != device)
-			spin_lock(get_ccwdev_lock(pos->cdev));
-		pos->stopped |= DASD_STOPPED_SU;
-		if (pos != device)
-			spin_unlock(get_ccwdev_lock(pos->cdev));
-	}
-	list_for_each_entry(pos, &lcu->inactive_devices, alias_list) {
-		if (pos != device)
-			spin_lock(get_ccwdev_lock(pos->cdev));
-		pos->stopped |= DASD_STOPPED_SU;
-		if (pos != device)
-			spin_unlock(get_ccwdev_lock(pos->cdev));
-	}
+	list_for_each_entry(pos, &lcu->active_devices, alias_list)
+		__stop_device_on_lcu(device, pos);
+	list_for_each_entry(pos, &lcu->inactive_devices, alias_list)
+		__stop_device_on_lcu(device, pos);
 	list_for_each_entry(pavgroup, &lcu->grouplist, group) {
-		list_for_each_entry(pos, &pavgroup->baselist, alias_list) {
-			if (pos != device)
-				spin_lock(get_ccwdev_lock(pos->cdev));
-			pos->stopped |= DASD_STOPPED_SU;
-			if (pos != device)
-				spin_unlock(get_ccwdev_lock(pos->cdev));
-		}
-		list_for_each_entry(pos, &pavgroup->aliaslist, alias_list) {
-			if (pos != device)
-				spin_lock(get_ccwdev_lock(pos->cdev));
-			pos->stopped |= DASD_STOPPED_SU;
-			if (pos != device)
-				spin_unlock(get_ccwdev_lock(pos->cdev));
-		}
+		list_for_each_entry(pos, &pavgroup->baselist, alias_list)
+			__stop_device_on_lcu(device, pos);
+		list_for_each_entry(pos, &pavgroup->aliaslist, alias_list)
+			__stop_device_on_lcu(device, pos);
 	}
 }
 

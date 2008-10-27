@@ -13,7 +13,7 @@
 
 / {
 	model = "MPC8641HPCN";
-	compatible = "mpc86xx";
+	compatible = "fsl,mpc8641hpcn";
 	#address-cells = <1>;
 	#size-cells = <1>;
 
@@ -26,6 +26,7 @@
 		serial1 = &serial1;
 		pci0 = &pci0;
 		pci1 = &pci1;
+		rapidio0 = &rapidio0;
 	};
 
 	cpus {
@@ -133,6 +134,47 @@
 			dfsrr;
 		};
 
+		dma@21300 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,mpc8641-dma", "fsl,eloplus-dma";
+			reg = <0x21300 0x4>;
+			ranges = <0x0 0x21100 0x200>;
+			cell-index = <0>;
+			dma-channel@0 {
+				compatible = "fsl,mpc8641-dma-channel",
+						"fsl,eloplus-dma-channel";
+				reg = <0x0 0x80>;
+				cell-index = <0>;
+				interrupt-parent = <&mpic>;
+				interrupts = <20 2>;
+			};
+			dma-channel@80 {
+				compatible = "fsl,mpc8641-dma-channel",
+						"fsl,eloplus-dma-channel";
+				reg = <0x80 0x80>;
+				cell-index = <1>;
+				interrupt-parent = <&mpic>;
+				interrupts = <21 2>;
+			};
+			dma-channel@100 {
+				compatible = "fsl,mpc8641-dma-channel",
+						"fsl,eloplus-dma-channel";
+				reg = <0x100 0x80>;
+				cell-index = <2>;
+				interrupt-parent = <&mpic>;
+				interrupts = <22 2>;
+			};
+			dma-channel@180 {
+				compatible = "fsl,mpc8641-dma-channel",
+						"fsl,eloplus-dma-channel";
+				reg = <0x180 0x80>;
+				cell-index = <3>;
+				interrupt-parent = <&mpic>;
+				interrupts = <23 2>;
+			};
+		};
+
 		mdio@24520 {
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -238,14 +280,12 @@
 		};
 
 		mpic: pic@40000 {
-			clock-frequency = <0>;
 			interrupt-controller;
 			#address-cells = <0>;
 			#interrupt-cells = <2>;
 			reg = <0x40000 0x40000>;
 			compatible = "chrp,open-pic";
 			device_type = "open-pic";
-			big-endian;
 		};
 
 		global-utilities@e0000 {
@@ -371,7 +411,7 @@
 			0xe000 0 0 1 &i8259 12 2
 			0xe100 0 0 2 &i8259 9 2
 			0xe200 0 0 3 &i8259 10 2
-			0xe300 0 0 4 &i8259 112
+			0xe300 0 0 4 &i8259 11 2
 
 			// IDSEL 0x1d  Audio
 			0xe800 0 0 1 &i8259 6 2
@@ -499,5 +539,16 @@
 				  0x01000000 0x0 0x00000000
 				  0x0 0x00100000>;
 		};
+	};
+	rapidio0: rapidio@f80c0000 {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		compatible = "fsl,rapidio-delta";
+		reg = <0xf80c0000 0x20000>;
+		ranges = <0 0 0xc0000000 0 0x20000000>;
+		interrupt-parent = <&mpic>;
+		/* err_irq bell_outb_irq bell_inb_irq
+			msg1_tx_irq msg1_rx_irq	msg2_tx_irq msg2_rx_irq */
+		interrupts = <48 2 49 2 50 2 53 2 54 2 55 2 56 2>;
 	};
 };

@@ -141,6 +141,8 @@
 
 #include <asm/io.h>
 
+#define DRV_NAME "trm290"
+
 static void trm290_prepare_drive (ide_drive_t *drive, unsigned int use_dma)
 {
 	ide_hwif_t *hwif = HWIF(drive);
@@ -214,7 +216,7 @@ static void trm290_dma_start(ide_drive_t *drive)
 {
 }
 
-static int trm290_ide_dma_end (ide_drive_t *drive)
+static int trm290_dma_end(ide_drive_t *drive)
 {
 	u16 status;
 
@@ -225,7 +227,7 @@ static int trm290_ide_dma_end (ide_drive_t *drive)
 	return status != 0x00ff;
 }
 
-static int trm290_ide_dma_test_irq (ide_drive_t *drive)
+static int trm290_dma_test_irq(ide_drive_t *drive)
 {
 	u16 status;
 
@@ -245,31 +247,20 @@ static void __devinit init_hwif_trm290(ide_hwif_t *hwif)
 	u8 reg = 0;
 
 	if ((dev->class & 5) && cfg_base)
-		printk(KERN_INFO "TRM290: chip");
+		printk(KERN_INFO DRV_NAME " %s: chip", pci_name(dev));
 	else {
 		cfg_base = 0x3df0;
-		printk(KERN_INFO "TRM290: using default");
+		printk(KERN_INFO DRV_NAME " %s: using default", pci_name(dev));
 	}
 	printk(KERN_CONT " config base at 0x%04x\n", cfg_base);
 	hwif->config_data = cfg_base;
 	hwif->dma_base = (cfg_base + 4) ^ (hwif->channel ? 0x80 : 0);
 
-	printk(KERN_INFO "    %s: BM-DMA at 0x%04lx-0x%04lx",
+	printk(KERN_INFO "    %s: BM-DMA at 0x%04lx-0x%04lx\n",
 	       hwif->name, hwif->dma_base, hwif->dma_base + 3);
 
-	if (!request_region(hwif->dma_base, 4, hwif->name)) {
-		printk(KERN_CONT " -- Error, ports in use.\n");
+	if (ide_allocate_dma_engine(hwif))
 		return;
-	}
-
-	hwif->dmatable_cpu = pci_alloc_consistent(dev, PRD_ENTRIES * PRD_BYTES,
-						  &hwif->dmatable_dma);
-	if (!hwif->dmatable_cpu) {
-		printk(KERN_CONT " -- Error, unable to allocate DMA table.\n");
-		release_region(hwif->dma_base, 4);
-		return;
-	}
-	printk(KERN_CONT "\n");
 
 	local_irq_save(flags);
 	/* put config reg into first byte of hwif->select_data */
@@ -291,14 +282,6 @@ static void __devinit init_hwif_trm290(ide_hwif_t *hwif)
 		/* sharing IRQ with mate */
 		hwif->irq = hwif->mate->irq;
 
-	hwif->dma_host_set	= &trm290_dma_host_set;
-	hwif->dma_setup 	= &trm290_dma_setup;
-	hwif->dma_exec_cmd	= &trm290_dma_exec_cmd;
-	hwif->dma_start 	= &trm290_dma_start;
-	hwif->ide_dma_end	= &trm290_ide_dma_end;
-	hwif->ide_dma_test_irq	= &trm290_ide_dma_test_irq;
-
-	hwif->selectproc = &trm290_selectproc;
 #if 1
 	{
 	/*
@@ -317,7 +300,7 @@ static void __devinit init_hwif_trm290(ide_hwif_t *hwif)
 		if (old != compat && old_mask == 0xff) {
 			/* leave lower 10 bits untouched */
 			compat += (next_offset += 0x400);
-			hwif->io_ports[IDE_CONTROL_OFFSET] = compat + 2;
+			hwif->io_ports.ctl_addr = compat + 2;
 			outw(compat | 1, hwif->config_data);
 			new = inw(hwif->config_data);
 			printk(KERN_INFO "%s: control basereg workaround: "
@@ -328,22 +311,38 @@ static void __devinit init_hwif_trm290(ide_hwif_t *hwif)
 #endif
 }
 
+static const struct ide_port_ops trm290_port_ops = {
+	.selectproc		= trm290_selectproc,
+};
+
+static struct ide_dma_ops trm290_dma_ops = {
+	.dma_host_set		= trm290_dma_host_set,
+	.dma_setup 		= trm290_dma_setup,
+	.dma_exec_cmd		= trm290_dma_exec_cmd,
+	.dma_start 		= trm290_dma_start,
+	.dma_end		= trm290_dma_end,
+	.dma_test_irq		= trm290_dma_test_irq,
+	.dma_lost_irq		= ide_dma_lost_irq,
+	.dma_timeout		= ide_dma_timeout,
+};
+
 static const struct ide_port_info trm290_chipset __devinitdata = {
-	.name		= "TRM290",
+	.name		= DRV_NAME,
 	.init_hwif	= init_hwif_trm290,
 	.chipset	= ide_trm290,
+	.port_ops	= &trm290_port_ops,
+	.dma_ops	= &trm290_dma_ops,
 	.host_flags	= IDE_HFLAG_NO_ATAPI_DMA |
 #if 0 /* play it safe for now */
 			  IDE_HFLAG_TRUST_BIOS_FOR_DMA |
 #endif
 			  IDE_HFLAG_NO_AUTODMA |
-			  IDE_HFLAG_BOOTABLE |
 			  IDE_HFLAG_NO_LBA48,
 };
 
 static int __devinit trm290_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	return ide_setup_pci_device(dev, &trm290_chipset);
+	return ide_pci_init_one(dev, &trm290_chipset, NULL);
 }
 
 static const struct pci_device_id trm290_pci_tbl[] = {
@@ -356,6 +355,7 @@ static struct pci_driver driver = {
 	.name		= "TRM290_IDE",
 	.id_table	= trm290_pci_tbl,
 	.probe		= trm290_init_one,
+	.remove		= ide_pci_remove,
 };
 
 static int __init trm290_ide_init(void)
@@ -363,7 +363,13 @@ static int __init trm290_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit trm290_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(trm290_ide_init);
+module_exit(trm290_ide_exit);
 
 MODULE_AUTHOR("Mark Lord");
 MODULE_DESCRIPTION("PCI driver module for Tekram TRM290 IDE");

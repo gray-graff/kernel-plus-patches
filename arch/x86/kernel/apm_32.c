@@ -204,6 +204,7 @@
 #include <linux/module.h>
 
 #include <linux/poll.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/timer.h>
@@ -218,7 +219,6 @@
 #include <linux/time.h>
 #include <linux/sched.h>
 #include <linux/pm.h>
-#include <linux/pm_legacy.h>
 #include <linux/capability.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
@@ -228,11 +228,13 @@
 #include <linux/suspend.h>
 #include <linux/kthread.h>
 #include <linux/jiffies.h>
+#include <linux/smp_lock.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/desc.h>
 #include <asm/i8253.h>
+#include <asm/olpc.h>
 #include <asm/paravirt.h>
 #include <asm/reboot.h>
 
@@ -904,6 +906,7 @@ recalc:
 			original_pm_idle();
 		else
 			default_idle();
+		local_irq_disable();
 		jiffies_since_last_check = jiffies - last_jiffies;
 		if (jiffies_since_last_check > idle_period)
 			goto recalc;
@@ -911,6 +914,8 @@ recalc:
 
 	if (apm_idle_done)
 		apm_do_busy();
+
+	local_irq_enable();
 }
 
 /**
@@ -1146,7 +1151,7 @@ static void queue_event(apm_event_t event, struct apm_user *sender)
 				as->event_tail = 0;
 		}
 		as->events[as->event_head] = event;
-		if ((!as->suser) || (!as->writer))
+		if (!as->suser || !as->writer)
 			continue;
 		switch (event) {
 		case APM_SYS_SUSPEND:
@@ -1189,19 +1194,6 @@ static int suspend(int vetoable)
 	int err;
 	struct apm_user	*as;
 
-	if (pm_send_all(PM_SUSPEND, (void *)3)) {
-		/* Vetoed */
-		if (vetoable) {
-			if (apm_info.connection_version > 0x100)
-				set_system_power_state(APM_STATE_REJECT);
-			err = -EBUSY;
-			ignore_sys_suspend = 0;
-			printk(KERN_WARNING "apm: suspend was vetoed.\n");
-			goto out;
-		}
-		printk(KERN_CRIT "apm: suspend was vetoed, but suspending anyway.\n");
-	}
-
 	device_suspend(PMSG_SUSPEND);
 	local_irq_disable();
 	device_power_down(PMSG_SUSPEND);
@@ -1221,12 +1213,10 @@ static int suspend(int vetoable)
 	if (err != APM_SUCCESS)
 		apm_error("suspend", err);
 	err = (err == APM_SUCCESS) ? 0 : -EIO;
-	device_power_up();
+	device_power_up(PMSG_RESUME);
 	local_irq_enable();
-	device_resume();
-	pm_send_all(PM_RESUME, (void *)0);
+	device_resume(PMSG_RESUME);
 	queue_event(APM_NORMAL_RESUME, NULL);
- out:
 	spin_lock(&user_list_lock);
 	for (as = user_list; as != NULL; as = as->next) {
 		as->suspend_wait = 0;
@@ -1250,7 +1240,7 @@ static void standby(void)
 		apm_error("standby", err);
 
 	local_irq_disable();
-	device_power_up();
+	device_power_up(PMSG_RESUME);
 	local_irq_enable();
 }
 
@@ -1336,8 +1326,7 @@ static void check_events(void)
 			ignore_bounce = 1;
 			if ((event != APM_NORMAL_RESUME)
 			    || (ignore_normal_resume == 0)) {
-				device_resume();
-				pm_send_all(PM_RESUME, (void *)0);
+				device_resume(PMSG_RESUME);
 				queue_event(event, NULL);
 			}
 			ignore_normal_resume = 0;
@@ -1409,7 +1398,7 @@ static void apm_mainloop(void)
 
 static int check_apm_user(struct apm_user *as, const char *func)
 {
-	if ((as == NULL) || (as->magic != APM_BIOS_MAGIC)) {
+	if (as == NULL || as->magic != APM_BIOS_MAGIC) {
 		printk(KERN_ERR "apm: %s passed bad filp\n", func);
 		return 1;
 	}
@@ -1472,18 +1461,19 @@ static unsigned int do_poll(struct file *fp, poll_table *wait)
 	return 0;
 }
 
-static int do_ioctl(struct inode *inode, struct file *filp,
-		    u_int cmd, u_long arg)
+static long do_ioctl(struct file *filp, u_int cmd, u_long arg)
 {
 	struct apm_user *as;
+	int ret;
 
 	as = filp->private_data;
 	if (check_apm_user(as, "ioctl"))
 		return -EIO;
-	if ((!as->suser) || (!as->writer))
+	if (!as->suser || !as->writer)
 		return -EPERM;
 	switch (cmd) {
 	case APM_IOC_STANDBY:
+		lock_kernel();
 		if (as->standbys_read > 0) {
 			as->standbys_read--;
 			as->standbys_pending--;
@@ -1492,8 +1482,10 @@ static int do_ioctl(struct inode *inode, struct file *filp,
 			queue_event(APM_USER_STANDBY, as);
 		if (standbys_pending <= 0)
 			standby();
+		unlock_kernel();
 		break;
 	case APM_IOC_SUSPEND:
+		lock_kernel();
 		if (as->suspends_read > 0) {
 			as->suspends_read--;
 			as->suspends_pending--;
@@ -1501,16 +1493,17 @@ static int do_ioctl(struct inode *inode, struct file *filp,
 		} else
 			queue_event(APM_USER_SUSPEND, as);
 		if (suspends_pending <= 0) {
-			return suspend(1);
+			ret = suspend(1);
 		} else {
 			as->suspend_wait = 1;
 			wait_event_interruptible(apm_suspend_waitqueue,
 					as->suspend_wait == 0);
-			return as->suspend_result;
+			ret = as->suspend_result;
 		}
-		break;
+		unlock_kernel();
+		return ret;
 	default:
-		return -EINVAL;
+		return -ENOTTY;
 	}
 	return 0;
 }
@@ -1557,10 +1550,12 @@ static int do_open(struct inode *inode, struct file *filp)
 {
 	struct apm_user *as;
 
+	lock_kernel();
 	as = kmalloc(sizeof(*as), GFP_KERNEL);
 	if (as == NULL) {
 		printk(KERN_ERR "apm: cannot allocate struct of size %d bytes\n",
 		       sizeof(*as));
+		       unlock_kernel();
 		return -ENOMEM;
 	}
 	as->magic = APM_BIOS_MAGIC;
@@ -1582,6 +1577,7 @@ static int do_open(struct inode *inode, struct file *filp)
 	user_list = as;
 	spin_unlock(&user_list_lock);
 	filp->private_data = as;
+	unlock_kernel();
 	return 0;
 }
 
@@ -1873,7 +1869,7 @@ static const struct file_operations apm_bios_fops = {
 	.owner		= THIS_MODULE,
 	.read		= do_read,
 	.poll		= do_poll,
-	.ioctl		= do_ioctl,
+	.unlocked_ioctl	= do_ioctl,
 	.open		= do_open,
 	.release	= do_release,
 };
@@ -2217,13 +2213,12 @@ static struct dmi_system_id __initdata apm_dmi_table[] = {
  */
 static int __init apm_init(void)
 {
-	struct proc_dir_entry *apm_proc;
 	struct desc_struct *gdt;
 	int err;
 
 	dmi_check_system(apm_dmi_table);
 
-	if (apm_info.bios.version == 0 || paravirt_enabled()) {
+	if (apm_info.bios.version == 0 || paravirt_enabled() || machine_is_olpc()) {
 		printk(KERN_INFO "apm: BIOS not found.\n");
 		return -ENODEV;
 	}
@@ -2322,9 +2317,7 @@ static int __init apm_init(void)
 	set_base(gdt[APM_DS >> 3],
 		 __va((unsigned long)apm_info.bios.dseg << 4));
 
-	apm_proc = create_proc_entry("apm", 0, NULL);
-	if (apm_proc)
-		apm_proc->proc_fops = &apm_file_ops;
+	proc_create("apm", 0, NULL, &apm_file_ops);
 
 	kapmd_task = kthread_create(apm, NULL, "kapmd");
 	if (IS_ERR(kapmd_task)) {

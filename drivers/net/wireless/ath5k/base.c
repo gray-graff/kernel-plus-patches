@@ -40,10 +40,11 @@
  *
  */
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/delay.h>
+#include <linux/hardirq.h>
 #include <linux/if.h>
+#include <linux/io.h>
 #include <linux/netdevice.h>
 #include <linux/cache.h>
 #include <linux/pci.h>
@@ -58,15 +59,6 @@
 #include "reg.h"
 #include "debug.h"
 
-/* unaligned little endian access */
-#define LE_READ_2(_p) (le16_to_cpu(get_unaligned((__le16 *)(_p))))
-#define LE_READ_4(_p) (le32_to_cpu(get_unaligned((__le32 *)(_p))))
-
-enum {
-	ATH_LED_TX,
-	ATH_LED_RX,
-};
-
 static int ath5k_calinterval = 10; /* Calibrate PHY every 10 secs (TODO: Fixme) */
 
 
@@ -80,7 +72,7 @@ MODULE_AUTHOR("Nick Kossifidis");
 MODULE_DESCRIPTION("Support for 5xxx series of Atheros 802.11 wireless LAN cards.");
 MODULE_SUPPORTED_DEVICE("Atheros 5xxx WLAN cards");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_VERSION("0.1.1 (EXPERIMENTAL)");
+MODULE_VERSION("0.5.0 (EXPERIMENTAL)");
 
 
 /* Known PCI ids */
@@ -102,8 +94,6 @@ static struct pci_device_id ath5k_pci_id_table[] __devinitdata = {
 	{ PCI_VDEVICE(ATHEROS, 0x001a), .driver_data = AR5K_AR5212 }, /* 2413 Griffin-lite */
 	{ PCI_VDEVICE(ATHEROS, 0x001b), .driver_data = AR5K_AR5212 }, /* 5413 Eagle */
 	{ PCI_VDEVICE(ATHEROS, 0x001c), .driver_data = AR5K_AR5212 }, /* 5424 Condor (PCI-E)*/
-	{ PCI_VDEVICE(ATHEROS, 0x0023), .driver_data = AR5K_AR5212 }, /* 5416 */
-	{ PCI_VDEVICE(ATHEROS, 0x0024), .driver_data = AR5K_AR5212 }, /* 5418 */
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, ath5k_pci_id_table);
@@ -118,12 +108,15 @@ static struct ath5k_srev_name srev_names[] = {
 	{ "5212",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5212 },
 	{ "5213",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5213 },
 	{ "5213A",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5213A },
+	{ "2413",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR2413 },
+	{ "2414",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR2414 },
 	{ "2424",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR2424 },
 	{ "5424",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5424 },
 	{ "5413",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5413 },
 	{ "5414",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5414 },
 	{ "5416",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5416 },
 	{ "5418",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR5418 },
+	{ "2425",	AR5K_VERSION_VER,	AR5K_SREV_VER_AR2425 },
 	{ "xxxxx",	AR5K_VERSION_VER,	AR5K_SREV_UNKNOWN },
 	{ "5110",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_5110 },
 	{ "5111",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_5111 },
@@ -132,6 +125,7 @@ static struct ath5k_srev_name srev_names[] = {
 	{ "5112A",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_5112A },
 	{ "2112",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_2112 },
 	{ "2112A",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_2112A },
+	{ "SChip",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_SC0 },
 	{ "SChip",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_SC1 },
 	{ "SChip",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_SC2 },
 	{ "5133",	AR5K_VERSION_RAD,	AR5K_SREV_RAD_5133 },
@@ -167,8 +161,7 @@ static struct pci_driver ath5k_pci_driver = {
 /*
  * Prototypes - MAC 802.11 stack related functions
  */
-static int ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb,
-		struct ieee80211_tx_control *ctl);
+static int ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb);
 static int ath5k_reset(struct ieee80211_hw *hw);
 static int ath5k_start(struct ieee80211_hw *hw);
 static void ath5k_stop(struct ieee80211_hw *hw);
@@ -196,8 +189,7 @@ static int ath5k_get_tx_stats(struct ieee80211_hw *hw,
 static u64 ath5k_get_tsf(struct ieee80211_hw *hw);
 static void ath5k_reset_tsf(struct ieee80211_hw *hw);
 static int ath5k_beacon_update(struct ieee80211_hw *hw,
-		struct sk_buff *skb,
-		struct ieee80211_tx_control *ctl);
+		struct sk_buff *skb);
 
 static struct ieee80211_ops ath5k_hw_ops = {
 	.tx 		= ath5k_tx,
@@ -214,7 +206,6 @@ static struct ieee80211_ops ath5k_hw_ops = {
 	.get_tx_stats 	= ath5k_get_tx_stats,
 	.get_tsf 	= ath5k_get_tsf,
 	.reset_tsf 	= ath5k_reset_tsf,
-	.beacon_update 	= ath5k_beacon_update,
 };
 
 /*
@@ -240,6 +231,8 @@ static int 	ath5k_chan_set(struct ath5k_softc *sc,
 static void	ath5k_setcurmode(struct ath5k_softc *sc,
 				unsigned int mode);
 static void	ath5k_mode_setup(struct ath5k_softc *sc);
+static void	ath5k_set_total_hw_rates(struct ath5k_softc *sc);
+
 /* Descriptor setup */
 static int	ath5k_desc_alloc(struct ath5k_softc *sc,
 				struct pci_dev *pdev);
@@ -249,9 +242,7 @@ static void	ath5k_desc_free(struct ath5k_softc *sc,
 static int 	ath5k_rxbuf_setup(struct ath5k_softc *sc,
 				struct ath5k_buf *bf);
 static int 	ath5k_txbuf_setup(struct ath5k_softc *sc,
-				struct ath5k_buf *bf,
-				struct ieee80211_tx_control *ctl);
-
+				struct ath5k_buf *bf);
 static inline void ath5k_txbuf_free(struct ath5k_softc *sc,
 				struct ath5k_buf *bf)
 {
@@ -260,7 +251,7 @@ static inline void ath5k_txbuf_free(struct ath5k_softc *sc,
 		return;
 	pci_unmap_single(sc->pdev, bf->skbaddr, bf->skb->len,
 			PCI_DMA_TODEVICE);
-	dev_kfree_skb(bf->skb);
+	dev_kfree_skb_any(bf->skb);
 	bf->skb = NULL;
 }
 
@@ -278,7 +269,8 @@ static int 	ath5k_rx_start(struct ath5k_softc *sc);
 static void 	ath5k_rx_stop(struct ath5k_softc *sc);
 static unsigned int ath5k_rx_decrypted(struct ath5k_softc *sc,
 					struct ath5k_desc *ds,
-					struct sk_buff *skb);
+					struct sk_buff *skb,
+					struct ath5k_rx_status *rs);
 static void 	ath5k_tasklet_rx(unsigned long data);
 /* Tx handling */
 static void 	ath5k_tx_processq(struct ath5k_softc *sc,
@@ -286,8 +278,7 @@ static void 	ath5k_tx_processq(struct ath5k_softc *sc,
 static void 	ath5k_tasklet_tx(unsigned long data);
 /* Beacon handling */
 static int 	ath5k_beacon_setup(struct ath5k_softc *sc,
-				struct ath5k_buf *bf,
-				struct ieee80211_tx_control *ctl);
+					struct ath5k_buf *bf);
 static void 	ath5k_beacon_send(struct ath5k_softc *sc);
 static void 	ath5k_beacon_config(struct ath5k_softc *sc);
 static void	ath5k_beacon_update_timers(struct ath5k_softc *sc, u64 bc_tsf);
@@ -311,13 +302,10 @@ static void 	ath5k_tasklet_reset(unsigned long data);
 
 static void 	ath5k_calibrate(unsigned long data);
 /* LED functions */
-static void 	ath5k_led_off(unsigned long data);
-static void 	ath5k_led_blink(struct ath5k_softc *sc,
-				unsigned int on,
-				unsigned int off);
-static void 	ath5k_led_event(struct ath5k_softc *sc,
-				int event);
-
+static int	ath5k_init_leds(struct ath5k_softc *sc);
+static void	ath5k_led_enable(struct ath5k_softc *sc);
+static void	ath5k_led_off(struct ath5k_softc *sc);
+static void	ath5k_unregister_leds(struct ath5k_softc *sc);
 
 /*
  * Module init/exit functions
@@ -455,13 +443,11 @@ ath5k_pci_probe(struct pci_dev *pdev,
 
 	/* Initialize driver private data */
 	SET_IEEE80211_DEV(hw, &pdev->dev);
-	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS;
+	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
+		    IEEE80211_HW_SIGNAL_DBM |
+		    IEEE80211_HW_NOISE_DBM;
 	hw->extra_tx_headroom = 2;
 	hw->channel_change_time = 5000;
-	/* these names are misleading */
-	hw->max_rssi = -110; /* signal in dBm */
-	hw->max_noise = -110; /* noise in dBm */
-	hw->max_signal = 100; /* we will provide a percentage based on rssi */
 	sc = hw->priv;
 	sc->hw = hw;
 	sc->pdev = pdev;
@@ -480,12 +466,10 @@ ath5k_pci_probe(struct pci_dev *pdev,
 	mutex_init(&sc->lock);
 	spin_lock_init(&sc->rxbuflock);
 	spin_lock_init(&sc->txbuflock);
+	spin_lock_init(&sc->block);
 
 	/* Set private data */
 	pci_set_drvdata(pdev, hw);
-
-	/* Enable msi for devices that support it */
-	pci_enable_msi(pdev);
 
 	/* Setup interrupt handler */
 	ret = request_irq(pdev->irq, ath5k_intr, IRQF_SHARED, "ath", sc);
@@ -511,35 +495,46 @@ ath5k_pci_probe(struct pci_dev *pdev,
 					sc->ah->ah_mac_srev,
 					sc->ah->ah_phy_revision);
 
-	if(!sc->ah->ah_single_chip){
+	if (!sc->ah->ah_single_chip) {
 		/* Single chip radio (!RF5111) */
-		if(sc->ah->ah_radio_5ghz_revision && !sc->ah->ah_radio_2ghz_revision) {
+		if (sc->ah->ah_radio_5ghz_revision &&
+			!sc->ah->ah_radio_2ghz_revision) {
 			/* No 5GHz support -> report 2GHz radio */
-			if(!test_bit(MODE_IEEE80211A, sc->ah->ah_capabilities.cap_mode)){
+			if (!test_bit(AR5K_MODE_11A,
+				sc->ah->ah_capabilities.cap_mode)) {
 				ATH5K_INFO(sc, "RF%s 2GHz radio found (0x%x)\n",
-					ath5k_chip_name(AR5K_VERSION_RAD,sc->ah->ah_radio_5ghz_revision),
-							sc->ah->ah_radio_5ghz_revision);
-			/* No 2GHz support (5110 and some 5Ghz only cards) -> report 5Ghz radio */
-			} else if(!test_bit(MODE_IEEE80211B, sc->ah->ah_capabilities.cap_mode)){
+					ath5k_chip_name(AR5K_VERSION_RAD,
+						sc->ah->ah_radio_5ghz_revision),
+						sc->ah->ah_radio_5ghz_revision);
+			/* No 2GHz support (5110 and some
+			 * 5Ghz only cards) -> report 5Ghz radio */
+			} else if (!test_bit(AR5K_MODE_11B,
+				sc->ah->ah_capabilities.cap_mode)) {
 				ATH5K_INFO(sc, "RF%s 5GHz radio found (0x%x)\n",
-					ath5k_chip_name(AR5K_VERSION_RAD,sc->ah->ah_radio_5ghz_revision),
-							sc->ah->ah_radio_5ghz_revision);
+					ath5k_chip_name(AR5K_VERSION_RAD,
+						sc->ah->ah_radio_5ghz_revision),
+						sc->ah->ah_radio_5ghz_revision);
 			/* Multiband radio */
 			} else {
 				ATH5K_INFO(sc, "RF%s multiband radio found"
 					" (0x%x)\n",
-					ath5k_chip_name(AR5K_VERSION_RAD,sc->ah->ah_radio_5ghz_revision),
-							sc->ah->ah_radio_5ghz_revision);
+					ath5k_chip_name(AR5K_VERSION_RAD,
+						sc->ah->ah_radio_5ghz_revision),
+						sc->ah->ah_radio_5ghz_revision);
 			}
 		}
-		/* Multi chip radio (RF5111 - RF2111) -> report both 2GHz/5GHz radios */
-		else if(sc->ah->ah_radio_5ghz_revision && sc->ah->ah_radio_2ghz_revision){
+		/* Multi chip radio (RF5111 - RF2111) ->
+		 * report both 2GHz/5GHz radios */
+		else if (sc->ah->ah_radio_5ghz_revision &&
+				sc->ah->ah_radio_2ghz_revision){
 			ATH5K_INFO(sc, "RF%s 5GHz radio found (0x%x)\n",
-				ath5k_chip_name(AR5K_VERSION_RAD,sc->ah->ah_radio_5ghz_revision),
-						sc->ah->ah_radio_5ghz_revision);
+				ath5k_chip_name(AR5K_VERSION_RAD,
+					sc->ah->ah_radio_5ghz_revision),
+					sc->ah->ah_radio_5ghz_revision);
 			ATH5K_INFO(sc, "RF%s 2GHz radio found (0x%x)\n",
-				ath5k_chip_name(AR5K_VERSION_RAD,sc->ah->ah_radio_2ghz_revision),
-						sc->ah->ah_radio_2ghz_revision);
+				ath5k_chip_name(AR5K_VERSION_RAD,
+					sc->ah->ah_radio_2ghz_revision),
+					sc->ah->ah_radio_2ghz_revision);
 		}
 	}
 
@@ -553,7 +548,6 @@ err_ah:
 err_irq:
 	free_irq(pdev->irq, sc);
 err_free:
-	pci_disable_msi(pdev);
 	ieee80211_free_hw(hw);
 err_map:
 	pci_iounmap(pdev, mem);
@@ -575,7 +569,6 @@ ath5k_pci_remove(struct pci_dev *pdev)
 	ath5k_detach(pdev, hw);
 	ath5k_hw_detach(sc->ah);
 	free_irq(pdev->irq, sc);
-	pci_disable_msi(pdev);
 	pci_iounmap(pdev, sc->iobase);
 	pci_release_region(pdev, 0);
 	pci_disable_device(pdev);
@@ -589,10 +582,11 @@ ath5k_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	struct ieee80211_hw *hw = pci_get_drvdata(pdev);
 	struct ath5k_softc *sc = hw->priv;
 
-	if (test_bit(ATH_STAT_LEDSOFT, sc->status))
-		ath5k_hw_set_gpio(sc->ah, sc->led_pin, 1);
+	ath5k_led_off(sc);
 
 	ath5k_stop_hw(sc);
+
+	free_irq(pdev->irq, sc);
 	pci_save_state(pdev);
 	pci_disable_device(pdev);
 	pci_set_power_state(pdev, PCI_D3hot);
@@ -608,15 +602,12 @@ ath5k_pci_resume(struct pci_dev *pdev)
 	struct ath5k_hw *ah = sc->ah;
 	int i, err;
 
-	err = pci_set_power_state(pdev, PCI_D0);
-	if (err)
-		return err;
+	pci_restore_state(pdev);
 
 	err = pci_enable_device(pdev);
 	if (err)
 		return err;
 
-	pci_restore_state(pdev);
 	/*
 	 * Suspend/Resume resets the PCI configuration space, so we have to
 	 * re-disable the RETRY_TIMEOUT register (0x41) to keep
@@ -624,11 +615,16 @@ ath5k_pci_resume(struct pci_dev *pdev)
 	 */
 	pci_write_config_byte(pdev, 0x41, 0);
 
-	ath5k_init(sc);
-	if (test_bit(ATH_STAT_LEDSOFT, sc->status)) {
-		ath5k_hw_set_gpio_output(ah, sc->led_pin);
-		ath5k_hw_set_gpio(ah, sc->led_pin, 0);
+	err = request_irq(pdev->irq, ath5k_intr, IRQF_SHARED, "ath", sc);
+	if (err) {
+		ATH5K_ERR(sc, "request_irq failed\n");
+		goto err_no_irq;
 	}
+
+	err = ath5k_init(sc);
+	if (err)
+		goto err_irq;
+	ath5k_led_enable(sc);
 
 	/*
 	 * Reset the key cache since some parts do not
@@ -641,6 +637,11 @@ ath5k_pci_resume(struct pci_dev *pdev)
 		ath5k_hw_reset_key(ah, i);
 
 	return 0;
+err_irq:
+	free_irq(pdev->irq, sc);
+err_no_irq:
+	pci_disable_device(pdev);
+	return err;
 }
 #endif /* CONFIG_PM */
 
@@ -693,11 +694,14 @@ ath5k_attach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 		goto err;
 	}
 
+	/* Set *_rates so we can map hw rate index */
+	ath5k_set_total_hw_rates(sc);
+
 	/* NB: setup here so ath5k_rate_update is happy */
-	if (test_bit(MODE_IEEE80211A, ah->ah_modes))
-		ath5k_setcurmode(sc, MODE_IEEE80211A);
+	if (test_bit(AR5K_MODE_11A, ah->ah_modes))
+		ath5k_setcurmode(sc, AR5K_MODE_11A);
 	else
-		ath5k_setcurmode(sc, MODE_IEEE80211B);
+		ath5k_setcurmode(sc, AR5K_MODE_11B);
 
 	/*
 	 * Allocate tx+rx descriptors and populate the lists.
@@ -732,27 +736,6 @@ ath5k_attach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 	tasklet_init(&sc->txtq, ath5k_tasklet_tx, (unsigned long)sc);
 	tasklet_init(&sc->restq, ath5k_tasklet_reset, (unsigned long)sc);
 	setup_timer(&sc->calib_tim, ath5k_calibrate, (unsigned long)sc);
-	setup_timer(&sc->led_tim, ath5k_led_off, (unsigned long)sc);
-
-	sc->led_on = 0; /* low true */
-	/*
-	 * Auto-enable soft led processing for IBM cards and for
-	 * 5211 minipci cards.
-	 */
-	if (pdev->device == PCI_DEVICE_ID_ATHEROS_AR5212_IBM ||
-			pdev->device == PCI_DEVICE_ID_ATHEROS_AR5211) {
-		__set_bit(ATH_STAT_LEDSOFT, sc->status);
-		sc->led_pin = 0;
-	}
-	/* Enable softled on PIN1 on HP Compaq nc6xx, nc4000 & nx5000 laptops */
-	if (pdev->subsystem_vendor == PCI_VENDOR_ID_COMPAQ) {
-		__set_bit(ATH_STAT_LEDSOFT, sc->status);
-		sc->led_pin = 0;
-	}
-	if (test_bit(ATH_STAT_LEDSOFT, sc->status)) {
-		ath5k_hw_set_gpio_output(ah, sc->led_pin);
-		ath5k_hw_set_gpio(ah, sc->led_pin, !sc->led_on);
-	}
 
 	ath5k_hw_get_lladdr(ah, mac);
 	SET_IEEE80211_PERM_ADDR(hw, mac);
@@ -765,6 +748,8 @@ ath5k_attach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 		ATH5K_ERR(sc, "can't register ieee80211 hw\n");
 		goto err_queues;
 	}
+
+	ath5k_init_leds(sc);
 
 	return 0;
 err_queues:
@@ -799,6 +784,7 @@ ath5k_detach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 	ath5k_desc_free(sc, pdev);
 	ath5k_txq_release(sc);
 	ath5k_hw_release_tx_queue(sc->ah, sc->bhalq);
+	ath5k_unregister_leds(sc);
 
 	/*
 	 * NB: can't reclaim these until after ieee80211_ifdetach
@@ -837,12 +823,9 @@ ath5k_copy_rates(struct ieee80211_rate *rates,
 		return 0;
 
 	for (i = 0, count = 0; i < rt->rate_count && max > 0; i++) {
-		if (!rt->rates[i].valid)
-			continue;
-		rates->rate = rt->rates[i].rate_kbps / 100;
-		rates->val = rt->rates[i].rate_code;
-		rates->flags = rt->rates[i].modulation;
-		rates++;
+		rates[count].bitrate = rt->rates[i].rate_kbps / 100;
+		rates[count].hw_value = rt->rates[i].rate_code;
+		rates[count].flags = rt->rates[i].modulation;
 		count++;
 		max--;
 	}
@@ -856,43 +839,22 @@ ath5k_copy_channels(struct ath5k_hw *ah,
 		unsigned int mode,
 		unsigned int max)
 {
-	static const struct { unsigned int mode, mask, chan; } map[] = {
-		[MODE_IEEE80211A] = { CHANNEL_OFDM, CHANNEL_OFDM | CHANNEL_TURBO, CHANNEL_A },
-		[MODE_ATHEROS_TURBO] = { CHANNEL_OFDM|CHANNEL_TURBO, CHANNEL_OFDM | CHANNEL_TURBO, CHANNEL_T },
-		[MODE_IEEE80211B] = { CHANNEL_CCK, CHANNEL_CCK, CHANNEL_B },
-		[MODE_IEEE80211G] = { CHANNEL_OFDM, CHANNEL_OFDM, CHANNEL_G },
-		[MODE_ATHEROS_TURBOG] = { CHANNEL_OFDM | CHANNEL_TURBO, CHANNEL_OFDM | CHANNEL_TURBO, CHANNEL_TG },
-	};
-	static const struct ath5k_regchannel chans_2ghz[] =
-		IEEE80211_CHANNELS_2GHZ;
-	static const struct ath5k_regchannel chans_5ghz[] =
-		IEEE80211_CHANNELS_5GHZ;
-	const struct ath5k_regchannel *chans;
-	enum ath5k_regdom dmn;
-	unsigned int i, count, size, chfreq, all, f, ch;
+	unsigned int i, count, size, chfreq, freq, ch;
 
 	if (!test_bit(mode, ah->ah_modes))
 		return 0;
 
-	all = ah->ah_regdomain == DMN_DEFAULT || CHAN_DEBUG == 1;
-
 	switch (mode) {
-	case MODE_IEEE80211A:
-	case MODE_ATHEROS_TURBO:
+	case AR5K_MODE_11A:
+	case AR5K_MODE_11A_TURBO:
 		/* 1..220, but 2GHz frequencies are filtered by check_channel */
-		size = all ? 220 : ARRAY_SIZE(chans_5ghz);
-		chans = chans_5ghz;
-		dmn = ath5k_regdom2flag(ah->ah_regdomain,
-				IEEE80211_CHANNELS_5GHZ_MIN);
+		size = 220 ;
 		chfreq = CHANNEL_5GHZ;
 		break;
-	case MODE_IEEE80211B:
-	case MODE_IEEE80211G:
-	case MODE_ATHEROS_TURBOG:
-		size = all ? 26 : ARRAY_SIZE(chans_2ghz);
-		chans = chans_2ghz;
-		dmn = ath5k_regdom2flag(ah->ah_regdomain,
-				IEEE80211_CHANNELS_2GHZ_MIN);
+	case AR5K_MODE_11B:
+	case AR5K_MODE_11G:
+	case AR5K_MODE_11G_TURBO:
+		size = 26;
 		chfreq = CHANNEL_2GHZ;
 		break;
 	default:
@@ -901,25 +863,31 @@ ath5k_copy_channels(struct ath5k_hw *ah,
 	}
 
 	for (i = 0, count = 0; i < size && max > 0; i++) {
-		ch = all ? i + 1 : chans[i].chan;
-		f = ath5k_ieee2mhz(ch);
+		ch = i + 1 ;
+		freq = ath5k_ieee2mhz(ch);
+
 		/* Check if channel is supported by the chipset */
-		if (!ath5k_channel_ok(ah, f, chfreq))
+		if (!ath5k_channel_ok(ah, freq, chfreq))
 			continue;
 
-		/* Match regulation domain */
-		if (!all && !(IEEE80211_DMN(chans[i].domain) &
-							IEEE80211_DMN(dmn)))
-			continue;
+		/* Write channel info and increment counter */
+		channels[count].center_freq = freq;
+		channels[count].band = (chfreq == CHANNEL_2GHZ) ?
+			IEEE80211_BAND_2GHZ : IEEE80211_BAND_5GHZ;
+		switch (mode) {
+		case AR5K_MODE_11A:
+		case AR5K_MODE_11G:
+			channels[count].hw_value = chfreq | CHANNEL_OFDM;
+			break;
+		case AR5K_MODE_11A_TURBO:
+		case AR5K_MODE_11G_TURBO:
+			channels[count].hw_value = chfreq |
+				CHANNEL_OFDM | CHANNEL_TURBO;
+			break;
+		case AR5K_MODE_11B:
+			channels[count].hw_value = CHANNEL_B;
+		}
 
-		if (!all && (chans[i].mode & map[mode].mask) != map[mode].mode)
-			continue;
-
-		/* Write channel and increment counter */
-		channels->chan = ch;
-		channels->freq = f;
-		channels->val = map[mode].chan;
-		channels++;
 		count++;
 		max--;
 	}
@@ -927,95 +895,78 @@ ath5k_copy_channels(struct ath5k_hw *ah,
 	return count;
 }
 
-/* Only tries to register modes our EEPROM says it can support */
-#define REGISTER_MODE(m) do { \
-	ret = ath5k_register_mode(hw, m); \
-	if (ret) \
-		return ret; \
-} while (0) \
-
-static inline int
-ath5k_register_mode(struct ieee80211_hw *hw, u8 m)
-{
-	struct ath5k_softc *sc = hw->priv;
-	struct ieee80211_hw_mode *modes = sc->modes;
-	unsigned int i;
-	int ret;
-
-	if (!test_bit(m, sc->ah->ah_capabilities.cap_mode))
-		return 0;
-
-	for (i = 0; i < NUM_DRIVER_MODES; i++) {
-		if (modes[i].mode != m || !modes[i].num_channels)
-			continue;
-		ret = ieee80211_register_hwmode(hw, &modes[i]);
-		if (ret) {
-			ATH5K_ERR(sc, "can't register hwmode %u\n", m);
-			return ret;
-		}
-		return 0;
-	}
-	BUG();
-}
-
 static int
 ath5k_getchannels(struct ieee80211_hw *hw)
 {
 	struct ath5k_softc *sc = hw->priv;
 	struct ath5k_hw *ah = sc->ah;
-	struct ieee80211_hw_mode *modes = sc->modes;
-	unsigned int i, max_r, max_c;
-	int ret;
+	struct ieee80211_supported_band *sbands = sc->sbands;
+	const struct ath5k_rate_table *hw_rates;
+	unsigned int max_r, max_c, count_r, count_c;
+	int mode2g = AR5K_MODE_11G;
 
-	BUILD_BUG_ON(ARRAY_SIZE(sc->modes) < 3);
-
-	/* The order here does not matter */
-	modes[0].mode = MODE_IEEE80211G;
-	modes[1].mode = MODE_IEEE80211B;
-	modes[2].mode = MODE_IEEE80211A;
+	BUILD_BUG_ON(ARRAY_SIZE(sc->sbands) < IEEE80211_NUM_BANDS);
 
 	max_r = ARRAY_SIZE(sc->rates);
 	max_c = ARRAY_SIZE(sc->channels);
+	count_r = count_c = 0;
 
-	for (i = 0; i < NUM_DRIVER_MODES; i++) {
-		struct ieee80211_hw_mode *mode = &modes[i];
-		const struct ath5k_rate_table *hw_rates;
-
-		if (i == 0) {
-			modes[0].rates	= sc->rates;
-			modes->channels	= sc->channels;
-		} else {
-			struct ieee80211_hw_mode *prev_mode = &modes[i-1];
-			int prev_num_r	= prev_mode->num_rates;
-			int prev_num_c	= prev_mode->num_channels;
-			mode->rates	= &prev_mode->rates[prev_num_r];
-			mode->channels	= &prev_mode->channels[prev_num_c];
-		}
-
-		hw_rates = ath5k_hw_get_rate_table(ah, mode->mode);
-		mode->num_rates    = ath5k_copy_rates(mode->rates, hw_rates,
-			max_r);
-		mode->num_channels = ath5k_copy_channels(ah, mode->channels,
-			mode->mode, max_c);
-		max_r -= mode->num_rates;
-		max_c -= mode->num_channels;
+	/* 2GHz band */
+	if (!test_bit(AR5K_MODE_11G, sc->ah->ah_capabilities.cap_mode)) {
+		mode2g = AR5K_MODE_11B;
+		if (!test_bit(AR5K_MODE_11B,
+			sc->ah->ah_capabilities.cap_mode))
+			mode2g = -1;
 	}
 
-	/* We try to register all modes this driver supports. We don't bother
-	 * with MODE_IEEE80211B for AR5212 as MODE_IEEE80211G already accounts
-	 * for that as per mac80211. Then, REGISTER_MODE() will will actually
-	 * check the eeprom reading for more reliable capability information.
-	 * Order matters here as per mac80211's latest preference. This will
-	 * all hopefullly soon go away. */
+	if (mode2g > 0) {
+		struct ieee80211_supported_band *sband =
+			&sbands[IEEE80211_BAND_2GHZ];
 
-	REGISTER_MODE(MODE_IEEE80211G);
-	if (ah->ah_version != AR5K_AR5212)
-		REGISTER_MODE(MODE_IEEE80211B);
-	REGISTER_MODE(MODE_IEEE80211A);
+		sband->bitrates = sc->rates;
+		sband->channels = sc->channels;
 
-	ath5k_debug_dump_modes(sc, modes);
+		sband->band = IEEE80211_BAND_2GHZ;
+		sband->n_channels = ath5k_copy_channels(ah, sband->channels,
+					mode2g, max_c);
 
-	return ret;
+		hw_rates = ath5k_hw_get_rate_table(ah, mode2g);
+		sband->n_bitrates = ath5k_copy_rates(sband->bitrates,
+					hw_rates, max_r);
+
+		count_c = sband->n_channels;
+		count_r = sband->n_bitrates;
+
+		hw->wiphy->bands[IEEE80211_BAND_2GHZ] = sband;
+
+		max_r -= count_r;
+		max_c -= count_c;
+
+	}
+
+	/* 5GHz band */
+
+	if (test_bit(AR5K_MODE_11A, sc->ah->ah_capabilities.cap_mode)) {
+		struct ieee80211_supported_band *sband =
+			&sbands[IEEE80211_BAND_5GHZ];
+
+		sband->bitrates = &sc->rates[count_r];
+		sband->channels = &sc->channels[count_c];
+
+		sband->band = IEEE80211_BAND_5GHZ;
+		sband->n_channels = ath5k_copy_channels(ah, sband->channels,
+					AR5K_MODE_11A, max_c);
+
+		hw_rates = ath5k_hw_get_rate_table(ah, AR5K_MODE_11A);
+		sband->n_bitrates = ath5k_copy_rates(sband->bitrates,
+					hw_rates, max_r);
+
+		hw->wiphy->bands[IEEE80211_BAND_5GHZ] = sband;
+	}
+
+	ath5k_debug_dump_bands(sc);
+
+	return 0;
 }
 
 /*
@@ -1030,11 +981,15 @@ ath5k_chan_set(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 	struct ath5k_hw *ah = sc->ah;
 	int ret;
 
-	ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "%u (%u MHz) -> %u (%u MHz)\n",
-		sc->curchan->chan, sc->curchan->freq,
-		chan->chan, chan->freq);
+	ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "(%u MHz) -> (%u MHz)\n",
+		sc->curchan->center_freq, chan->center_freq);
 
-	if (chan->freq != sc->curchan->freq || chan->val != sc->curchan->val) {
+	if (chan->center_freq != sc->curchan->center_freq ||
+		chan->hw_value != sc->curchan->hw_value) {
+
+		sc->curchan = chan;
+		sc->curband = &sc->sbands[chan->band];
+
 		/*
 		 * To switch channels clear any pending DMA operations;
 		 * wait long enough for the RX fifo to drain, reset the
@@ -1044,13 +999,13 @@ ath5k_chan_set(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 		ath5k_hw_set_intr(ah, 0);	/* disable interrupts */
 		ath5k_txq_cleanup(sc);		/* clear pending tx frames */
 		ath5k_rx_stop(sc);		/* turn off frame recv */
-		ret = ath5k_hw_reset(ah, sc->opmode, chan, true);
+		ret = ath5k_hw_reset(ah, sc->opmode, sc->curchan, true);
 		if (ret) {
-			ATH5K_ERR(sc, "%s: unable to reset channel %u "
-				"(%u Mhz)\n", __func__, chan->chan, chan->freq);
+			ATH5K_ERR(sc, "%s: unable to reset channel "
+				"(%u Mhz)\n", __func__, chan->center_freq);
 			return ret;
 		}
-		sc->curchan = chan;
+
 		ath5k_hw_set_txpower_limit(sc->ah, 0);
 
 		/*
@@ -1084,64 +1039,13 @@ ath5k_chan_set(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 static void
 ath5k_setcurmode(struct ath5k_softc *sc, unsigned int mode)
 {
-	if (unlikely(test_bit(ATH_STAT_LEDSOFT, sc->status))) {
-		/* from Atheros NDIS driver, w/ permission */
-		static const struct {
-			u16 rate;	/* tx/rx 802.11 rate */
-			u16 timeOn;	/* LED on time (ms) */
-			u16 timeOff;	/* LED off time (ms) */
-		} blinkrates[] = {
-			{ 108,  40,  10 },
-			{  96,  44,  11 },
-			{  72,  50,  13 },
-			{  48,  57,  14 },
-			{  36,  67,  16 },
-			{  24,  80,  20 },
-			{  22, 100,  25 },
-			{  18, 133,  34 },
-			{  12, 160,  40 },
-			{  10, 200,  50 },
-			{   6, 240,  58 },
-			{   4, 267,  66 },
-			{   2, 400, 100 },
-			{   0, 500, 130 }
-		};
-		const struct ath5k_rate_table *rt =
-				ath5k_hw_get_rate_table(sc->ah, mode);
-		unsigned int i, j;
-
-		BUG_ON(rt == NULL);
-
-		memset(sc->hwmap, 0, sizeof(sc->hwmap));
-		for (i = 0; i < 32; i++) {
-			u8 ix = rt->rate_code_to_index[i];
-			if (ix == 0xff) {
-				sc->hwmap[i].ledon = msecs_to_jiffies(500);
-				sc->hwmap[i].ledoff = msecs_to_jiffies(130);
-				continue;
-			}
-			sc->hwmap[i].txflags = IEEE80211_RADIOTAP_F_DATAPAD;
-			if (SHPREAMBLE_FLAG(ix) || rt->rates[ix].modulation ==
-					IEEE80211_RATE_OFDM)
-				sc->hwmap[i].txflags |=
-						IEEE80211_RADIOTAP_F_SHORTPRE;
-			/* receive frames include FCS */
-			sc->hwmap[i].rxflags = sc->hwmap[i].txflags |
-					IEEE80211_RADIOTAP_F_FCS;
-			/* setup blink rate table to avoid per-packet lookup */
-			for (j = 0; j < ARRAY_SIZE(blinkrates) - 1; j++)
-				if (blinkrates[j].rate == /* XXX why 7f? */
-						(rt->rates[ix].dot11_rate&0x7f))
-					break;
-
-			sc->hwmap[i].ledon = msecs_to_jiffies(blinkrates[j].
-					timeOn);
-			sc->hwmap[i].ledoff = msecs_to_jiffies(blinkrates[j].
-					timeOff);
-		}
-	}
-
 	sc->curmode = mode;
+
+	if (mode == AR5K_MODE_11A) {
+		sc->curband = &sc->sbands[IEEE80211_BAND_5GHZ];
+	} else {
+		sc->curband = &sc->sbands[IEEE80211_BAND_2GHZ];
+	}
 }
 
 static void
@@ -1162,6 +1066,72 @@ ath5k_mode_setup(struct ath5k_softc *sc)
 
 	ath5k_hw_set_mcast_filter(ah, 0, 0);
 	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "RX filter 0x%x\n", rfilt);
+}
+
+/*
+ * Match the hw provided rate index (through descriptors)
+ * to an index for sc->curband->bitrates, so it can be used
+ * by the stack.
+ *
+ * This one is a little bit tricky but i think i'm right
+ * about this...
+ *
+ * We have 4 rate tables in the following order:
+ * XR (4 rates)
+ * 802.11a (8 rates)
+ * 802.11b (4 rates)
+ * 802.11g (12 rates)
+ * that make the hw rate table.
+ *
+ * Lets take a 5211 for example that supports a and b modes only.
+ * First comes the 802.11a table and then 802.11b (total 12 rates).
+ * When hw returns eg. 11 it points to the last 802.11b rate (11Mbit),
+ * if it returns 2 it points to the second 802.11a rate etc.
+ *
+ * Same goes for 5212 who has xr/a/b/g support (total 28 rates).
+ * First comes the XR table, then 802.11a, 802.11b and 802.11g.
+ * When hw returns eg. 27 it points to the last 802.11g rate (54Mbits) etc
+ */
+static void
+ath5k_set_total_hw_rates(struct ath5k_softc *sc) {
+
+	struct ath5k_hw *ah = sc->ah;
+
+	if (test_bit(AR5K_MODE_11A, ah->ah_modes))
+		sc->a_rates = 8;
+
+	if (test_bit(AR5K_MODE_11B, ah->ah_modes))
+		sc->b_rates = 4;
+
+	if (test_bit(AR5K_MODE_11G, ah->ah_modes))
+		sc->g_rates = 12;
+
+	/* XXX: Need to see what what happens when
+		xr disable bits in eeprom are set */
+	if (ah->ah_version >= AR5K_AR5212)
+		sc->xr_rates = 4;
+
+}
+
+static inline int
+ath5k_hw_to_driver_rix(struct ath5k_softc *sc, int hw_rix) {
+
+	int mac80211_rix;
+
+	if(sc->curband->band == IEEE80211_BAND_2GHZ) {
+		/* We setup a g ratetable for both b/g modes */
+		mac80211_rix =
+			hw_rix - sc->b_rates - sc->a_rates - sc->xr_rates;
+	} else {
+		mac80211_rix = hw_rix - sc->xr_rates;
+	}
+
+	/* Something went wrong, fallback to basic rate for this band */
+	if ((mac80211_rix >= sc->curband->n_bitrates) ||
+		(mac80211_rix <= 0 ))
+		mac80211_rix = 1;
+
+	return mac80211_rix;
 }
 
 
@@ -1203,7 +1173,7 @@ ath5k_rxbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 		bf->skb = skb;
 		bf->skbaddr = pci_map_single(sc->pdev,
 			skb->data, sc->rxbufsize, PCI_DMA_FROMDEVICE);
-		if (unlikely(pci_dma_mapping_error(bf->skbaddr))) {
+		if (unlikely(pci_dma_mapping_error(sc->pdev, bf->skbaddr))) {
 			ATH5K_ERR(sc, "%s: DMA mapping failed\n", __func__);
 			dev_kfree_skb(skb);
 			bf->skb = NULL;
@@ -1240,35 +1210,36 @@ ath5k_rxbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 }
 
 static int
-ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
-		struct ieee80211_tx_control *ctl)
+ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 {
 	struct ath5k_hw *ah = sc->ah;
 	struct ath5k_txq *txq = sc->txq;
 	struct ath5k_desc *ds = bf->desc;
 	struct sk_buff *skb = bf->skb;
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	unsigned int pktlen, flags, keyidx = AR5K_TXKEYIX_INVALID;
 	int ret;
 
 	flags = AR5K_TXDESC_INTREQ | AR5K_TXDESC_CLRDMASK;
-	bf->ctl = *ctl;
+
 	/* XXX endianness */
 	bf->skbaddr = pci_map_single(sc->pdev, skb->data, skb->len,
 			PCI_DMA_TODEVICE);
 
-	if (ctl->flags & IEEE80211_TXCTL_NO_ACK)
+	if (info->flags & IEEE80211_TX_CTL_NO_ACK)
 		flags |= AR5K_TXDESC_NOACK;
 
 	pktlen = skb->len;
 
-	if (!(ctl->flags & IEEE80211_TXCTL_DO_NOT_ENCRYPT)) {
-		keyidx = ctl->key_idx;
-		pktlen += ctl->icv_len;
+	if (info->control.hw_key) {
+		keyidx = info->control.hw_key->hw_key_idx;
+		pktlen += info->control.icv_len;
 	}
-
 	ret = ah->ah_setup_tx_desc(ah, ds, pktlen,
 		ieee80211_get_hdrlen_from_skb(skb), AR5K_PKT_TYPE_NORMAL,
-		(ctl->power_level * 2), ctl->tx_rate, ctl->retry_limit, keyidx, 0, flags, 0, 0);
+		(sc->power_level * 2),
+		ieee80211_get_tx_rate(sc->hw, info)->hw_value,
+		info->control.retry_limit, keyidx, 0, flags, 0, 0);
 	if (ret)
 		goto err_unmap;
 
@@ -1277,7 +1248,7 @@ ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
 
 	spin_lock_bh(&txq->lock);
 	list_add_tail(&bf->list, &txq->q);
-	sc->tx_stats.data[txq->qnum].len++;
+	sc->tx_stats[txq->qnum].len++;
 	if (txq->link == NULL) /* is this first packet? */
 		ath5k_hw_put_tx_buf(ah, txq->qnum, bf->daddr);
 	else /* no, so only link it */
@@ -1285,6 +1256,7 @@ ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
 
 	txq->link = &ds->ds_link;
 	ath5k_hw_tx_start(ah, txq->qnum);
+	mmiowb();
 	spin_unlock_bh(&txq->lock);
 
 	return 0;
@@ -1503,13 +1475,12 @@ ath5k_txq_drainq(struct ath5k_softc *sc, struct ath5k_txq *txq)
 	 */
 	spin_lock_bh(&txq->lock);
 	list_for_each_entry_safe(bf, bf0, &txq->q, list) {
-		ath5k_debug_printtxbuf(sc, bf, !sc->ah->ah_proc_tx_desc(sc->ah,
-					bf->desc));
+		ath5k_debug_printtxbuf(sc, bf);
 
 		ath5k_txbuf_free(sc, bf);
 
 		spin_lock_bh(&sc->txbuflock);
-		sc->tx_stats.data[txq->qnum].len--;
+		sc->tx_stats[txq->qnum].len--;
 		list_move_tail(&bf->list, &sc->txbuf);
 		sc->txbuf_len++;
 		spin_unlock_bh(&sc->txbuflock);
@@ -1544,7 +1515,7 @@ ath5k_txq_cleanup(struct ath5k_softc *sc)
 					sc->txqs[i].link);
 			}
 	}
-	ieee80211_start_queues(sc->hw); /* XXX move to callers */
+	ieee80211_wake_queues(sc->hw); /* XXX move to callers */
 
 	for (i = 0; i < ARRAY_SIZE(sc->txqs); i++)
 		if (sc->txqs[i].setup)
@@ -1620,7 +1591,6 @@ ath5k_rx_stop(struct ath5k_softc *sc)
 	ath5k_hw_stop_pcu_recv(ah);	/* disable PCU */
 	ath5k_hw_set_rx_filter(ah, 0);	/* clear recv filter */
 	ath5k_hw_stop_rx_dma(ah);	/* disable DMA engine */
-	mdelay(3);			/* 3ms is long enough for 1 frame */
 
 	ath5k_debug_printrxbuffs(sc, ah);
 
@@ -1629,21 +1599,21 @@ ath5k_rx_stop(struct ath5k_softc *sc)
 
 static unsigned int
 ath5k_rx_decrypted(struct ath5k_softc *sc, struct ath5k_desc *ds,
-		struct sk_buff *skb)
+		struct sk_buff *skb, struct ath5k_rx_status *rs)
 {
 	struct ieee80211_hdr *hdr = (void *)skb->data;
 	unsigned int keyix, hlen = ieee80211_get_hdrlen_from_skb(skb);
 
-	if (!(ds->ds_rxstat.rs_status & AR5K_RXERR_DECRYPT) &&
-			ds->ds_rxstat.rs_keyix != AR5K_RXKEYIX_INVALID)
+	if (!(rs->rs_status & AR5K_RXERR_DECRYPT) &&
+			rs->rs_keyix != AR5K_RXKEYIX_INVALID)
 		return RX_FLAG_DECRYPTED;
 
 	/* Apparently when a default key is used to decrypt the packet
 	   the hw does not set the index used to decrypt.  In such cases
 	   get the index from the packet. */
-	if ((le16_to_cpu(hdr->frame_control) & IEEE80211_FCTL_PROTECTED) &&
-			!(ds->ds_rxstat.rs_status & AR5K_RXERR_DECRYPT) &&
-			skb->len >= hlen + 4) {
+	if (ieee80211_has_protected(hdr->frame_control) &&
+	    !(rs->rs_status & AR5K_RXERR_DECRYPT) &&
+	    skb->len >= hlen + 4) {
 		keyix = skb->data[hlen + 3] >> 6;
 
 		if (test_bit(keyix, sc->keymap))
@@ -1655,28 +1625,59 @@ ath5k_rx_decrypted(struct ath5k_softc *sc, struct ath5k_desc *ds,
 
 
 static void
-ath5k_check_ibss_hw_merge(struct ath5k_softc *sc, struct sk_buff *skb)
+ath5k_check_ibss_tsf(struct ath5k_softc *sc, struct sk_buff *skb,
+		     struct ieee80211_rx_status *rxs)
 {
+	u64 tsf, bc_tstamp;
 	u32 hw_tu;
 	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)skb->data;
 
-	if ((mgmt->frame_control & IEEE80211_FCTL_FTYPE) ==
-		IEEE80211_FTYPE_MGMT &&
-	    (mgmt->frame_control & IEEE80211_FCTL_STYPE) ==
-		IEEE80211_STYPE_BEACON &&
-	    mgmt->u.beacon.capab_info & WLAN_CAPABILITY_IBSS &&
+	if (ieee80211_is_beacon(mgmt->frame_control) &&
+	    le16_to_cpu(mgmt->u.beacon.capab_info) & WLAN_CAPABILITY_IBSS &&
 	    memcmp(mgmt->bssid, sc->ah->ah_bssid, ETH_ALEN) == 0) {
 		/*
-		 * Received an IBSS beacon with the same BSSID. Hardware might
-		 * have updated the TSF, check if we need to update timers.
+		 * Received an IBSS beacon with the same BSSID. Hardware *must*
+		 * have updated the local TSF. We have to work around various
+		 * hardware bugs, though...
 		 */
-		hw_tu = TSF_TO_TU(ath5k_hw_get_tsf64(sc->ah));
-		if (hw_tu >= sc->nexttbtt) {
-			ath5k_beacon_update_timers(sc,
-				mgmt->u.beacon.timestamp);
+		tsf = ath5k_hw_get_tsf64(sc->ah);
+		bc_tstamp = le64_to_cpu(mgmt->u.beacon.timestamp);
+		hw_tu = TSF_TO_TU(tsf);
+
+		ATH5K_DBG_UNLIMIT(sc, ATH5K_DEBUG_BEACON,
+			"beacon %llx mactime %llx (diff %lld) tsf now %llx\n",
+			(unsigned long long)bc_tstamp,
+			(unsigned long long)rxs->mactime,
+			(unsigned long long)(rxs->mactime - bc_tstamp),
+			(unsigned long long)tsf);
+
+		/*
+		 * Sometimes the HW will give us a wrong tstamp in the rx
+		 * status, causing the timestamp extension to go wrong.
+		 * (This seems to happen especially with beacon frames bigger
+		 * than 78 byte (incl. FCS))
+		 * But we know that the receive timestamp must be later than the
+		 * timestamp of the beacon since HW must have synced to that.
+		 *
+		 * NOTE: here we assume mactime to be after the frame was
+		 * received, not like mac80211 which defines it at the start.
+		 */
+		if (bc_tstamp > rxs->mactime) {
 			ATH5K_DBG_UNLIMIT(sc, ATH5K_DEBUG_BEACON,
-				"detected HW merge from received beacon\n");
+				"fixing mactime from %llx to %llx\n",
+				(unsigned long long)rxs->mactime,
+				(unsigned long long)tsf);
+			rxs->mactime = tsf;
 		}
+
+		/*
+		 * Local TSF might have moved higher than our beacon timers,
+		 * in that case we have to update them to continue sending
+		 * beacons. This also takes care of synchronizing beacon sending
+		 * times with other stations.
+		 */
+		if (hw_tu >= sc->nexttbtt)
+			ath5k_beacon_update_timers(sc, bc_tstamp);
 	}
 }
 
@@ -1685,35 +1686,49 @@ static void
 ath5k_tasklet_rx(unsigned long data)
 {
 	struct ieee80211_rx_status rxs = {};
+	struct ath5k_rx_status rs = {};
 	struct sk_buff *skb;
 	struct ath5k_softc *sc = (void *)data;
-	struct ath5k_buf *bf;
+	struct ath5k_buf *bf, *bf_last;
 	struct ath5k_desc *ds;
-	u16 len;
-	u8 stat;
 	int ret;
 	int hdrlen;
 	int pad;
 
 	spin_lock(&sc->rxbuflock);
+	if (list_empty(&sc->rxbuf)) {
+		ATH5K_WARN(sc, "empty rx buf pool\n");
+		goto unlock;
+	}
+	bf_last = list_entry(sc->rxbuf.prev, struct ath5k_buf, list);
 	do {
-		if (unlikely(list_empty(&sc->rxbuf))) {
-			ATH5K_WARN(sc, "empty rx buf pool\n");
-			break;
-		}
+		rxs.flag = 0;
+
 		bf = list_first_entry(&sc->rxbuf, struct ath5k_buf, list);
 		BUG_ON(bf->skb == NULL);
 		skb = bf->skb;
 		ds = bf->desc;
 
-		/* TODO only one segment */
-		pci_dma_sync_single_for_cpu(sc->pdev, sc->desc_daddr,
-				sc->desc_len, PCI_DMA_FROMDEVICE);
+		/*
+		 * last buffer must not be freed to ensure proper hardware
+		 * function. When the hardware finishes also a packet next to
+		 * it, we are sure, it doesn't use it anymore and we can go on.
+		 */
+		if (bf_last == bf)
+			bf->flags |= 1;
+		if (bf->flags) {
+			struct ath5k_buf *bf_next = list_entry(bf->list.next,
+					struct ath5k_buf, list);
+			ret = sc->ah->ah_proc_rx_desc(sc->ah, bf_next->desc,
+					&rs);
+			if (ret)
+				break;
+			bf->flags &= ~1;
+			/* skip the overwritten one (even status is martian) */
+			goto next;
+		}
 
-		if (unlikely(ds->ds_link == bf->daddr)) /* this is the end */
-			break;
-
-		ret = sc->ah->ah_proc_rx_desc(sc->ah, ds);
+		ret = sc->ah->ah_proc_rx_desc(sc->ah, ds, &rs);
 		if (unlikely(ret == -EINPROGRESS))
 			break;
 		else if (unlikely(ret)) {
@@ -1722,16 +1737,15 @@ ath5k_tasklet_rx(unsigned long data)
 			return;
 		}
 
-		if (unlikely(ds->ds_rxstat.rs_more)) {
+		if (unlikely(rs.rs_more)) {
 			ATH5K_WARN(sc, "unsupported jumbo\n");
 			goto next;
 		}
 
-		stat = ds->ds_rxstat.rs_status;
-		if (unlikely(stat)) {
-			if (stat & AR5K_RXERR_PHY)
+		if (unlikely(rs.rs_status)) {
+			if (rs.rs_status & AR5K_RXERR_PHY)
 				goto next;
-			if (stat & AR5K_RXERR_DECRYPT) {
+			if (rs.rs_status & AR5K_RXERR_DECRYPT) {
 				/*
 				 * Decrypt error.  If the error occurred
 				 * because there was no hardware key, then
@@ -1742,30 +1756,27 @@ ath5k_tasklet_rx(unsigned long data)
 				 *
 				 * XXX do key cache faulting
 				 */
-				if (ds->ds_rxstat.rs_keyix ==
-						AR5K_RXKEYIX_INVALID &&
-						!(stat & AR5K_RXERR_CRC))
+				if (rs.rs_keyix == AR5K_RXKEYIX_INVALID &&
+				    !(rs.rs_status & AR5K_RXERR_CRC))
 					goto accept;
 			}
-			if (stat & AR5K_RXERR_MIC) {
+			if (rs.rs_status & AR5K_RXERR_MIC) {
 				rxs.flag |= RX_FLAG_MMIC_ERROR;
 				goto accept;
 			}
 
 			/* let crypto-error packets fall through in MNTR */
-			if ((stat & ~(AR5K_RXERR_DECRYPT|AR5K_RXERR_MIC)) ||
+			if ((rs.rs_status &
+				~(AR5K_RXERR_DECRYPT|AR5K_RXERR_MIC)) ||
 					sc->opmode != IEEE80211_IF_TYPE_MNTR)
 				goto next;
 		}
 accept:
-		len = ds->ds_rxstat.rs_datalen;
-		pci_dma_sync_single_for_cpu(sc->pdev, bf->skbaddr, len,
-				PCI_DMA_FROMDEVICE);
 		pci_unmap_single(sc->pdev, bf->skbaddr, sc->rxbufsize,
 				PCI_DMA_FROMDEVICE);
 		bf->skb = NULL;
 
-		skb_put(skb, len);
+		skb_put(skb, rs.rs_datalen);
 
 		/*
 		 * the hardware adds a padding to 4 byte boundaries between
@@ -1787,45 +1798,43 @@ accept:
 		 * 15bit only. that means TSF extension has to be done within
 		 * 32768usec (about 32ms). it might be necessary to move this to
 		 * the interrupt handler, like it is done in madwifi.
+		 *
+		 * Unfortunately we don't know when the hardware takes the rx
+		 * timestamp (beginning of phy frame, data frame, end of rx?).
+		 * The only thing we know is that it is hardware specific...
+		 * On AR5213 it seems the rx timestamp is at the end of the
+		 * frame, but i'm not sure.
+		 *
+		 * NOTE: mac80211 defines mactime at the beginning of the first
+		 * data symbol. Since we don't have any time references it's
+		 * impossible to comply to that. This affects IBSS merge only
+		 * right now, so it's not too bad...
 		 */
-		rxs.mactime = ath5k_extend_tsf(sc->ah, ds->ds_rxstat.rs_tstamp);
+		rxs.mactime = ath5k_extend_tsf(sc->ah, rs.rs_tstamp);
 		rxs.flag |= RX_FLAG_TSFT;
 
-		rxs.freq = sc->curchan->freq;
-		rxs.channel = sc->curchan->chan;
-		rxs.phymode = sc->curmode;
+		rxs.freq = sc->curchan->center_freq;
+		rxs.band = sc->curband->band;
 
-		/*
-		 * signal quality:
-		 * the names here are misleading and the usage of these
-		 * values by iwconfig makes it even worse
-		 */
-		/* noise floor in dBm, from the last noise calibration */
 		rxs.noise = sc->ah->ah_noise_floor;
-		/* signal level in dBm */
-		rxs.ssi = rxs.noise + ds->ds_rxstat.rs_rssi;
-		/*
-		 * "signal" is actually displayed as Link Quality by iwconfig
-		 * we provide a percentage based on rssi (assuming max rssi 64)
-		 */
-		rxs.signal = ds->ds_rxstat.rs_rssi * 100 / 64;
+		rxs.signal = rxs.noise + rs.rs_rssi;
+		rxs.qual = rs.rs_rssi * 100 / 64;
 
-		rxs.antenna = ds->ds_rxstat.rs_antenna;
-		rxs.rate = ds->ds_rxstat.rs_rate;
-		rxs.flag |= ath5k_rx_decrypted(sc, ds, skb);
+		rxs.antenna = rs.rs_antenna;
+		rxs.rate_idx = ath5k_hw_to_driver_rix(sc, rs.rs_rate);
+		rxs.flag |= ath5k_rx_decrypted(sc, ds, skb, &rs);
 
 		ath5k_debug_dump_skb(sc, skb, "RX  ", 0);
 
 		/* check beacons in IBSS mode */
 		if (sc->opmode == IEEE80211_IF_TYPE_IBSS)
-			ath5k_check_ibss_hw_merge(sc, skb);
+			ath5k_check_ibss_tsf(sc, skb, &rxs);
 
 		__ieee80211_rx(sc->hw, skb, &rxs);
-		sc->led_rxrate = ds->ds_rxstat.rs_rate;
-		ath5k_led_event(sc, ATH_LED_RX);
 next:
 		list_move_tail(&bf->list, &sc->rxbuf);
 	} while (ath5k_rxbuf_setup(sc, bf) == 0);
+unlock:
 	spin_unlock(&sc->rxbuflock);
 }
 
@@ -1839,20 +1848,18 @@ next:
 static void
 ath5k_tx_processq(struct ath5k_softc *sc, struct ath5k_txq *txq)
 {
-	struct ieee80211_tx_status txs = {};
+	struct ath5k_tx_status ts = {};
 	struct ath5k_buf *bf, *bf0;
 	struct ath5k_desc *ds;
 	struct sk_buff *skb;
+	struct ieee80211_tx_info *info;
 	int ret;
 
 	spin_lock(&txq->lock);
 	list_for_each_entry_safe(bf, bf0, &txq->q, list) {
 		ds = bf->desc;
 
-		/* TODO only one segment */
-		pci_dma_sync_single_for_cpu(sc->pdev, sc->desc_daddr,
-				sc->desc_len, PCI_DMA_FROMDEVICE);
-		ret = sc->ah->ah_proc_tx_desc(sc->ah, ds);
+		ret = sc->ah->ah_proc_tx_desc(sc->ah, ds, &ts);
 		if (unlikely(ret == -EINPROGRESS))
 			break;
 		else if (unlikely(ret)) {
@@ -1862,29 +1869,29 @@ ath5k_tx_processq(struct ath5k_softc *sc, struct ath5k_txq *txq)
 		}
 
 		skb = bf->skb;
+		info = IEEE80211_SKB_CB(skb);
 		bf->skb = NULL;
+
 		pci_unmap_single(sc->pdev, bf->skbaddr, skb->len,
 				PCI_DMA_TODEVICE);
 
-		txs.control = bf->ctl;
-		txs.retry_count = ds->ds_txstat.ts_shortretry +
-			ds->ds_txstat.ts_longretry / 6;
-		if (unlikely(ds->ds_txstat.ts_status)) {
+		info->status.retry_count = ts.ts_shortretry + ts.ts_longretry / 6;
+		if (unlikely(ts.ts_status)) {
 			sc->ll_stats.dot11ACKFailureCount++;
-			if (ds->ds_txstat.ts_status & AR5K_TXERR_XRETRY)
-				txs.excessive_retries = 1;
-			else if (ds->ds_txstat.ts_status & AR5K_TXERR_FILT)
-				txs.flags |= IEEE80211_TX_STATUS_TX_FILTERED;
+			if (ts.ts_status & AR5K_TXERR_XRETRY)
+				info->status.excessive_retries = 1;
+			else if (ts.ts_status & AR5K_TXERR_FILT)
+				info->flags |= IEEE80211_TX_STAT_TX_FILTERED;
 		} else {
-			txs.flags |= IEEE80211_TX_STATUS_ACK;
-			txs.ack_signal = ds->ds_txstat.ts_rssi;
+			info->flags |= IEEE80211_TX_STAT_ACK;
+			info->status.ack_signal = ts.ts_rssi;
 		}
 
-		ieee80211_tx_status(sc->hw, skb, &txs);
-		sc->tx_stats.data[txq->qnum].count++;
+		ieee80211_tx_status(sc->hw, skb);
+		sc->tx_stats[txq->qnum].count++;
 
 		spin_lock(&sc->txbuflock);
-		sc->tx_stats.data[txq->qnum].len--;
+		sc->tx_stats[txq->qnum].len--;
 		list_move_tail(&bf->list, &sc->txbuf);
 		sc->txbuf_len++;
 		spin_unlock(&sc->txbuflock);
@@ -1902,11 +1909,7 @@ ath5k_tasklet_tx(unsigned long data)
 	struct ath5k_softc *sc = (void *)data;
 
 	ath5k_tx_processq(sc, sc->txq);
-
-	ath5k_led_event(sc, ATH_LED_TX);
 }
-
-
 
 
 /*****************\
@@ -1917,10 +1920,10 @@ ath5k_tasklet_tx(unsigned long data)
  * Setup the beacon frame for transmit.
  */
 static int
-ath5k_beacon_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
-		struct ieee80211_tx_control *ctl)
+ath5k_beacon_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 {
 	struct sk_buff *skb = bf->skb;
+	struct	ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ath5k_hw *ah = sc->ah;
 	struct ath5k_desc *ds;
 	int ret, antenna = 0;
@@ -1931,7 +1934,7 @@ ath5k_beacon_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
 	ATH5K_DBG(sc, ATH5K_DEBUG_BEACON, "skb %p [data %p len %u] "
 			"skbaddr %llx\n", skb, skb->data, skb->len,
 			(unsigned long long)bf->skbaddr);
-	if (pci_dma_mapping_error(bf->skbaddr)) {
+	if (pci_dma_mapping_error(sc->pdev, bf->skbaddr)) {
 		ATH5K_ERR(sc, "beacon DMA mapping failed\n");
 		return -EIO;
 	}
@@ -1958,8 +1961,10 @@ ath5k_beacon_setup(struct ath5k_softc *sc, struct ath5k_buf *bf,
 	ds->ds_data = bf->skbaddr;
 	ret = ah->ah_setup_tx_desc(ah, ds, skb->len,
 			ieee80211_get_hdrlen_from_skb(skb),
-			AR5K_PKT_TYPE_BEACON, (ctl->power_level * 2), ctl->tx_rate, 1,
-			AR5K_TXKEYIX_INVALID, antenna, flags, 0, 0);
+			AR5K_PKT_TYPE_BEACON, (sc->power_level * 2),
+			ieee80211_get_tx_rate(sc->hw, info)->hw_value,
+			1, AR5K_TXKEYIX_INVALID,
+			antenna, flags, 0, 0);
 	if (ret)
 		goto err_unmap;
 
@@ -2026,8 +2031,6 @@ ath5k_beacon_send(struct ath5k_softc *sc)
 		ATH5K_WARN(sc, "beacon queue %u didn't stop?\n", sc->bhalq);
 		/* NB: hw still stops DMA, so proceed */
 	}
-	pci_dma_sync_single_for_cpu(sc->pdev, bf->skbaddr, bf->skb->len,
-			PCI_DMA_TODEVICE);
 
 	ath5k_hw_put_tx_buf(ah, sc->bhalq, bf->daddr);
 	ath5k_hw_tx_start(ah, sc->bhalq);
@@ -2050,7 +2053,7 @@ ath5k_beacon_send(struct ath5k_softc *sc)
  * beacon timer registers.
  *
  * This is called in a variety of situations, e.g. when a beacon is received,
- * when a HW merge has been detected, but also when an new IBSS is created or
+ * when a TSF update has been detected, but also when an new IBSS is created or
  * when we otherwise know we have to update the timers, but we keep it in this
  * function to have it all together in one place.
  */
@@ -2150,7 +2153,7 @@ ath5k_beacon_update_timers(struct ath5k_softc *sc, u64 bc_tsf)
  * another AP to associate with.
  *
  * In IBSS mode we use a self-linked tx descriptor if possible. We enable SWBA
- * interrupts to detect HW merges only.
+ * interrupts to detect TSF updates only.
  *
  * AP mode is missing.
  */
@@ -2161,6 +2164,7 @@ ath5k_beacon_config(struct ath5k_softc *sc)
 
 	ath5k_hw_set_intr(ah, 0);
 	sc->bmisscount = 0;
+	sc->imask &= ~(AR5K_INT_BMISS | AR5K_INT_SWBA);
 
 	if (sc->opmode == IEEE80211_IF_TYPE_STA) {
 		sc->imask |= AR5K_INT_BMISS;
@@ -2170,14 +2174,17 @@ ath5k_beacon_config(struct ath5k_softc *sc)
 		 * hardware send the beacons automatically. We have to load it
 		 * only once here.
 		 * We use the SWBA interrupt only to keep track of the beacon
-		 * timers in order to detect HW merges (automatic TSF updates).
+		 * timers in order to detect automatic TSF updates.
 		 */
 		ath5k_beaconq_config(sc);
 
 		sc->imask |= AR5K_INT_SWBA;
 
-		if (ath5k_hw_hasveol(ah))
+		if (ath5k_hw_hasveol(ah)) {
+			spin_lock(&sc->block);
 			ath5k_beacon_send(sc);
+			spin_unlock(&sc->block);
+		}
 	}
 	/* TODO else AP */
 
@@ -2211,7 +2218,8 @@ ath5k_init(struct ath5k_softc *sc)
 	 * be followed by initialization of the appropriate bits
 	 * and then setup of the interrupt mask.
 	 */
-	sc->curchan = sc->hw->conf.chan;
+	sc->curchan = sc->hw->conf.channel;
+	sc->curband = &sc->sbands[sc->curchan->band];
 	ret = ath5k_hw_reset(sc->ah, sc->opmode, sc->curchan, false);
 	if (ret) {
 		ATH5K_ERR(sc, "unable to reset hardware: %d\n", ret);
@@ -2238,7 +2246,8 @@ ath5k_init(struct ath5k_softc *sc)
 	 * Enable interrupts.
 	 */
 	sc->imask = AR5K_INT_RX | AR5K_INT_TX | AR5K_INT_RXEOL |
-		AR5K_INT_RXORN | AR5K_INT_FATAL | AR5K_INT_GLOBAL;
+		AR5K_INT_RXORN | AR5K_INT_FATAL | AR5K_INT_GLOBAL |
+		AR5K_INT_MIB;
 
 	ath5k_hw_set_intr(sc->ah, sc->imask);
 	/* Set ack to be sent at low bit-rates */
@@ -2249,6 +2258,7 @@ ath5k_init(struct ath5k_softc *sc)
 
 	ret = 0;
 done:
+	mmiowb();
 	mutex_unlock(&sc->lock);
 	return ret;
 }
@@ -2279,12 +2289,9 @@ ath5k_stop_locked(struct ath5k_softc *sc)
 	ieee80211_stop_queues(sc->hw);
 
 	if (!test_bit(ATH_STAT_INVALID, sc->status)) {
-		if (test_bit(ATH_STAT_LEDSOFT, sc->status)) {
-			del_timer_sync(&sc->led_tim);
-			ath5k_hw_set_gpio(ah, sc->led_pin, !sc->led_on);
-			__clear_bit(ATH_STAT_LEDBLINKING, sc->status);
-		}
+		ath5k_led_off(sc);
 		ath5k_hw_set_intr(ah, 0);
+		synchronize_irq(sc->pdev->irq);
 	}
 	ath5k_txq_cleanup(sc);
 	if (!test_bit(ATH_STAT_INVALID, sc->status)) {
@@ -2334,9 +2341,13 @@ ath5k_stop_hw(struct ath5k_softc *sc)
 		}
 	}
 	ath5k_txbuf_free(sc, sc->bbuf);
+	mmiowb();
 	mutex_unlock(&sc->lock);
 
 	del_timer_sync(&sc->calib_tim);
+	tasklet_kill(&sc->rxtq);
+	tasklet_kill(&sc->txtq);
+	tasklet_kill(&sc->restq);
 
 	return ret;
 }
@@ -2382,8 +2393,8 @@ ath5k_intr(int irq, void *dev_id)
 				*
 				* In IBSS mode we use this interrupt just to
 				* keep track of the next TBTT (target beacon
-				* transmission time) in order to detect hardware
-				* merges (TSF updates).
+				* transmission time) in order to detect wether
+				* automatic TSF updates happened.
 				*/
 				if (sc->opmode == IEEE80211_IF_TYPE_IBSS) {
 					 /* XXX: only if VEOL suppported */
@@ -2396,7 +2407,9 @@ ath5k_intr(int irq, void *dev_id)
 						  TSF_TO_TU(tsf),
 						  (unsigned long long) tsf);
 				} else {
+					spin_lock(&sc->block);
 					ath5k_beacon_send(sc);
+					spin_unlock(&sc->block);
 				}
 			}
 			if (status & AR5K_INT_RXEOL) {
@@ -2418,7 +2431,11 @@ ath5k_intr(int irq, void *dev_id)
 			if (status & AR5K_INT_BMISS) {
 			}
 			if (status & AR5K_INT_MIB) {
-				/* TODO */
+				/*
+				 * These stats are also used for ANI i think
+				 * so how about updating them more often ?
+				 */
+				ath5k_hw_update_mib_counters(ah, &sc->ll_stats);
 			}
 		}
 	} while (ath5k_hw_is_intr_pending(ah) && counter-- > 0);
@@ -2448,7 +2465,8 @@ ath5k_calibrate(unsigned long data)
 	struct ath5k_hw *ah = sc->ah;
 
 	ATH5K_DBG(sc, ATH5K_DEBUG_CALIBRATE, "channel %u/%x\n",
-		sc->curchan->chan, sc->curchan->val);
+		ieee80211_frequency_to_channel(sc->curchan->center_freq),
+		sc->curchan->hw_value);
 
 	if (ath5k_hw_get_rf_gain(ah) == AR5K_RFGAIN_NEED_CHANGE) {
 		/*
@@ -2460,7 +2478,8 @@ ath5k_calibrate(unsigned long data)
 	}
 	if (ath5k_hw_phy_calibrate(ah, sc->curchan))
 		ATH5K_ERR(sc, "calibration of channel %u failed\n",
-				sc->curchan->chan);
+			ieee80211_frequency_to_channel(
+				sc->curchan->center_freq));
 
 	mod_timer(&sc->calib_tim, round_jiffies(jiffies +
 			msecs_to_jiffies(ath5k_calinterval * 1000)));
@@ -2473,54 +2492,123 @@ ath5k_calibrate(unsigned long data)
 \***************/
 
 static void
-ath5k_led_off(unsigned long data)
+ath5k_led_enable(struct ath5k_softc *sc)
 {
-	struct ath5k_softc *sc = (void *)data;
-
-	if (test_bit(ATH_STAT_LEDENDBLINK, sc->status))
-		__clear_bit(ATH_STAT_LEDBLINKING, sc->status);
-	else {
-		__set_bit(ATH_STAT_LEDENDBLINK, sc->status);
-		ath5k_hw_set_gpio(sc->ah, sc->led_pin, !sc->led_on);
-		mod_timer(&sc->led_tim, jiffies + sc->led_off);
+	if (test_bit(ATH_STAT_LEDSOFT, sc->status)) {
+		ath5k_hw_set_gpio_output(sc->ah, sc->led_pin);
+		ath5k_led_off(sc);
 	}
 }
 
-/*
- * Blink the LED according to the specified on/off times.
- */
 static void
-ath5k_led_blink(struct ath5k_softc *sc, unsigned int on,
-		unsigned int off)
+ath5k_led_on(struct ath5k_softc *sc)
 {
-	ATH5K_DBG(sc, ATH5K_DEBUG_LED, "on %u off %u\n", on, off);
-	ath5k_hw_set_gpio(sc->ah, sc->led_pin, sc->led_on);
-	__set_bit(ATH_STAT_LEDBLINKING, sc->status);
-	__clear_bit(ATH_STAT_LEDENDBLINK, sc->status);
-	sc->led_off = off;
-	mod_timer(&sc->led_tim, jiffies + on);
-}
-
-static void
-ath5k_led_event(struct ath5k_softc *sc, int event)
-{
-	if (likely(!test_bit(ATH_STAT_LEDSOFT, sc->status)))
+	if (!test_bit(ATH_STAT_LEDSOFT, sc->status))
 		return;
-	if (unlikely(test_bit(ATH_STAT_LEDBLINKING, sc->status)))
-		return; /* don't interrupt active blink */
-	switch (event) {
-	case ATH_LED_TX:
-		ath5k_led_blink(sc, sc->hwmap[sc->led_txrate].ledon,
-			sc->hwmap[sc->led_txrate].ledoff);
-		break;
-	case ATH_LED_RX:
-		ath5k_led_blink(sc, sc->hwmap[sc->led_rxrate].ledon,
-			sc->hwmap[sc->led_rxrate].ledoff);
-		break;
+	ath5k_hw_set_gpio(sc->ah, sc->led_pin, sc->led_on);
+}
+
+static void
+ath5k_led_off(struct ath5k_softc *sc)
+{
+	if (!test_bit(ATH_STAT_LEDSOFT, sc->status))
+		return;
+	ath5k_hw_set_gpio(sc->ah, sc->led_pin, !sc->led_on);
+}
+
+static void
+ath5k_led_brightness_set(struct led_classdev *led_dev,
+	enum led_brightness brightness)
+{
+	struct ath5k_led *led = container_of(led_dev, struct ath5k_led,
+		led_dev);
+
+	if (brightness == LED_OFF)
+		ath5k_led_off(led->sc);
+	else
+		ath5k_led_on(led->sc);
+}
+
+static int
+ath5k_register_led(struct ath5k_softc *sc, struct ath5k_led *led,
+		   const char *name, char *trigger)
+{
+	int err;
+
+	led->sc = sc;
+	strncpy(led->name, name, sizeof(led->name));
+	led->led_dev.name = led->name;
+	led->led_dev.default_trigger = trigger;
+	led->led_dev.brightness_set = ath5k_led_brightness_set;
+
+	err = led_classdev_register(&sc->pdev->dev, &led->led_dev);
+	if (err)
+	{
+		ATH5K_WARN(sc, "could not register LED %s\n", name);
+		led->sc = NULL;
 	}
+	return err;
+}
+
+static void
+ath5k_unregister_led(struct ath5k_led *led)
+{
+	if (!led->sc)
+		return;
+	led_classdev_unregister(&led->led_dev);
+	ath5k_led_off(led->sc);
+	led->sc = NULL;
+}
+
+static void
+ath5k_unregister_leds(struct ath5k_softc *sc)
+{
+	ath5k_unregister_led(&sc->rx_led);
+	ath5k_unregister_led(&sc->tx_led);
 }
 
 
+static int
+ath5k_init_leds(struct ath5k_softc *sc)
+{
+	int ret = 0;
+	struct ieee80211_hw *hw = sc->hw;
+	struct pci_dev *pdev = sc->pdev;
+	char name[ATH5K_LED_MAX_NAME_LEN + 1];
+
+	/*
+	 * Auto-enable soft led processing for IBM cards and for
+	 * 5211 minipci cards.
+	 */
+	if (pdev->device == PCI_DEVICE_ID_ATHEROS_AR5212_IBM ||
+	    pdev->device == PCI_DEVICE_ID_ATHEROS_AR5211) {
+		__set_bit(ATH_STAT_LEDSOFT, sc->status);
+		sc->led_pin = 0;
+		sc->led_on = 0;  /* active low */
+	}
+	/* Enable softled on PIN1 on HP Compaq nc6xx, nc4000 & nx5000 laptops */
+	if (pdev->subsystem_vendor == PCI_VENDOR_ID_COMPAQ) {
+		__set_bit(ATH_STAT_LEDSOFT, sc->status);
+		sc->led_pin = 1;
+		sc->led_on = 1;  /* active high */
+	}
+	if (!test_bit(ATH_STAT_LEDSOFT, sc->status))
+		goto out;
+
+	ath5k_led_enable(sc);
+
+	snprintf(name, sizeof(name), "ath5k-%s::rx", wiphy_name(hw->wiphy));
+	ret = ath5k_register_led(sc, &sc->rx_led, name,
+		ieee80211_get_rx_led_name(hw));
+	if (ret)
+		goto out;
+
+	snprintf(name, sizeof(name), "ath5k-%s::tx", wiphy_name(hw->wiphy));
+	ret = ath5k_register_led(sc, &sc->tx_led, name,
+		ieee80211_get_tx_led_name(hw));
+out:
+	return ret;
+}
 
 
 /********************\
@@ -2528,8 +2616,7 @@ ath5k_led_event(struct ath5k_softc *sc, int event)
 \********************/
 
 static int
-ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb,
-			struct ieee80211_tx_control *ctl)
+ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct ath5k_softc *sc = hw->priv;
 	struct ath5k_buf *bf;
@@ -2558,13 +2645,11 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb,
 		memmove(skb->data, skb->data+pad, hdrlen);
 	}
 
-	sc->led_txrate = ctl->tx_rate;
-
 	spin_lock_irqsave(&sc->txbuflock, flags);
 	if (list_empty(&sc->txbuf)) {
 		ATH5K_ERR(sc, "no further txbuf available, dropping packet\n");
 		spin_unlock_irqrestore(&sc->txbuflock, flags);
-		ieee80211_stop_queue(hw, ctl->queue);
+		ieee80211_stop_queue(hw, skb_get_queue_mapping(skb));
 		return -1;
 	}
 	bf = list_first_entry(&sc->txbuf, struct ath5k_buf, list);
@@ -2576,7 +2661,7 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb,
 
 	bf->skb = skb;
 
-	if (ath5k_txbuf_setup(sc, bf, ctl)) {
+	if (ath5k_txbuf_setup(sc, bf)) {
 		bf->skb = NULL;
 		spin_lock_irqsave(&sc->txbuflock, flags);
 		list_add_tail(&bf->list, &sc->txbuf);
@@ -2597,11 +2682,6 @@ ath5k_reset(struct ieee80211_hw *hw)
 	int ret;
 
 	ATH5K_DBG(sc, ATH5K_DEBUG_RESET, "resetting\n");
-	/*
-	 * Convert to a hw channel description with the flags
-	 * constrained to reflect the current operating mode.
-	 */
-	sc->curchan = hw->conf.chan;
 
 	ath5k_hw_set_intr(ah, 0);
 	ath5k_txq_cleanup(sc);
@@ -2671,6 +2751,11 @@ static int ath5k_add_interface(struct ieee80211_hw *hw,
 		ret = -EOPNOTSUPP;
 		goto end;
 	}
+
+	/* Set to a reasonable value. Note that this will
+	 * be set to mac80211's value at ath5k_config(). */
+	sc->bintval = 1000;
+
 	ret = 0;
 end:
 	mutex_unlock(&sc->lock);
@@ -2692,6 +2777,9 @@ end:
 	mutex_unlock(&sc->lock);
 }
 
+/*
+ * TODO: Phy disable/diversity etc
+ */
 static int
 ath5k_config(struct ieee80211_hw *hw,
 			struct ieee80211_conf *conf)
@@ -2699,9 +2787,9 @@ ath5k_config(struct ieee80211_hw *hw,
 	struct ath5k_softc *sc = hw->priv;
 
 	sc->bintval = conf->beacon_int;
-	ath5k_setcurmode(sc, conf->phymode);
+	sc->power_level = conf->power_level;
 
-	return ath5k_chan_set(sc, conf->chan);
+	return ath5k_chan_set(sc, conf->channel);
 }
 
 static int
@@ -2712,9 +2800,6 @@ ath5k_config_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	struct ath5k_hw *ah = sc->ah;
 	int ret;
 
-	/* Set to a reasonable value. Note that this will
-	 * be set to mac80211's value at ath5k_config(). */
-	sc->bintval = 1000;
 	mutex_lock(&sc->lock);
 	if (sc->vif != vif) {
 		ret = -EIO;
@@ -2726,7 +2811,20 @@ ath5k_config_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		/* XXX: assoc id is set to 0 for now, mac80211 doesn't have
 		 * a clean way of letting us retrieve this yet. */
 		ath5k_hw_set_associd(ah, ah->ah_bssid, 0);
+		mmiowb();
 	}
+
+	if (conf->changed & IEEE80211_IFCC_BEACON &&
+	    vif->type == IEEE80211_IF_TYPE_IBSS) {
+		struct sk_buff *beacon = ieee80211_beacon_get(hw, vif);
+		if (!beacon) {
+			ret = -ENOMEM;
+			goto unlock;
+		}
+		/* call old handler for now */
+		ath5k_beacon_update(hw, beacon);
+	}
+
 	mutex_unlock(&sc->lock);
 
 	return ath5k_reset(hw);
@@ -2800,9 +2898,9 @@ static void ath5k_configure_filter(struct ieee80211_hw *hw,
 			if (!mclist)
 				break;
 			/* calculate XOR of eight 6-bit values */
-			val = LE_READ_4(mclist->dmi_addr + 0);
+			val = get_unaligned_le32(mclist->dmi_addr + 0);
 			pos = (val >> 18) ^ (val >> 12) ^ (val >> 6) ^ val;
-			val = LE_READ_4(mclist->dmi_addr + 3);
+			val = get_unaligned_le32(mclist->dmi_addr + 3);
 			pos ^= (val >> 18) ^ (val >> 12) ^ (val >> 6) ^ val;
 			pos &= 0x3f;
 			mfilt[pos / 32] |= (1 << (pos % 32));
@@ -2869,7 +2967,9 @@ ath5k_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 	switch(key->alg) {
 	case ALG_WEP:
-		break;
+	/* XXX: fix hardware encryption, its not working. For now
+	 * allow software encryption */
+		/* break; */
 	case ALG_TKIP:
 	case ALG_CCMP:
 		return -EOPNOTSUPP;
@@ -2900,6 +3000,7 @@ ath5k_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	}
 
 unlock:
+	mmiowb();
 	mutex_unlock(&sc->lock);
 	return ret;
 }
@@ -2909,6 +3010,10 @@ ath5k_get_stats(struct ieee80211_hw *hw,
 		struct ieee80211_low_level_stats *stats)
 {
 	struct ath5k_softc *sc = hw->priv;
+	struct ath5k_hw *ah = sc->ah;
+
+	/* Force update */
+	ath5k_hw_update_mib_counters(ah, &sc->ll_stats);
 
 	memcpy(stats, &sc->ll_stats, sizeof(sc->ll_stats));
 
@@ -2950,31 +3055,32 @@ ath5k_reset_tsf(struct ieee80211_hw *hw)
 }
 
 static int
-ath5k_beacon_update(struct ieee80211_hw *hw, struct sk_buff *skb,
-			struct ieee80211_tx_control *ctl)
+ath5k_beacon_update(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct ath5k_softc *sc = hw->priv;
+	unsigned long flags;
 	int ret;
 
 	ath5k_debug_dump_skb(sc, skb, "BC  ", 1);
-
-	mutex_lock(&sc->lock);
 
 	if (sc->opmode != IEEE80211_IF_TYPE_IBSS) {
 		ret = -EIO;
 		goto end;
 	}
 
+	spin_lock_irqsave(&sc->block, flags);
 	ath5k_txbuf_free(sc, sc->bbuf);
 	sc->bbuf->skb = skb;
-	ret = ath5k_beacon_setup(sc, sc->bbuf, ctl);
+	ret = ath5k_beacon_setup(sc, sc->bbuf);
 	if (ret)
 		sc->bbuf->skb = NULL;
-	else
+	spin_unlock_irqrestore(&sc->block, flags);
+	if (!ret) {
 		ath5k_beacon_config(sc);
+		mmiowb();
+	}
 
 end:
-	mutex_unlock(&sc->lock);
 	return ret;
 }
 

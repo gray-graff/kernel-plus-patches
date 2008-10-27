@@ -18,17 +18,19 @@
  * incrementally. We keep the signature as a struct, rather than an union,
  * so we can get rid of it transparently in the future -- glommer
  */
-// 8 byte segment descriptor
+/* 8 byte segment descriptor */
 struct desc_struct {
 	union {
-		struct { unsigned int a, b; };
+		struct {
+			unsigned int a;
+			unsigned int b;
+		};
 		struct {
 			u16 limit0;
 			u16 base0;
 			unsigned base1: 8, type: 4, s: 1, dpl: 2, p: 1;
 			unsigned limit: 4, avl: 1, l: 1, d: 1, g: 1, base2: 8;
 		};
-
 	};
 } __attribute__((packed));
 
@@ -39,7 +41,7 @@ enum {
 	GATE_TASK = 0x5,
 };
 
-// 16byte gate
+/* 16byte gate */
 struct gate_struct64 {
 	u16 offset_low;
 	u16 segment;
@@ -56,10 +58,10 @@ struct gate_struct64 {
 enum {
 	DESC_TSS = 0x9,
 	DESC_LDT = 0x2,
-	DESCTYPE_S =	0x10,	/* !system */
+	DESCTYPE_S = 0x10,	/* !system */
 };
 
-// LDT or TSS descriptor in the GDT. 16 bytes.
+/* LDT or TSS descriptor in the GDT. 16 bytes. */
 struct ldttss_desc64 {
 	u16 limit0;
 	u16 base0;
@@ -73,17 +75,20 @@ struct ldttss_desc64 {
 typedef struct gate_struct64 gate_desc;
 typedef struct ldttss_desc64 ldt_desc;
 typedef struct ldttss_desc64 tss_desc;
+#define gate_offset(g) ((g).offset_low | ((unsigned long)(g).offset_middle << 16) | ((unsigned long)(g).offset_high << 32))
+#define gate_segment(g) ((g).segment)
 #else
 typedef struct desc_struct gate_desc;
 typedef struct desc_struct ldt_desc;
 typedef struct desc_struct tss_desc;
+#define gate_offset(g)		(((g).b & 0xffff0000) | ((g).a & 0x0000ffff))
+#define gate_segment(g)		((g).a >> 16)
 #endif
 
 struct desc_ptr {
 	unsigned short size;
 	unsigned long address;
 } __attribute__((packed)) ;
-
 
 #endif /* !__ASSEMBLY__ */
 

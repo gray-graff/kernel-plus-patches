@@ -142,7 +142,7 @@ int lpfc_config_port_post(struct lpfc_hba *);
 int lpfc_hba_down_prep(struct lpfc_hba *);
 int lpfc_hba_down_post(struct lpfc_hba *);
 void lpfc_hba_init(struct lpfc_hba *, uint32_t *);
-int lpfc_post_buffer(struct lpfc_hba *, struct lpfc_sli_ring *, int, int);
+int lpfc_post_buffer(struct lpfc_hba *, struct lpfc_sli_ring *, int);
 void lpfc_decode_firmware_rev(struct lpfc_hba *, char *, int);
 int lpfc_online(struct lpfc_hba *);
 void lpfc_unblock_mgmt_io(struct lpfc_hba *);
@@ -253,8 +253,8 @@ void lpfc_get_cfgparam(struct lpfc_hba *);
 void lpfc_get_vport_cfgparam(struct lpfc_vport *);
 int lpfc_alloc_sysfs_attr(struct lpfc_vport *);
 void lpfc_free_sysfs_attr(struct lpfc_vport *);
-extern struct class_device_attribute *lpfc_hba_attrs[];
-extern struct class_device_attribute *lpfc_vport_attrs[];
+extern struct device_attribute *lpfc_hba_attrs[];
+extern struct device_attribute *lpfc_vport_attrs[];
 extern struct scsi_host_template lpfc_template;
 extern struct scsi_host_template lpfc_vport_template;
 extern struct fc_function_template lpfc_transport_functions;
@@ -263,6 +263,7 @@ extern int lpfc_sli_mode;
 extern int lpfc_enable_npiv;
 
 int  lpfc_vport_symbolic_node_name(struct lpfc_vport *, char *, size_t);
+int  lpfc_vport_symbolic_port_name(struct lpfc_vport *, char *,	size_t);
 void lpfc_terminate_rport_io(struct fc_rport *);
 void lpfc_dev_loss_tmo_callbk(struct fc_rport *rport);
 

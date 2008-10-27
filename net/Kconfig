@@ -2,9 +2,7 @@
 # Network configuration
 #
 
-menu "Networking"
-
-config NET
+menuconfig NET
 	bool "Networking support"
 	---help---
 	  Unless you really know what you are doing, you should say Y here.
@@ -22,7 +20,6 @@ config NET
 	  recommended to read the NET-HOWTO, available from
 	  <http://www.tldp.org/docs.html#howto>.
 
-# Make sure that all config symbols are dependent on NET
 if NET
 
 menu "Networking options"
@@ -45,7 +42,7 @@ config INET
 	---help---
 	  These are the protocols used on the Internet and on most local
 	  Ethernets. It is highly recommended to say Y here (this will enlarge
-	  your kernel by about 144 KB), since some programs (e.g. the X window
+	  your kernel by about 400 KB), since some programs (e.g. the X window
 	  system) use TCP/IP even if your machine is not connected to any
 	  other computer. You will get the so-called loopback device which
 	  allows you to ping yourself (great fun, that!).
@@ -181,6 +178,7 @@ source "net/dccp/Kconfig"
 source "net/sctp/Kconfig"
 source "net/tipc/Kconfig"
 source "net/atm/Kconfig"
+source "net/802/Kconfig"
 source "net/bridge/Kconfig"
 source "net/8021q/Kconfig"
 source "net/decnet/Kconfig"
@@ -251,5 +249,3 @@ source "net/rfkill/Kconfig"
 source "net/9p/Kconfig"
 
 endif   # if NET
-endmenu # Networking
-

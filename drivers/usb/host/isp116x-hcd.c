@@ -94,6 +94,10 @@ static void write_ptddata_to_fifo(struct isp116x *isp116x, void *buf, int len)
 	u16 w;
 	int quot = len % 4;
 
+	/* buffer is already in 'usb data order', which is LE. */
+	/* When reading buffer as u16, we have to take care byte order */
+	/* doesn't get mixed up */
+
 	if ((unsigned long)dp2 & 1) {
 		/* not aligned */
 		for (; len > 1; len -= 2) {
@@ -105,8 +109,11 @@ static void write_ptddata_to_fifo(struct isp116x *isp116x, void *buf, int len)
 			isp116x_write_data16(isp116x, (u16) * dp);
 	} else {
 		/* aligned */
-		for (; len > 1; len -= 2)
-			isp116x_raw_write_data16(isp116x, *dp2++);
+		for (; len > 1; len -= 2) {
+			/* Keep byte order ! */
+			isp116x_raw_write_data16(isp116x, cpu_to_le16(*dp2++));
+		}
+
 		if (len)
 			isp116x_write_data16(isp116x, 0xff & *((u8 *) dp2));
 	}
@@ -124,6 +131,10 @@ static void read_ptddata_from_fifo(struct isp116x *isp116x, void *buf, int len)
 	u16 w;
 	int quot = len % 4;
 
+	/* buffer is already in 'usb data order', which is LE. */
+	/* When reading buffer as u16, we have to take care byte order */
+	/* doesn't get mixed up */
+
 	if ((unsigned long)dp2 & 1) {
 		/* not aligned */
 		for (; len > 1; len -= 2) {
@@ -131,12 +142,16 @@ static void read_ptddata_from_fifo(struct isp116x *isp116x, void *buf, int len)
 			*dp++ = w & 0xff;
 			*dp++ = (w >> 8) & 0xff;
 		}
+
 		if (len)
 			*dp = 0xff & isp116x_read_data16(isp116x);
 	} else {
 		/* aligned */
-		for (; len > 1; len -= 2)
-			*dp2++ = isp116x_raw_read_data16(isp116x);
+		for (; len > 1; len -= 2) {
+			/* Keep byte order! */
+			*dp2++ = le16_to_cpu(isp116x_raw_read_data16(isp116x));
+		}
+
 		if (len)
 			*(u8 *) dp2 = 0xff & isp116x_read_data16(isp116x);
 	}
@@ -867,7 +882,7 @@ static void isp116x_endpoint_disable(struct usb_hcd *hcd,
 	for (i = 0; i < 100 && !list_empty(&hep->urb_list); i++)
 		msleep(3);
 	if (!list_empty(&hep->urb_list))
-		WARN("ep %p not empty?\n", ep);
+		WARNING("ep %p not empty?\n", ep);
 
 	kfree(ep);
 	hep->hcpriv = NULL;
@@ -1400,7 +1415,7 @@ static int isp116x_bus_suspend(struct usb_hcd *hcd)
 		spin_unlock_irqrestore(&isp116x->lock, flags);
 		val &= (~HCCONTROL_HCFS & ~HCCONTROL_RWE);
 		val |= HCCONTROL_USB_SUSPEND;
-		if (device_may_wakeup(&hcd->self.root_hub->dev))
+		if (hcd->self.root_hub->do_remote_wakeup)
 			val |= HCCONTROL_RWE;
 		/* Wait for usb transfers to finish */
 		msleep(2);
@@ -1442,11 +1457,6 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 		break;
 	case HCCONTROL_USB_OPER:
 		spin_unlock_irq(&isp116x->lock);
-		/* Without setting power_state here the
-		   SUSPENDED state won't be removed from
-		   sysfs/usbN/power.state as a response to remote
-		   wakeup. Maybe in the future. */
-		hcd->self.root_hub->dev.power.power_state = PMSG_ON;
 		return 0;
 	default:
 		/* HCCONTROL_USB_RESET: this may happen, when during
@@ -1460,7 +1470,6 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 		if ((isp116x->rhdesca & RH_A_NDP) == 2)
 			isp116x_hub_control(hcd, SetPortFeature,
 					    USB_PORT_FEAT_POWER, 2, NULL, 0);
-		hcd->self.root_hub->dev.power.power_state = PMSG_ON;
 		return 0;
 	}
 
@@ -1486,8 +1495,6 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 	isp116x_write_reg32(isp116x, HCCONTROL,
 			    (val & ~HCCONTROL_HCFS) | HCCONTROL_USB_OPER);
 	spin_unlock_irq(&isp116x->lock);
-	/* see analogous comment above */
-	hcd->self.root_hub->dev.power.power_state = PMSG_ON;
 	hcd->state = HC_STATE_RUNNING;
 
 	return 0;
@@ -1600,7 +1607,7 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 	}
 
 	/* allocate and initialize hcd */
-	hcd = usb_create_hcd(&isp116x_hc_driver, &pdev->dev, pdev->dev.bus_id);
+	hcd = usb_create_hcd(&isp116x_hc_driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd) {
 		ret = -ENOMEM;
 		goto err5;
@@ -1663,7 +1670,6 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 static int isp116x_suspend(struct platform_device *dev, pm_message_t state)
 {
 	VDBG("%s: state %x\n", __func__, state.event);
-	dev->dev.power.power_state = state;
 	return 0;
 }
 
@@ -1672,8 +1678,7 @@ static int isp116x_suspend(struct platform_device *dev, pm_message_t state)
 */
 static int isp116x_resume(struct platform_device *dev)
 {
-	VDBG("%s:  state %x\n", __func__, dev->power.power_state.event);
-	dev->dev.power.power_state = PMSG_ON;
+	VDBG("%s\n", __func__);
 	return 0;
 }
 

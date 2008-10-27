@@ -142,11 +142,11 @@ EXPORT_SYMBOL(acpi_get_physical_device);
 
 static int acpi_bind_one(struct device *dev, acpi_handle handle)
 {
+	struct acpi_device *acpi_dev;
 	acpi_status status;
 
 	if (dev->archdata.acpi_handle) {
-		printk(KERN_WARNING PREFIX
-		       "Drivers changed 'acpi_handle' for %s\n", dev->bus_id);
+		dev_warn(dev, "Drivers changed 'acpi_handle'\n");
 		return -EINVAL;
 	}
 	get_device(dev);
@@ -157,6 +157,21 @@ static int acpi_bind_one(struct device *dev, acpi_handle handle)
 	}
 	dev->archdata.acpi_handle = handle;
 
+	status = acpi_bus_get_device(handle, &acpi_dev);
+	if (!ACPI_FAILURE(status)) {
+		int ret;
+
+		ret = sysfs_create_link(&dev->kobj, &acpi_dev->dev.kobj,
+				"firmware_node");
+		ret = sysfs_create_link(&acpi_dev->dev.kobj, &dev->kobj,
+				"physical_node");
+		if (acpi_dev->wakeup.flags.valid) {
+			device_set_wakeup_capable(dev, true);
+			device_set_wakeup_enable(dev,
+						acpi_dev->wakeup.state.enabled);
+		}
+	}
+
 	return 0;
 }
 
@@ -165,16 +180,24 @@ static int acpi_unbind_one(struct device *dev)
 	if (!dev->archdata.acpi_handle)
 		return 0;
 	if (dev == acpi_get_physical_device(dev->archdata.acpi_handle)) {
+		struct acpi_device *acpi_dev;
+
 		/* acpi_get_physical_device increase refcnt by one */
 		put_device(dev);
+
+		if (!acpi_bus_get_device(dev->archdata.acpi_handle,
+					&acpi_dev)) {
+			sysfs_remove_link(&dev->kobj, "firmware_node");
+			sysfs_remove_link(&acpi_dev->dev.kobj, "physical_node");
+		}
+
 		acpi_detach_data(dev->archdata.acpi_handle,
 				 acpi_glue_data_handler);
 		dev->archdata.acpi_handle = NULL;
 		/* acpi_bind_one increase refcnt by one */
 		put_device(dev);
 	} else {
-		printk(KERN_ERR PREFIX
-		       "Oops, 'acpi_handle' corrupt for %s\n", dev->bus_id);
+		dev_err(dev, "Oops, 'acpi_handle' corrupt\n");
 	}
 	return 0;
 }
@@ -252,6 +275,12 @@ static u32 rtc_handler(void *context)
 static inline void rtc_wake_setup(void)
 {
 	acpi_install_fixed_event_handler(ACPI_EVENT_RTC, rtc_handler, NULL);
+	/*
+	 * After the RTC handler is installed, the Fixed_RTC event should
+	 * be disabled. Only when the RTC alarm is set will it be enabled.
+	 */
+	acpi_clear_event(ACPI_EVENT_RTC);
+	acpi_disable_event(ACPI_EVENT_RTC, 0);
 }
 
 static void rtc_wake_on(struct device *dev)
@@ -306,6 +335,9 @@ static struct device *__init get_rtc_dev(void)
 static int __init acpi_rtc_init(void)
 {
 	struct device *dev = get_rtc_dev();
+
+	if (acpi_disabled)
+		return 0;
 
 	if (dev) {
 		rtc_wake_setup();

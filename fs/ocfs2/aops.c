@@ -174,10 +174,17 @@ static int ocfs2_get_block(struct inode *inode, sector_t iblock,
 	 * need to use BH_New is when we're extending i_size on a file
 	 * system which doesn't support holes, in which case BH_New
 	 * allows block_prepare_write() to zero.
+	 *
+	 * If we see this on a sparse file system, then a truncate has
+	 * raced us and removed the cluster. In this case, we clear
+	 * the buffers dirty and uptodate bits and let the buffer code
+	 * ignore it as a hole.
 	 */
-	mlog_bug_on_msg(create && p_blkno == 0 && ocfs2_sparse_alloc(osb),
-			"ino %lu, iblock %llu\n", inode->i_ino,
-			(unsigned long long)iblock);
+	if (create && p_blkno == 0 && ocfs2_sparse_alloc(osb)) {
+		clear_buffer_dirty(bh_result);
+		clear_buffer_uptodate(bh_result);
+		goto bail;
+	}
 
 	/* Treat the unwritten extent as a hole for zeroing purposes. */
 	if (p_blkno && !(ext_flags & OCFS2_EXT_UNWRITTEN))
@@ -467,11 +474,11 @@ handle_t *ocfs2_start_walk_page_trans(struct inode *inode,
 							 unsigned to)
 {
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
-	handle_t *handle = NULL;
+	handle_t *handle;
 	int ret = 0;
 
 	handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS);
-	if (!handle) {
+	if (IS_ERR(handle)) {
 		ret = -ENOMEM;
 		mlog_errno(ret);
 		goto out;
@@ -487,7 +494,7 @@ handle_t *ocfs2_start_walk_page_trans(struct inode *inode,
 	}
 out:
 	if (ret) {
-		if (handle)
+		if (!IS_ERR(handle))
 			ocfs2_commit_trans(osb, handle);
 		handle = ERR_PTR(ret);
 	}
@@ -587,7 +594,7 @@ static int ocfs2_direct_IO_get_blocks(struct inode *inode, sector_t iblock,
 		goto bail;
 	}
 
-	if (!ocfs2_sparse_alloc(OCFS2_SB(inode->i_sb)) && !p_blkno) {
+	if (!ocfs2_sparse_alloc(OCFS2_SB(inode->i_sb)) && !p_blkno && create) {
 		ocfs2_error(inode->i_sb,
 			    "Inode %llu has a hole at block %llu\n",
 			    (unsigned long long)OCFS2_I(inode)->ip_blkno,
@@ -1066,12 +1073,15 @@ static void ocfs2_write_failure(struct inode *inode,
 	for(i = 0; i < wc->w_num_pages; i++) {
 		tmppage = wc->w_pages[i];
 
-		if (ocfs2_should_order_data(inode))
-			walk_page_buffers(wc->w_handle, page_buffers(tmppage),
-					  from, to, NULL,
-					  ocfs2_journal_dirty_data);
+		if (page_has_buffers(tmppage)) {
+			if (ocfs2_should_order_data(inode))
+				walk_page_buffers(wc->w_handle,
+						  page_buffers(tmppage),
+						  from, to, NULL,
+						  ocfs2_journal_dirty_data);
 
-		block_commit_write(tmppage, from, to);
+			block_commit_write(tmppage, from, to);
+		}
 	}
 }
 
@@ -1894,12 +1904,14 @@ int ocfs2_write_end_nolock(struct address_space *mapping,
 			to = PAGE_CACHE_SIZE;
 		}
 
-		if (ocfs2_should_order_data(inode))
-			walk_page_buffers(wc->w_handle, page_buffers(tmppage),
-					  from, to, NULL,
-					  ocfs2_journal_dirty_data);
-
-		block_commit_write(tmppage, from, to);
+		if (page_has_buffers(tmppage)) {
+			if (ocfs2_should_order_data(inode))
+				walk_page_buffers(wc->w_handle,
+						  page_buffers(tmppage),
+						  from, to, NULL,
+						  ocfs2_journal_dirty_data);
+			block_commit_write(tmppage, from, to);
+		}
 	}
 
 out_write_size:

@@ -651,11 +651,11 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 		"%s\n"
 		"%s version " DRIVER_VERSION "\n",
 		hcd->self.controller->bus->name,
-		hcd->self.controller->bus_id,
+		dev_name(hcd->self.controller),
 		hcd->product_desc,
 		hcd_name);
 
-	if (bus->controller->power.power_state.event) {
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
 		size -= scnprintf (next, size,
 			"SUSPENDED (no register access)\n");
 		goto done;

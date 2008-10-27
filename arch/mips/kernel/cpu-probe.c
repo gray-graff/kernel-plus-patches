@@ -45,18 +45,7 @@ static void r39xx_wait(void)
 	local_irq_enable();
 }
 
-/*
- * There is a race when WAIT instruction executed with interrupt
- * enabled.
- * But it is implementation-dependent wheter the pipelie restarts when
- * a non-enabled interrupt is requested.
- */
-static void r4k_wait(void)
-{
-	__asm__("	.set	mips3			\n"
-		"	wait				\n"
-		"	.set	mips0			\n");
-}
+extern void r4k_wait(void);
 
 /*
  * This variant is preferable as it allows testing need_resched and going to
@@ -65,14 +54,18 @@ static void r4k_wait(void)
  * interrupt is requested" restriction in the MIPS32/MIPS64 architecture makes
  * using this version a gamble.
  */
-static void r4k_wait_irqoff(void)
+void r4k_wait_irqoff(void)
 {
 	local_irq_disable();
 	if (!need_resched())
-		__asm__("	.set	mips3		\n"
+		__asm__("	.set	push		\n"
+			"	.set	mips3		\n"
 			"	wait			\n"
-			"	.set	mips0		\n");
+			"	.set	pop		\n");
 	local_irq_enable();
+	__asm__(" 	.globl __pastwait	\n"
+		"__pastwait:			\n");
+	return;
 }
 
 /*
@@ -128,7 +121,7 @@ static int __init wait_disable(char *s)
 
 __setup("nowait", wait_disable);
 
-static inline void check_wait(void)
+void __init check_wait(void)
 {
 	struct cpuinfo_mips *c = &current_cpu_data;
 
@@ -169,6 +162,7 @@ static inline void check_wait(void)
 
 	case CPU_24K:
 	case CPU_34K:
+	case CPU_1004K:
 		cpu_wait = r4k_wait;
 		if (read_c0_config7() & MIPS_CONF7_WII)
 			cpu_wait = r4k_wait_irqoff;
@@ -241,7 +235,6 @@ static inline void check_errata(void)
 
 void __init check_bugs32(void)
 {
-	check_wait();
 	check_errata();
 }
 
@@ -675,6 +668,12 @@ static void __cpuinit decode_configs(struct cpuinfo_mips *c)
 		return;
 }
 
+#ifdef CONFIG_CPU_MIPSR2
+extern void spram_config(void);
+#else
+static inline void spram_config(void) {}
+#endif
+
 static inline void cpu_probe_mips(struct cpuinfo_mips *c)
 {
 	decode_configs(c);
@@ -711,7 +710,12 @@ static inline void cpu_probe_mips(struct cpuinfo_mips *c)
 	case PRID_IMP_74K:
 		c->cputype = CPU_74K;
 		break;
+	case PRID_IMP_1004K:
+		c->cputype = CPU_1004K;
+		break;
 	}
+
+	spram_config();
 }
 
 static inline void cpu_probe_alchemy(struct cpuinfo_mips *c)
@@ -778,7 +782,7 @@ static inline void cpu_probe_sandcraft(struct cpuinfo_mips *c)
 	}
 }
 
-static inline void cpu_probe_philips(struct cpuinfo_mips *c)
+static inline void cpu_probe_nxp(struct cpuinfo_mips *c)
 {
 	decode_configs(c);
 	switch (c->processor_id & 0xff00) {
@@ -787,7 +791,7 @@ static inline void cpu_probe_philips(struct cpuinfo_mips *c)
 		c->isa_level = MIPS_CPU_ISA_M32R1;
 		break;
 	default:
-		panic("Unknown Philips Core!"); /* REVISIT: die? */
+		panic("Unknown NXP Core!"); /* REVISIT: die? */
 		break;
 	}
 }
@@ -876,6 +880,7 @@ static __cpuinit const char *cpu_to_name(struct cpuinfo_mips *c)
 	case CPU_24K:		name = "MIPS 24K"; break;
 	case CPU_25KF:		name = "MIPS 25Kf"; break;
 	case CPU_34K:		name = "MIPS 34K"; break;
+	case CPU_1004K:		name = "MIPS 1004K"; break;
 	case CPU_74K:		name = "MIPS 74K"; break;
 	case CPU_VR4111:	name = "NEC VR4111"; break;
 	case CPU_VR4121:	name = "NEC VR4121"; break;
@@ -925,8 +930,8 @@ __cpuinit void cpu_probe(void)
 	case PRID_COMP_SANDCRAFT:
 		cpu_probe_sandcraft(c);
 		break;
- 	case PRID_COMP_PHILIPS:
-		cpu_probe_philips(c);
+	case PRID_COMP_NXP:
+		cpu_probe_nxp(c);
 		break;
 	default:
 		c->cputype = CPU_UNKNOWN;

@@ -70,7 +70,6 @@ static int disable_slot		(struct hotplug_slot *slot);
 static int set_attention_status (struct hotplug_slot *slot, u8 value);
 static int get_power_status	(struct hotplug_slot *slot, u8 *value);
 static int get_attention_status (struct hotplug_slot *slot, u8 *value);
-static int get_address		(struct hotplug_slot *slot, u32 *value);
 static int get_latch_status	(struct hotplug_slot *slot, u8 *value);
 static int get_adapter_status	(struct hotplug_slot *slot, u8 *value);
 
@@ -83,7 +82,6 @@ static struct hotplug_slot_ops acpi_hotplug_slot_ops = {
 	.get_attention_status	= get_attention_status,
 	.get_latch_status	= get_latch_status,
 	.get_adapter_status	= get_adapter_status,
-	.get_address		= get_address,
 };
 
 
@@ -138,7 +136,7 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/* enable the specified slot */
 	return acpiphp_enable_slot(slot->acpi_slot);
@@ -156,7 +154,7 @@ static int disable_slot(struct hotplug_slot *hotplug_slot)
 	struct slot *slot = hotplug_slot->private;
 	int retval;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/* disable the specified slot */
 	retval = acpiphp_disable_slot(slot->acpi_slot);
@@ -179,7 +177,7 @@ static int disable_slot(struct hotplug_slot *hotplug_slot)
  {
 	int retval = -ENODEV;
 
- 	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+ 	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
  
 	if (attention_info && try_module_get(attention_info->owner)) {
 		retval = attention_info->set_attn(hotplug_slot, status);
@@ -202,7 +200,7 @@ static int get_power_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	*value = acpiphp_get_power_status(slot->acpi_slot);
 
@@ -224,7 +222,7 @@ static int get_attention_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
 	int retval = -EINVAL;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	if (attention_info && try_module_get(attention_info->owner)) {
 		retval = attention_info->get_attn(hotplug_slot, value);
@@ -247,7 +245,7 @@ static int get_latch_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	*value = acpiphp_get_latch_status(slot->acpi_slot);
 
@@ -267,26 +265,9 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	*value = acpiphp_get_adapter_status(slot->acpi_slot);
-
-	return 0;
-}
-
-
-/**
- * get_address - get pci address of a slot
- * @hotplug_slot: slot to get status
- * @value: pointer to struct pci_busdev (seg, bus, dev)
- */
-static int get_address(struct hotplug_slot *hotplug_slot, u32 *value)
-{
-	struct slot *slot = hotplug_slot->private;
-
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
-
-	*value = acpiphp_get_address(slot->acpi_slot);
 
 	return 0;
 }
@@ -318,7 +299,7 @@ static void release_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	kfree(slot->hotplug_slot);
 	kfree(slot);
@@ -357,7 +338,11 @@ int acpiphp_register_hotplug_slot(struct acpiphp_slot *acpiphp_slot)
 	acpiphp_slot->slot = slot;
 	snprintf(slot->name, sizeof(slot->name), "%u", slot->acpi_slot->sun);
 
-	retval = pci_hp_register(slot->hotplug_slot);
+	retval = pci_hp_register(slot->hotplug_slot,
+					acpiphp_slot->bridge->pci_bus,
+					acpiphp_slot->device);
+	if (retval == -EBUSY)
+		goto error_hpslot;
 	if (retval) {
 		err("pci_hp_register failed with error %d\n", retval);
 		goto error_hpslot;

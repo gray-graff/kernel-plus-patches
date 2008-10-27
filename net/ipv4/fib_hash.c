@@ -5,8 +5,6 @@
  *
  *		IPv4 FIB: lookup engine and maintenance routines.
  *
- * Version:	$Id: fib_hash.c,v 1.13 2001/10/31 21:55:54 davem Exp $
- *
  * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  *
  *		This program is free software; you can redistribute it and/or
@@ -474,7 +472,7 @@ static int fn_hash_insert(struct fib_table *tb, struct fib_config *cfg)
 
 			fib_release_info(fi_drop);
 			if (state & FA_S_ACCESSED)
-				rt_cache_flush(-1);
+				rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 			rtmsg_fib(RTM_NEWROUTE, key, fa, cfg->fc_dst_len, tb->tb_id,
 				  &cfg->fc_nlinfo, NLM_F_REPLACE);
 			return 0;
@@ -534,7 +532,7 @@ static int fn_hash_insert(struct fib_table *tb, struct fib_config *cfg)
 
 	if (new_f)
 		fz->fz_nent++;
-	rt_cache_flush(-1);
+	rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 
 	rtmsg_fib(RTM_NEWROUTE, key, new_fa, cfg->fc_dst_len, tb->tb_id,
 		  &cfg->fc_nlinfo, 0);
@@ -616,7 +614,7 @@ static int fn_hash_delete(struct fib_table *tb, struct fib_config *cfg)
 		write_unlock_bh(&fib_hash_lock);
 
 		if (fa->fa_state & FA_S_ACCESSED)
-			rt_cache_flush(-1);
+			rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 		fn_free_alias(fa, f);
 		if (kill_fn) {
 			fn_free_node(f);
@@ -821,7 +819,7 @@ static struct fib_alias *fib_get_first(struct seq_file *seq)
 	struct fib_table *main_table;
 	struct fn_hash *table;
 
-	main_table = fib_get_table(iter->p.net, RT_TABLE_MAIN);
+	main_table = fib_get_table(seq_file_net(seq), RT_TABLE_MAIN);
 	table = (struct fn_hash *)main_table->tb_data;
 
 	iter->bucket    = 0;
@@ -959,11 +957,10 @@ static struct fib_alias *fib_get_idx(struct seq_file *seq, loff_t pos)
 static void *fib_seq_start(struct seq_file *seq, loff_t *pos)
 	__acquires(fib_hash_lock)
 {
-	struct fib_iter_state *iter = seq->private;
 	void *v = NULL;
 
 	read_lock(&fib_hash_lock);
-	if (fib_get_table(iter->p.net, RT_TABLE_MAIN))
+	if (fib_get_table(seq_file_net(seq), RT_TABLE_MAIN))
 		v = *pos ? fib_get_idx(seq, *pos - 1) : SEQ_START_TOKEN;
 	return v;
 }
@@ -1004,7 +1001,7 @@ static unsigned fib_flag_trans(int type, __be32 mask, struct fib_info *fi)
 static int fib_seq_show(struct seq_file *seq, void *v)
 {
 	struct fib_iter_state *iter;
-	char bf[128];
+	int len;
 	__be32 prefix, mask;
 	unsigned flags;
 	struct fib_node *f;
@@ -1026,18 +1023,19 @@ static int fib_seq_show(struct seq_file *seq, void *v)
 	mask	= FZ_MASK(iter->zone);
 	flags	= fib_flag_trans(fa->fa_type, mask, fi);
 	if (fi)
-		snprintf(bf, sizeof(bf),
-			 "%s\t%08X\t%08X\t%04X\t%d\t%u\t%d\t%08X\t%d\t%u\t%u",
+		seq_printf(seq,
+			 "%s\t%08X\t%08X\t%04X\t%d\t%u\t%d\t%08X\t%d\t%u\t%u%n",
 			 fi->fib_dev ? fi->fib_dev->name : "*", prefix,
 			 fi->fib_nh->nh_gw, flags, 0, 0, fi->fib_priority,
 			 mask, (fi->fib_advmss ? fi->fib_advmss + 40 : 0),
 			 fi->fib_window,
-			 fi->fib_rtt >> 3);
+			 fi->fib_rtt >> 3, &len);
 	else
-		snprintf(bf, sizeof(bf),
-			 "*\t%08X\t%08X\t%04X\t%d\t%u\t%d\t%08X\t%d\t%u\t%u",
-			 prefix, 0, flags, 0, 0, 0, mask, 0, 0, 0);
-	seq_printf(seq, "%-127s\n", bf);
+		seq_printf(seq,
+			 "*\t%08X\t%08X\t%04X\t%d\t%u\t%d\t%08X\t%d\t%u\t%u%n",
+			 prefix, 0, flags, 0, 0, 0, mask, 0, 0, 0, &len);
+
+	seq_printf(seq, "%*s\n", 127 - len, "");
 out:
 	return 0;
 }

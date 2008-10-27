@@ -24,10 +24,10 @@
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 
-#include <asm/mach-types.h>
-#include <asm/hardware.h>
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/ohci.h>
+#include <mach/hardware.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-regs.h> /* FIXME: for PSSR */
+#include <mach/ohci.h>
 
 #define PXA_UHC_MAX_PORTNUM    3
 
@@ -104,7 +104,7 @@ static int pxa27x_start_hc(struct device *dev)
 	UHCHIE = (UHCHIE_UPRIE | UHCHIE_RWIE);
 
 	/* Clear any OTG Pin Hold */
-	if (PSSR & PSSR_OTGPH)
+	if (cpu_is_pxa27x() && (PSSR & PSSR_OTGPH))
 		PSSR |= PSSR_OTGPH;
 
 	return 0;
@@ -298,7 +298,6 @@ static const struct hc_driver ohci_pxa27x_hc_driver = {
 	 */
 	.hub_status_data =	ohci_hub_status_data,
 	.hub_control =		ohci_hub_control,
-	.hub_irq_enable =	ohci_rhsc_enable,
 #ifdef  CONFIG_PM
 	.bus_suspend =		ohci_bus_suspend,
 	.bus_resume =		ohci_bus_resume,
@@ -339,7 +338,6 @@ static int ohci_hcd_pxa27x_drv_suspend(struct platform_device *pdev, pm_message_
 
 	pxa27x_stop_hc(&pdev->dev);
 	hcd->state = HC_STATE_SUSPENDED;
-	pdev->dev.power.power_state = PMSG_SUSPEND;
 
 	return 0;
 }
@@ -357,9 +355,7 @@ static int ohci_hcd_pxa27x_drv_resume(struct platform_device *pdev)
 	if ((status = pxa27x_start_hc(&pdev->dev)) < 0)
 		return status;
 
-	pdev->dev.power.power_state = PMSG_ON;
-	usb_hcd_resume_root_hub(hcd);
-
+	ohci_finish_controller_resume(hcd);
 	return 0;
 }
 #endif

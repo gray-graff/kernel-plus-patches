@@ -13,12 +13,16 @@
 #include <linux/nodemask.h>
 #include <asm/io.h>
 #include <linux/pci_ids.h>
+#include <linux/acpi.h>
 #include <asm/types.h>
 #include <asm/mmzone.h>
 #include <asm/proto.h>
 #include <asm/e820.h>
 #include <asm/pci-direct.h>
 #include <asm/numa.h>
+#include <asm/mpspec.h>
+#include <asm/apic.h>
+#include <asm/k8.h>
 
 static __init int find_northbridge(void)
 {
@@ -44,18 +48,42 @@ static __init int find_northbridge(void)
 	return -1;
 }
 
+static __init void early_get_boot_cpu_id(void)
+{
+	/*
+	 * need to get boot_cpu_id so can use that to create apicid_to_node
+	 * in k8_scan_nodes()
+	 */
+	/*
+	 * Find possible boot-time SMP configuration:
+	 */
+#ifdef CONFIG_X86_MPPARSE
+	early_find_smp_config();
+#endif
+#ifdef CONFIG_ACPI
+	/*
+	 * Read APIC information from ACPI tables.
+	 */
+	early_acpi_boot_init();
+#endif
+#ifdef CONFIG_X86_MPPARSE
+	/*
+	 * get boot-time SMP configuration:
+	 */
+	if (smp_found_config)
+		early_get_smp_config();
+#endif
+	early_init_lapic_mapping();
+}
+
 int __init k8_scan_nodes(unsigned long start, unsigned long end)
 {
+	unsigned numnodes, cores, bits, apicid_base;
 	unsigned long prevbase;
 	struct bootnode nodes[8];
-	int nodeid, i, nb;
 	unsigned char nodeids[8];
-	int found = 0;
-	u32 reg;
-	unsigned numnodes;
-	unsigned cores;
-	unsigned bits;
-	int j;
+	int i, j, nb, found = 0;
+	u32 nodeid, reg;
 
 	if (!early_pci_allowed())
 		return -1;
@@ -77,7 +105,6 @@ int __init k8_scan_nodes(unsigned long start, unsigned long end)
 	prevbase = 0;
 	for (i = 0; i < 8; i++) {
 		unsigned long base, limit;
-		u32 nodeid;
 
 		base = read_pci_config(0, nb, 1, 0x40 + i*8);
 		limit = read_pci_config(0, nb, 1, 0x44 + i*8);
@@ -116,8 +143,8 @@ int __init k8_scan_nodes(unsigned long start, unsigned long end)
 		limit |= (1<<24)-1;
 		limit++;
 
-		if (limit > end_pfn << PAGE_SHIFT)
-			limit = end_pfn << PAGE_SHIFT;
+		if (limit > max_pfn << PAGE_SHIFT)
+			limit = max_pfn << PAGE_SHIFT;
 		if (limit <= base)
 			continue;
 
@@ -164,7 +191,7 @@ int __init k8_scan_nodes(unsigned long start, unsigned long end)
 	if (!found)
 		return -1;
 
-	memnode_shift = compute_hash_shift(nodes, 8);
+	memnode_shift = compute_hash_shift(nodes, 8, NULL);
 	if (memnode_shift < 0) {
 		printk(KERN_ERR "No NUMA node hash function found. Contact maintainer\n");
 		return -1;
@@ -174,11 +201,19 @@ int __init k8_scan_nodes(unsigned long start, unsigned long end)
 	/* use the coreid bits from early_identify_cpu */
 	bits = boot_cpu_data.x86_coreid_bits;
 	cores = (1<<bits);
+	apicid_base = 0;
+	/* need to get boot_cpu_id early for system with apicid lifting */
+	early_get_boot_cpu_id();
+	if (boot_cpu_physical_apicid > 0) {
+		printk(KERN_INFO "BSP APIC ID: %02x\n",
+				 boot_cpu_physical_apicid);
+		apicid_base = boot_cpu_physical_apicid;
+	}
 
 	for (i = 0; i < 8; i++) {
 		if (nodes[i].start != nodes[i].end) {
 			nodeid = nodeids[i];
-			for (j = 0; j < cores; j++)
+			for (j = apicid_base; j < cores + apicid_base; j++)
 				apicid_to_node[(nodeid << bits) + j] = i;
 			setup_node_bootmem(i, nodes[i].start, nodes[i].end);
 		}

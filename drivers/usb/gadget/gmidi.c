@@ -138,8 +138,6 @@ static void gmidi_transmit(struct gmidi_device* dev, struct usb_request* req);
 	dev_vdbg(&(d)->gadget->dev , fmt , ## args)
 #define ERROR(d, fmt, args...) \
 	dev_err(&(d)->gadget->dev , fmt , ## args)
-#define WARN(d, fmt, args...) \
-	dev_warn(&(d)->gadget->dev , fmt , ## args)
 #define INFO(d, fmt, args...) \
 	dev_info(&(d)->gadget->dev , fmt , ## args)
 
@@ -229,7 +227,7 @@ static const struct usb_ac_header_descriptor_1 ac_header_desc = {
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubtype =	USB_MS_HEADER,
 	.bcdADC =		__constant_cpu_to_le16(0x0100),
-	.wTotalLength =		USB_DT_AC_HEADER_SIZE(1),
+	.wTotalLength =		__constant_cpu_to_le16(USB_DT_AC_HEADER_SIZE(1)),
 	.bInCollection =	1,
 	.baInterfaceNr = {
 		[0] =		GMIDI_MS_INTERFACE,
@@ -253,9 +251,9 @@ static const struct usb_ms_header_descriptor ms_header_desc = {
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubtype =	USB_MS_HEADER,
 	.bcdMSC =		__constant_cpu_to_le16(0x0100),
-	.wTotalLength =		USB_DT_MS_HEADER_SIZE
+	.wTotalLength =		__constant_cpu_to_le16(USB_DT_MS_HEADER_SIZE
 				+ 2*USB_DT_MIDI_IN_SIZE
-				+ 2*USB_DT_MIDI_OUT_SIZE(1),
+				+ 2*USB_DT_MIDI_OUT_SIZE(1)),
 };
 
 #define JACK_IN_EMB	1
@@ -1149,7 +1147,7 @@ fail:
 /*
  * Creates an output endpoint, and initializes output ports.
  */
-static int __devinit gmidi_bind(struct usb_gadget *gadget)
+static int __init gmidi_bind(struct usb_gadget *gadget)
 {
 	struct gmidi_device *dev;
 	struct usb_ep *in_ep, *out_ep;

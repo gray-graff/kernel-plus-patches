@@ -356,7 +356,9 @@ static int ax_set_mac_address(struct net_device *dev, void *addr)
 	struct sockaddr_ax25 *sa = addr;
 
 	netif_tx_lock_bh(dev);
+	netif_addr_lock(dev);
 	memcpy(dev->dev_addr, &sa->sax25_call, AX25_ADDR_LEN);
+	netif_addr_unlock(dev);
 	netif_tx_unlock_bh(dev);
 
 	return 0;
@@ -516,7 +518,7 @@ static void ax_encaps(struct net_device *dev, unsigned char *icp, int len)
 	spin_unlock_bh(&ax->buflock);
 
 	set_bit(TTY_DO_WRITE_WAKEUP, &ax->tty->flags);
-	actual = ax->tty->driver->write(ax->tty, ax->xbuff, count);
+	actual = ax->tty->ops->write(ax->tty, ax->xbuff, count);
 	ax->stats.tx_packets++;
 	ax->stats.tx_bytes += actual;
 
@@ -546,7 +548,7 @@ static int ax_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 
 		printk(KERN_ERR "mkiss: %s: transmit timed out, %s?\n", dev->name,
-		       (ax->tty->driver->chars_in_buffer(ax->tty) || ax->xleft) ?
+		       (tty_chars_in_buffer(ax->tty) || ax->xleft) ?
 		       "bad line quality" : "driver error");
 
 		ax->xleft = 0;
@@ -736,6 +738,8 @@ static int mkiss_open(struct tty_struct *tty)
 
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
+	if (tty->ops->write == NULL)
+		return -EOPNOTSUPP;
 
 	dev = alloc_netdev(sizeof(struct mkiss), "ax%d", ax_setup);
 	if (!dev) {
@@ -754,8 +758,7 @@ static int mkiss_open(struct tty_struct *tty)
 	tty->disc_data = ax;
 	tty->receive_room = 65535;
 
-	if (tty->driver->flush_buffer)
-		tty->driver->flush_buffer(tty);
+	tty_driver_flush_buffer(tty);
 
 	/* Restore default settings */
 	dev->type = ARPHRD_AX25;
@@ -935,9 +938,7 @@ static void mkiss_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 	}
 
 	mkiss_put(ax);
-	if (test_and_clear_bit(TTY_THROTTLED, &tty->flags)
-	    && tty->driver->unthrottle)
-		tty->driver->unthrottle(tty);
+	tty_unthrottle(tty);
 }
 
 /*
@@ -962,7 +963,7 @@ static void mkiss_write_wakeup(struct tty_struct *tty)
 		goto out;
 	}
 
-	actual = tty->driver->write(tty, ax->xhead, ax->xleft);
+	actual = tty->ops->write(tty, ax->xhead, ax->xleft);
 	ax->xleft -= actual;
 	ax->xhead += actual;
 
@@ -970,7 +971,7 @@ out:
 	mkiss_put(ax);
 }
 
-static struct tty_ldisc ax_ldisc = {
+static struct tty_ldisc_ops ax_ldisc = {
 	.owner		= THIS_MODULE,
 	.magic		= TTY_LDISC_MAGIC,
 	.name		= "mkiss",

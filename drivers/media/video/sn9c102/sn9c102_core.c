@@ -34,7 +34,7 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/page-flags.h>
-#include <linux/byteorder/generic.h>
+#include <asm/byteorder.h>
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
@@ -464,9 +464,9 @@ sn9c102_i2c_try_read(struct sn9c102_device* cam,
 }
 
 
-int
-sn9c102_i2c_try_write(struct sn9c102_device* cam,
-		      const struct sn9c102_sensor* sensor, u8 address, u8 value)
+static int sn9c102_i2c_try_write(struct sn9c102_device* cam,
+				 const struct sn9c102_sensor* sensor,
+				 u8 address, u8 value)
 {
 	return sn9c102_i2c_try_raw_write(cam, sensor, 3,
 					 sensor->i2c_slave_id, address,
@@ -528,7 +528,7 @@ sn9c102_find_sof_header(struct sn9c102_device* cam, void* mem, size_t len)
 
 		/* Search for the SOF marker (fixed part) in the header */
 		for (j = 0, b=cam->sof.bytesread; j+b < sizeof(marker); j++) {
-			if (unlikely(i+j) == len)
+			if (unlikely(i+j == len))
 				return NULL;
 			if (*(m+i+j) == marker[cam->sof.bytesread]) {
 				cam->sof.header[cam->sof.bytesread] = *(m+i+j);
@@ -1038,8 +1038,7 @@ static ssize_t sn9c102_show_reg(struct device* cd,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1064,8 +1063,7 @@ sn9c102_store_reg(struct device* cd, struct device_attribute *attr,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1098,8 +1096,7 @@ static ssize_t sn9c102_show_val(struct device* cd,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1132,8 +1129,7 @@ sn9c102_store_val(struct device* cd, struct device_attribute *attr,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1170,8 +1166,7 @@ static ssize_t sn9c102_show_i2c_reg(struct device* cd,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1198,8 +1193,7 @@ sn9c102_store_i2c_reg(struct device* cd, struct device_attribute *attr,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1232,8 +1226,7 @@ static ssize_t sn9c102_show_i2c_val(struct device* cd,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1271,8 +1264,7 @@ sn9c102_store_i2c_val(struct device* cd, struct device_attribute *attr,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1318,8 +1310,7 @@ sn9c102_store_green(struct device* cd, struct device_attribute *attr,
 	if (mutex_lock_interruptible(&sn9c102_sysfs_lock))
 		return -ERESTARTSYS;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam) {
 		mutex_unlock(&sn9c102_sysfs_lock);
 		return -ENODEV;
@@ -1400,8 +1391,7 @@ static ssize_t sn9c102_show_frame_header(struct device* cd,
 	struct sn9c102_device* cam;
 	ssize_t count;
 
-	cam = video_get_drvdata(container_of(cd, struct video_device,
-					     class_dev));
+	cam = video_get_drvdata(container_of(cd, struct video_device, dev));
 	if (!cam)
 		return -ENODEV;
 
@@ -1428,49 +1418,49 @@ static DEVICE_ATTR(frame_header, S_IRUGO, sn9c102_show_frame_header, NULL);
 
 static int sn9c102_create_sysfs(struct sn9c102_device* cam)
 {
-	struct device *classdev = &(cam->v4ldev->class_dev);
+	struct device *dev = &(cam->v4ldev->dev);
 	int err = 0;
 
-	if ((err = device_create_file(classdev, &dev_attr_reg)))
+	if ((err = device_create_file(dev, &dev_attr_reg)))
 		goto err_out;
-	if ((err = device_create_file(classdev, &dev_attr_val)))
+	if ((err = device_create_file(dev, &dev_attr_val)))
 		goto err_reg;
-	if ((err = device_create_file(classdev, &dev_attr_frame_header)))
+	if ((err = device_create_file(dev, &dev_attr_frame_header)))
 		goto err_val;
 
 	if (cam->sensor.sysfs_ops) {
-		if ((err = device_create_file(classdev, &dev_attr_i2c_reg)))
+		if ((err = device_create_file(dev, &dev_attr_i2c_reg)))
 			goto err_frame_header;
-		if ((err = device_create_file(classdev, &dev_attr_i2c_val)))
+		if ((err = device_create_file(dev, &dev_attr_i2c_val)))
 			goto err_i2c_reg;
 	}
 
 	if (cam->bridge == BRIDGE_SN9C101 || cam->bridge == BRIDGE_SN9C102) {
-		if ((err = device_create_file(classdev, &dev_attr_green)))
+		if ((err = device_create_file(dev, &dev_attr_green)))
 			goto err_i2c_val;
 	} else {
-		if ((err = device_create_file(classdev, &dev_attr_blue)))
+		if ((err = device_create_file(dev, &dev_attr_blue)))
 			goto err_i2c_val;
-		if ((err = device_create_file(classdev, &dev_attr_red)))
+		if ((err = device_create_file(dev, &dev_attr_red)))
 			goto err_blue;
 	}
 
 	return 0;
 
 err_blue:
-	device_remove_file(classdev, &dev_attr_blue);
+	device_remove_file(dev, &dev_attr_blue);
 err_i2c_val:
 	if (cam->sensor.sysfs_ops)
-		device_remove_file(classdev, &dev_attr_i2c_val);
+		device_remove_file(dev, &dev_attr_i2c_val);
 err_i2c_reg:
 	if (cam->sensor.sysfs_ops)
-		device_remove_file(classdev, &dev_attr_i2c_reg);
+		device_remove_file(dev, &dev_attr_i2c_reg);
 err_frame_header:
-	device_remove_file(classdev, &dev_attr_frame_header);
+	device_remove_file(dev, &dev_attr_frame_header);
 err_val:
-	device_remove_file(classdev, &dev_attr_val);
+	device_remove_file(dev, &dev_attr_val);
 err_reg:
-	device_remove_file(classdev, &dev_attr_reg);
+	device_remove_file(dev, &dev_attr_reg);
 err_out:
 	return err;
 }
@@ -3224,7 +3214,9 @@ static const struct file_operations sn9c102_fops = {
 	.open = sn9c102_open,
 	.release = sn9c102_release,
 	.ioctl = sn9c102_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl = v4l_compat_ioctl32,
+#endif
 	.read = sn9c102_read,
 	.poll = sn9c102_poll,
 	.mmap = sn9c102_mmap,
@@ -3239,7 +3231,7 @@ sn9c102_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
 	struct sn9c102_device* cam;
-	static unsigned int dev_nr = 0;
+	static unsigned int dev_nr;
 	unsigned int i;
 	int err = 0, r;
 
@@ -3317,11 +3309,10 @@ sn9c102_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	}
 
 	strcpy(cam->v4ldev->name, "SN9C1xx PC Camera");
-	cam->v4ldev->owner = THIS_MODULE;
-	cam->v4ldev->type = VID_TYPE_CAPTURE | VID_TYPE_SCALES;
 	cam->v4ldev->fops = &sn9c102_fops;
 	cam->v4ldev->minor = video_nr[dev_nr];
 	cam->v4ldev->release = video_device_release;
+	cam->v4ldev->parent = &udev->dev;
 
 	init_completion(&cam->probe);
 

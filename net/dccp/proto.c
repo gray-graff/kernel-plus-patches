@@ -27,7 +27,6 @@
 #include <net/xfrm.h>
 
 #include <asm/ioctls.h>
-#include <asm/semaphore.h>
 #include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/delay.h>
@@ -238,7 +237,7 @@ int dccp_init_sock(struct sock *sk, const __u8 ctl_sock_initialized)
 
 EXPORT_SYMBOL_GPL(dccp_init_sock);
 
-int dccp_destroy_sock(struct sock *sk)
+void dccp_destroy_sock(struct sock *sk)
 {
 	struct dccp_sock *dp = dccp_sk(sk);
 	struct dccp_minisock *dmsk = dccp_msk(sk);
@@ -269,8 +268,6 @@ int dccp_destroy_sock(struct sock *sk)
 
 	/* clean up feature negotiation state */
 	dccp_feat_clean(dmsk);
-
-	return 0;
 }
 
 EXPORT_SYMBOL_GPL(dccp_destroy_sock);
@@ -330,7 +327,7 @@ int dccp_disconnect(struct sock *sk, int flags)
 	inet_csk_delack_init(sk);
 	__sk_dst_reset(sk);
 
-	BUG_TRAP(!inet->num || icsk->icsk_bind_hash);
+	WARN_ON(inet->num && !icsk->icsk_bind_hash);
 
 	sk->sk_error_report(sk);
 	return err;
@@ -477,6 +474,11 @@ static int dccp_setsockopt_change(struct sock *sk, int type,
 
 	if (copy_from_user(&opt, optval, sizeof(opt)))
 		return -EFAULT;
+	/*
+	 * rfc4340: 6.1. Change Options
+	 */
+	if (opt.dccpsf_len < 1)
+		return -EINVAL;
 
 	val = kmalloc(opt.dccpsf_len, GFP_KERNEL);
 	if (!val)
@@ -984,7 +986,7 @@ adjudge_to_death:
 	 */
 	local_bh_disable();
 	bh_lock_sock(sk);
-	BUG_TRAP(!sock_owned_by_user(sk));
+	WARN_ON(sock_owned_by_user(sk));
 
 	/* Have we already been destroyed by a softirq or backlog? */
 	if (state != DCCP_CLOSED && sk->sk_state == DCCP_CLOSED)
@@ -1010,33 +1012,14 @@ void dccp_shutdown(struct sock *sk, int how)
 
 EXPORT_SYMBOL_GPL(dccp_shutdown);
 
-static int __init dccp_mib_init(void)
+static inline int dccp_mib_init(void)
 {
-	int rc = -ENOMEM;
-
-	dccp_statistics[0] = alloc_percpu(struct dccp_mib);
-	if (dccp_statistics[0] == NULL)
-		goto out;
-
-	dccp_statistics[1] = alloc_percpu(struct dccp_mib);
-	if (dccp_statistics[1] == NULL)
-		goto out_free_one;
-
-	rc = 0;
-out:
-	return rc;
-out_free_one:
-	free_percpu(dccp_statistics[0]);
-	dccp_statistics[0] = NULL;
-	goto out;
-
+	return snmp_mib_init((void**)dccp_statistics, sizeof(struct dccp_mib));
 }
 
-static void dccp_mib_exit(void)
+static inline void dccp_mib_exit(void)
 {
-	free_percpu(dccp_statistics[0]);
-	free_percpu(dccp_statistics[1]);
-	dccp_statistics[0] = dccp_statistics[1] = NULL;
+	snmp_mib_free((void**)dccp_statistics);
 }
 
 static int thash_entries;

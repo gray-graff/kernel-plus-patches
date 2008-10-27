@@ -297,28 +297,45 @@ static int uio_open(struct inode *inode, struct file *filep)
 	struct uio_listener *listener;
 	int ret = 0;
 
+	lock_kernel();
 	idev = idr_find(&uio_idr, iminor(inode));
-	if (!idev)
-		return -ENODEV;
+	if (!idev) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	if (!try_module_get(idev->owner)) {
+		ret = -ENODEV;
+		goto out;
+	}
 
 	listener = kmalloc(sizeof(*listener), GFP_KERNEL);
-	if (!listener)
-		return -ENOMEM;
+	if (!listener) {
+		ret = -ENOMEM;
+		goto err_alloc_listener;
+	}
 
 	listener->dev = idev;
 	listener->event_count = atomic_read(&idev->event);
 	filep->private_data = listener;
 
 	if (idev->info->open) {
-		if (!try_module_get(idev->owner))
-			return -ENODEV;
 		ret = idev->info->open(idev->info, inode);
-		module_put(idev->owner);
+		if (ret)
+			goto err_infoopen;
 	}
+	unlock_kernel();
+	return 0;
 
-	if (ret)
-		kfree(listener);
+err_infoopen:
 
+	kfree(listener);
+err_alloc_listener:
+
+	module_put(idev->owner);
+
+out:
+	unlock_kernel();
 	return ret;
 }
 
@@ -336,12 +353,11 @@ static int uio_release(struct inode *inode, struct file *filep)
 	struct uio_listener *listener = filep->private_data;
 	struct uio_device *idev = listener->dev;
 
-	if (idev->info->release) {
-		if (!try_module_get(idev->owner))
-			return -ENODEV;
+	if (idev->info->release)
 		ret = idev->info->release(idev->info, inode);
-		module_put(idev->owner);
-	}
+
+	module_put(idev->owner);
+
 	if (filep->f_flags & FASYNC)
 		ret = uio_fasync(-1, filep, 0);
 	kfree(listener);
@@ -409,6 +425,31 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 	remove_wait_queue(&idev->wait, &wait);
 
 	return retval;
+}
+
+static ssize_t uio_write(struct file *filep, const char __user *buf,
+			size_t count, loff_t *ppos)
+{
+	struct uio_listener *listener = filep->private_data;
+	struct uio_device *idev = listener->dev;
+	ssize_t retval;
+	s32 irq_on;
+
+	if (idev->info->irq == UIO_IRQ_NONE)
+		return -EIO;
+
+	if (count != sizeof(s32))
+		return -EINVAL;
+
+	if (!idev->info->irqcontrol)
+		return -ENOSYS;
+
+	if (copy_from_user(&irq_on, buf, count))
+		return -EFAULT;
+
+	retval = idev->info->irqcontrol(idev->info, irq_on);
+
+	return retval ? retval : sizeof(s32);
 }
 
 static int uio_find_mem_index(struct vm_area_struct *vma)
@@ -510,10 +551,7 @@ static int uio_mmap(struct file *filep, struct vm_area_struct *vma)
 		return -EINVAL;
 
 	if (idev->info->mmap) {
-		if (!try_module_get(idev->owner))
-			return -ENODEV;
 		ret = idev->info->mmap(idev->info, vma);
-		module_put(idev->owner);
 		return ret;
 	}
 
@@ -533,6 +571,7 @@ static const struct file_operations uio_fops = {
 	.open		= uio_open,
 	.release	= uio_release,
 	.read		= uio_read,
+	.write		= uio_write,
 	.mmap		= uio_mmap,
 	.poll		= uio_poll,
 	.fasync		= uio_fasync,
@@ -643,15 +682,14 @@ int __uio_register_device(struct module *owner,
 	if (ret)
 		goto err_get_minor;
 
-	idev->dev = device_create(uio_class->class, parent,
-				  MKDEV(uio_major, idev->minor),
-				  "uio%d", idev->minor);
+	idev->dev = device_create_drvdata(uio_class->class, parent,
+					  MKDEV(uio_major, idev->minor), idev,
+					  "uio%d", idev->minor);
 	if (IS_ERR(idev->dev)) {
 		printk(KERN_ERR "UIO: device register failed\n");
 		ret = PTR_ERR(idev->dev);
 		goto err_device_create;
 	}
-	dev_set_drvdata(idev->dev, idev);
 
 	ret = uio_dev_add_attributes(idev);
 	if (ret)

@@ -1572,7 +1572,7 @@ dasd_3990_erp_action_1B_32(struct dasd_ccw_req * default_erp, char *sense)
 
 	/* determine the address of the CCW to be restarted */
 	/* Imprecise ending is not set -> addr from IRB-SCSW */
-	cpa = default_erp->refers->irb.scsw.cpa;
+	cpa = default_erp->refers->irb.scsw.cmd.cpa;
 
 	if (cpa == 0) {
 
@@ -1725,7 +1725,7 @@ dasd_3990_update_1B(struct dasd_ccw_req * previous_erp, char *sense)
 
 	/* determine the address of the CCW to be restarted */
 	/* Imprecise ending is not set -> addr from IRB-SCSW */
-	cpa = previous_erp->irb.scsw.cpa;
+	cpa = previous_erp->irb.scsw.cmd.cpa;
 
 	if (cpa == 0) {
 
@@ -1996,6 +1996,36 @@ dasd_3990_erp_compound(struct dasd_ccw_req * erp, char *sense)
 }				/* end dasd_3990_erp_compound */
 
 /*
+ *DASD_3990_ERP_HANDLE_SIM
+ *
+ *DESCRIPTION
+ *  inspects the SIM SENSE data and starts an appropriate action
+ *
+ * PARAMETER
+ *   sense	   sense data of the actual error
+ *
+ * RETURN VALUES
+ *   none
+ */
+void
+dasd_3990_erp_handle_sim(struct dasd_device *device, char *sense)
+{
+	/* print message according to log or message to operator mode */
+	if ((sense[24] & DASD_SIM_MSG_TO_OP) || (sense[1] & 0x10)) {
+
+		/* print SIM SRC from RefCode */
+		DEV_MESSAGE(KERN_ERR, device, "SIM - SRC: "
+			    "%02x%02x%02x%02x", sense[22],
+			    sense[23], sense[11], sense[12]);
+	} else if (sense[24] & DASD_SIM_LOG) {
+		/* print SIM SRC Refcode */
+		DEV_MESSAGE(KERN_WARNING, device, "SIM - SRC: "
+			    "%02x%02x%02x%02x", sense[22],
+			    sense[23], sense[11], sense[12]);
+	}
+}
+
+/*
  * DASD_3990_ERP_INSPECT_32
  *
  * DESCRIPTION
@@ -2017,6 +2047,10 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
 	struct dasd_device *device = erp->startdev;
 
 	erp->function = dasd_3990_erp_inspect_32;
+
+	/* check for SIM sense data */
+	if ((sense[6] & DASD_SIM_SENSE) == DASD_SIM_SENSE)
+		dasd_3990_erp_handle_sim(device, sense);
 
 	if (sense[25] & DASD_SENSE_BIT_0) {
 
@@ -2137,7 +2171,7 @@ dasd_3990_erp_control_check(struct dasd_ccw_req *erp)
 {
 	struct dasd_device *device = erp->startdev;
 
-	if (erp->refers->irb.scsw.cstat & (SCHN_STAT_INTF_CTRL_CHK
+	if (erp->refers->irb.scsw.cmd.cstat & (SCHN_STAT_INTF_CTRL_CHK
 					   | SCHN_STAT_CHN_CTRL_CHK)) {
 		DEV_MESSAGE(KERN_DEBUG, device, "%s",
 			    "channel or interface control check");
@@ -2318,9 +2352,9 @@ dasd_3990_erp_error_match(struct dasd_ccw_req *cqr1, struct dasd_ccw_req *cqr2)
 
 	if ((cqr1->irb.esw.esw0.erw.cons == 0) &&
 	    (cqr2->irb.esw.esw0.erw.cons == 0))	{
-		if ((cqr1->irb.scsw.cstat & (SCHN_STAT_INTF_CTRL_CHK |
+		if ((cqr1->irb.scsw.cmd.cstat & (SCHN_STAT_INTF_CTRL_CHK |
 					     SCHN_STAT_CHN_CTRL_CHK)) ==
-		    (cqr2->irb.scsw.cstat & (SCHN_STAT_INTF_CTRL_CHK |
+		    (cqr2->irb.scsw.cmd.cstat & (SCHN_STAT_INTF_CTRL_CHK |
 					     SCHN_STAT_CHN_CTRL_CHK)))
 			return 1; /* match with ifcc*/
 	}
@@ -2588,8 +2622,9 @@ dasd_3990_erp_action(struct dasd_ccw_req * cqr)
 	}
 
 	/* double-check if current erp/cqr was successfull */
-	if ((cqr->irb.scsw.cstat == 0x00) &&
-	    (cqr->irb.scsw.dstat == (DEV_STAT_CHN_END|DEV_STAT_DEV_END))) {
+	if ((cqr->irb.scsw.cmd.cstat == 0x00) &&
+	    (cqr->irb.scsw.cmd.dstat ==
+	     (DEV_STAT_CHN_END | DEV_STAT_DEV_END))) {
 
 		DEV_MESSAGE(KERN_DEBUG, device,
 			    "ERP called for successful request %p"

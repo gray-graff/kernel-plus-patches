@@ -3,6 +3,7 @@
  *
  *  Copyright (C) 2006  Paul Mundt
  *  Copyright (C) 2007  Yoshihiro Shimoda
+ *  Copyright (C) 2008  Nobuhiro Iwamatsu
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
@@ -55,6 +56,11 @@ static struct plat_sci_port sci_platform_data[] = {
 		.flags		= UPF_BOOT_AUTOCONF,
 		.type		= PORT_SCIF,
 		.irqs		= { 76, 77, 79, 78 },
+	}, {
+		.mapbase	= 0xffe10000,
+		.flags		= UPF_BOOT_AUTOCONF,
+		.type		= PORT_SCIF,
+		.irqs		= { 104, 105, 107, 106 },
 	}, {
 		.flags = 0,
 	}
@@ -208,8 +214,8 @@ static struct intc_vect vectors[] __initdata = {
 	INTC_VECT(TMU5, 0xe40), INTC_VECT(ADC, 0xe60),
 	INTC_VECT(SSI0, 0xe80), INTC_VECT(SSI1, 0xea0),
 	INTC_VECT(SSI2, 0xec0), INTC_VECT(SSI3, 0xee0),
-	INTC_VECT(SCIF1_ERI, 0xf00), INTC_VECT(SCIF1_RXI, 0xf20),
-	INTC_VECT(SCIF1_BRI, 0xf40), INTC_VECT(SCIF1_TXI, 0xf60),
+	INTC_VECT(SCIF2_ERI, 0xf00), INTC_VECT(SCIF2_RXI, 0xf20),
+	INTC_VECT(SCIF2_BRI, 0xf40), INTC_VECT(SCIF2_TXI, 0xf60),
 	INTC_VECT(GPIO_CH0, 0xf80), INTC_VECT(GPIO_CH1, 0xfa0),
 	INTC_VECT(GPIO_CH2, 0xfc0), INTC_VECT(GPIO_CH3, 0xfe0),
 };
@@ -229,12 +235,6 @@ static struct intc_group groups[] __initdata = {
 	INTC_GROUP(SIM, SIM_ERI, SIM_RXI, SIM_TXI, SIM_TEND),
 	INTC_GROUP(SCIF2, SCIF2_ERI, SCIF2_RXI, SCIF2_BRI, SCIF2_TXI),
 	INTC_GROUP(GPIO, GPIO_CH0, GPIO_CH1, GPIO_CH2, GPIO_CH3),
-};
-
-static struct intc_prio priorities[] __initdata = {
-	INTC_PRIO(SCIF0, 3),
-	INTC_PRIO(SCIF1, 3),
-	INTC_PRIO(SCIF2, 3),
 };
 
 static struct intc_mask_reg mask_registers[] __initdata = {
@@ -270,11 +270,10 @@ static struct intc_prio_reg prio_registers[] __initdata = {
 	{ 0xffd400b4, 0, 32, 8, /* INT2PRI13 */ { 0, 0, STIF1, STIF0 } },
 };
 
-static DECLARE_INTC_DESC(intc_desc, "sh7763", vectors, groups, priorities,
+static DECLARE_INTC_DESC(intc_desc, "sh7763", vectors, groups,
 			 mask_registers, prio_registers, NULL);
 
 /* Support for external interrupt pins in IRQ mode */
-
 static struct intc_vect irq_vectors[] __initdata = {
 	INTC_VECT(IRQ0, 0x240), INTC_VECT(IRQ1, 0x280),
 	INTC_VECT(IRQ2, 0x2c0), INTC_VECT(IRQ3, 0x300),
@@ -297,12 +296,17 @@ static struct intc_sense_reg irq_sense_registers[] __initdata = {
 					    IRQ4, IRQ5, IRQ6, IRQ7 } },
 };
 
-static DECLARE_INTC_DESC(intc_irq_desc, "sh7763-irq", irq_vectors,
-			 NULL, NULL, irq_mask_registers, irq_prio_registers,
-			 irq_sense_registers);
+static struct intc_mask_reg irq_ack_registers[] __initdata = {
+	{ 0xffd00024, 0, 32, /* INTREQ */
+	  { IRQ0, IRQ1, IRQ2, IRQ3, IRQ4, IRQ5, IRQ6, IRQ7 } },
+};
+
+static DECLARE_INTC_DESC_ACK(intc_irq_desc, "sh7763-irq", irq_vectors,
+			     NULL, irq_mask_registers, irq_prio_registers,
+			     irq_sense_registers, irq_ack_registers);
+
 
 /* External interrupt pins in IRL mode */
-
 static struct intc_vect irl_vectors[] __initdata = {
 	INTC_VECT(IRL_LLLL, 0x200), INTC_VECT(IRL_LLLH, 0x220),
 	INTC_VECT(IRL_LLHL, 0x240), INTC_VECT(IRL_LLHH, 0x260),
@@ -332,10 +336,10 @@ static struct intc_mask_reg irl7654_mask_registers[] __initdata = {
 };
 
 static DECLARE_INTC_DESC(intc_irl7654_desc, "sh7763-irl7654", irl_vectors,
-			 NULL, NULL, irl7654_mask_registers, NULL, NULL);
+			NULL, irl7654_mask_registers, NULL, NULL);
 
 static DECLARE_INTC_DESC(intc_irl3210_desc, "sh7763-irl3210", irl_vectors,
-			 NULL, NULL, irl3210_mask_registers, NULL, NULL);
+			NULL, irl3210_mask_registers, NULL, NULL);
 
 #define INTC_ICR0	0xffd00000
 #define INTC_INTMSK0	0xffd00044

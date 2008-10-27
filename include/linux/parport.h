@@ -101,9 +101,9 @@ typedef enum {
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 #include <linux/irqreturn.h>
+#include <linux/semaphore.h>
 #include <asm/system.h>
 #include <asm/ptrace.h>
-#include <asm/semaphore.h>
 
 /* Define this later. */
 struct parport;
@@ -559,6 +559,9 @@ extern int parport_device_proc_unregister(struct pardevice *device);
 #define parport_data_reverse(p)            (p)->ops->data_reverse(p)
 
 #endif /*  !CONFIG_PARPORT_NOT_PC  */
+
+extern unsigned long parport_default_timeslice;
+extern int parport_default_spintime;
 
 #endif /* __KERNEL__ */
 #endif /* _PARPORT_H_ */

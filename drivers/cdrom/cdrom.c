@@ -360,10 +360,9 @@ static int cdrom_mrw_exit(struct cdrom_device_info *cdi);
 
 static int cdrom_get_disc_info(struct cdrom_device_info *cdi, disc_information *di);
 
-#ifdef CONFIG_SYSCTL
 static void cdrom_sysctl_register(void);
-#endif /* CONFIG_SYSCTL */ 
-static struct cdrom_device_info *topCdromPtr;
+
+static LIST_HEAD(cdrom_list);
 
 static int cdrom_dummy_generic_packet(struct cdrom_device_info *cdi,
 				      struct packet_command *cgc)
@@ -394,13 +393,11 @@ int register_cdrom(struct cdrom_device_info *cdi)
 	cdinfo(CD_OPEN, "entering register_cdrom\n"); 
 
 	if (cdo->open == NULL || cdo->release == NULL)
-		return -2;
+		return -EINVAL;
 	if (!banner_printed) {
 		printk(KERN_INFO "Uniform CD-ROM driver " REVISION "\n");
 		banner_printed = 1;
-#ifdef CONFIG_SYSCTL
 		cdrom_sysctl_register();
-#endif /* CONFIG_SYSCTL */ 
 	}
 
 	ENSURE(drive_status, CDC_DRIVE_STATUS );
@@ -411,7 +408,6 @@ int register_cdrom(struct cdrom_device_info *cdi)
 	ENSURE(get_last_session, CDC_MULTI_SESSION);
 	ENSURE(get_mcn, CDC_MCN);
 	ENSURE(reset, CDC_RESET);
-	ENSURE(audio_ioctl, CDC_PLAY_AUDIO);
 	ENSURE(generic_packet, CDC_GENERIC_PACKET);
 	cdi->mc_flags = 0;
 	cdo->n_minors = 0;
@@ -439,35 +435,18 @@ int register_cdrom(struct cdrom_device_info *cdi)
 
 	cdinfo(CD_REG_UNREG, "drive \"/dev/%s\" registered\n", cdi->name);
 	mutex_lock(&cdrom_mutex);
-	cdi->next = topCdromPtr; 	
-	topCdromPtr = cdi;
+	list_add(&cdi->list, &cdrom_list);
 	mutex_unlock(&cdrom_mutex);
 	return 0;
 }
 #undef ENSURE
 
-int unregister_cdrom(struct cdrom_device_info *unreg)
+void unregister_cdrom(struct cdrom_device_info *cdi)
 {
-	struct cdrom_device_info *cdi, *prev;
 	cdinfo(CD_OPEN, "entering unregister_cdrom\n"); 
 
-	prev = NULL;
 	mutex_lock(&cdrom_mutex);
-	cdi = topCdromPtr;
-	while (cdi && cdi != unreg) {
-		prev = cdi;
-		cdi = cdi->next;
-	}
-
-	if (cdi == NULL) {
-		mutex_unlock(&cdrom_mutex);
-		return -2;
-	}
-	if (prev)
-		prev->next = cdi->next;
-	else
-		topCdromPtr = cdi->next;
-
+	list_del(&cdi->list);
 	mutex_unlock(&cdrom_mutex);
 
 	if (cdi->exit)
@@ -475,7 +454,6 @@ int unregister_cdrom(struct cdrom_device_info *unreg)
 
 	cdi->ops->n_minors--;
 	cdinfo(CD_REG_UNREG, "drive \"/dev/%s\" unregistered\n", cdi->name);
-	return 0;
 }
 
 int cdrom_get_media_event(struct cdrom_device_info *cdi,
@@ -1457,10 +1435,6 @@ static void cdrom_count_tracks(struct cdrom_device_info *cdi, tracktype* tracks)
 	tracks->xa=0;
 	tracks->error=0;
 	cdinfo(CD_COUNT_TRACKS, "entering cdrom_count_tracks\n"); 
-        if (!CDROM_CAN(CDC_PLAY_AUDIO)) { 
-                tracks->error=CDS_NO_INFO;
-                return;
-        }        
 	/* Grab the TOC header so we can see how many tracks there are */
 	if ((ret = cdi->ops->audio_ioctl(cdi, CDROMREADTOCHDR, &header))) {
 		if (ret == -ENOMEDIUM)
@@ -2127,7 +2101,6 @@ static int cdrom_read_cdda_bpc(struct cdrom_device_info *cdi, __u8 __user *ubuf,
 		if (ret)
 			break;
 
-		memset(rq->cmd, 0, sizeof(rq->cmd));
 		rq->cmd[0] = GPCMD_READ_CD;
 		rq->cmd[1] = 1 << 2;
 		rq->cmd[2] = (lba >> 24) & 0xff;
@@ -2532,8 +2505,6 @@ static int cdrom_ioctl_get_subchnl(struct cdrom_device_info *cdi,
 
 	/* cdinfo(CD_DO_IOCTL,"entering CDROMSUBCHNL\n");*/
 
-	if (!CDROM_CAN(CDC_PLAY_AUDIO))
-		return -ENOSYS;
 	if (copy_from_user(&q, argp, sizeof(q)))
 		return -EFAULT;
 
@@ -2564,8 +2535,6 @@ static int cdrom_ioctl_read_tochdr(struct cdrom_device_info *cdi,
 
 	/* cdinfo(CD_DO_IOCTL, "entering CDROMREADTOCHDR\n"); */
 
-	if (!CDROM_CAN(CDC_PLAY_AUDIO))
-		return -ENOSYS;
 	if (copy_from_user(&header, argp, sizeof(header)))
 		return -EFAULT;
 
@@ -2588,8 +2557,6 @@ static int cdrom_ioctl_read_tocentry(struct cdrom_device_info *cdi,
 
 	/* cdinfo(CD_DO_IOCTL, "entering CDROMREADTOCENTRY\n"); */
 
-	if (!CDROM_CAN(CDC_PLAY_AUDIO))
-		return -ENOSYS;
 	if (copy_from_user(&entry, argp, sizeof(entry)))
 		return -EFAULT;
 
@@ -3309,7 +3276,7 @@ static int cdrom_print_info(const char *header, int val, char *info,
 
 	*pos += ret;
 
-	for (cdi = topCdromPtr; cdi; cdi = cdi->next) {
+	list_for_each_entry(cdi, &cdrom_list, list) {
 		switch (option) {
 		case CTL_NAME:
 			ret = scnprintf(info + *pos, max_size - *pos,
@@ -3430,7 +3397,8 @@ static void cdrom_update_settings(void)
 {
 	struct cdrom_device_info *cdi;
 
-	for (cdi = topCdromPtr; cdi != NULL; cdi = cdi->next) {
+	mutex_lock(&cdrom_mutex);
+	list_for_each_entry(cdi, &cdrom_list, list) {
 		if (autoclose && CDROM_CAN(CDC_CLOSE_TRAY))
 			cdi->options |= CDO_AUTO_CLOSE;
 		else if (!autoclose)
@@ -3448,6 +3416,7 @@ static void cdrom_update_settings(void)
 		else
 			cdi->options &= ~CDO_CHECK_TYPE;
 	}
+	mutex_unlock(&cdrom_mutex);
 }
 
 static int cdrom_sysctl_handler(ctl_table *ctl, int write, struct file * filp,
@@ -3571,22 +3540,29 @@ static void cdrom_sysctl_unregister(void)
 		unregister_sysctl_table(cdrom_sysctl_header);
 }
 
+#else /* CONFIG_SYSCTL */
+
+static void cdrom_sysctl_register(void)
+{
+}
+
+static void cdrom_sysctl_unregister(void)
+{
+}
+
 #endif /* CONFIG_SYSCTL */
 
 static int __init cdrom_init(void)
 {
-#ifdef CONFIG_SYSCTL
 	cdrom_sysctl_register();
-#endif
+
 	return 0;
 }
 
 static void __exit cdrom_exit(void)
 {
 	printk(KERN_INFO "Uniform CD-ROM driver unloaded\n");
-#ifdef CONFIG_SYSCTL
 	cdrom_sysctl_unregister();
-#endif
 }
 
 module_init(cdrom_init);

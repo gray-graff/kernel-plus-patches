@@ -99,14 +99,62 @@ static void pnp_free_ids(struct pnp_dev *dev)
 	}
 }
 
+void pnp_free_resource(struct pnp_resource *pnp_res)
+{
+	list_del(&pnp_res->list);
+	kfree(pnp_res);
+}
+
+void pnp_free_resources(struct pnp_dev *dev)
+{
+	struct pnp_resource *pnp_res, *tmp;
+
+	list_for_each_entry_safe(pnp_res, tmp, &dev->resources, list) {
+		pnp_free_resource(pnp_res);
+	}
+}
+
 static void pnp_release_device(struct device *dmdev)
 {
 	struct pnp_dev *dev = to_pnp_dev(dmdev);
 
-	pnp_free_option(dev->independent);
-	pnp_free_option(dev->dependent);
 	pnp_free_ids(dev);
+	pnp_free_resources(dev);
+	pnp_free_options(dev);
 	kfree(dev);
+}
+
+struct pnp_dev *pnp_alloc_dev(struct pnp_protocol *protocol, int id, char *pnpid)
+{
+	struct pnp_dev *dev;
+	struct pnp_id *dev_id;
+
+	dev = kzalloc(sizeof(struct pnp_dev), GFP_KERNEL);
+	if (!dev)
+		return NULL;
+
+	INIT_LIST_HEAD(&dev->resources);
+	INIT_LIST_HEAD(&dev->options);
+	dev->protocol = protocol;
+	dev->number = id;
+	dev->dma_mask = DMA_24BIT_MASK;
+
+	dev->dev.parent = &dev->protocol->dev;
+	dev->dev.bus = &pnp_bus_type;
+	dev->dev.dma_mask = &dev->dma_mask;
+	dev->dev.coherent_dma_mask = dev->dma_mask;
+	dev->dev.release = &pnp_release_device;
+
+	sprintf(dev->dev.bus_id, "%02x:%02x", dev->protocol->number,
+		dev->number);
+
+	dev_id = pnp_add_id(dev, pnpid);
+	if (!dev_id) {
+		kfree(dev);
+		return NULL;
+	}
+
+	return dev;
 }
 
 int __pnp_add_device(struct pnp_dev *dev)
@@ -114,10 +162,6 @@ int __pnp_add_device(struct pnp_dev *dev)
 	int ret;
 
 	pnp_fixup_device(dev);
-	dev->dev.bus = &pnp_bus_type;
-	dev->dev.dma_mask = &dev->dma_mask;
-	dev->dma_mask = dev->dev.coherent_dma_mask = DMA_24BIT_MASK;
-	dev->dev.release = &pnp_release_device;
 	dev->status = PNP_READY;
 	spin_lock(&pnp_lock);
 	list_add_tail(&dev->global_list, &pnp_global);
@@ -145,9 +189,6 @@ int pnp_add_device(struct pnp_dev *dev)
 	if (dev->card)
 		return -EINVAL;
 
-	dev->dev.parent = &dev->protocol->dev;
-	sprintf(dev->dev.bus_id, "%02x:%02x", dev->protocol->number,
-		dev->number);
 	ret = __pnp_add_device(dev);
 	if (ret)
 		return ret;

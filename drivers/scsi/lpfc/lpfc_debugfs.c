@@ -27,7 +27,6 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/ctype.h>
-#include <linux/version.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
@@ -503,6 +502,8 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 				ndlp->nlp_sid);
 		if (ndlp->nlp_type & NLP_FCP_INITIATOR)
 			len +=  snprintf(buf+len, size-len, "FCP_INITIATOR ");
+		len += snprintf(buf+len, size-len, "usgmap:%x ",
+			ndlp->nlp_usg_map);
 		len += snprintf(buf+len, size-len, "refcnt:%x",
 			atomic_read(&ndlp->kref.refcount));
 		len +=  snprintf(buf+len, size-len, "\n");

@@ -68,10 +68,10 @@ struct x86_emulate_ops {
 	 *  @val:   [OUT] Value read from memory, zero-extended to 'u_long'.
 	 *  @bytes: [IN ] Number of bytes to read from memory.
 	 */
-	int (*read_emulated) (unsigned long addr,
-			      void *val,
-			      unsigned int bytes,
-			      struct kvm_vcpu *vcpu);
+	int (*read_emulated)(unsigned long addr,
+			     void *val,
+			     unsigned int bytes,
+			     struct kvm_vcpu *vcpu);
 
 	/*
 	 * write_emulated: Read bytes from emulated/special memory area.
@@ -80,10 +80,10 @@ struct x86_emulate_ops {
 	 *                required).
 	 *  @bytes: [IN ] Number of bytes to write to memory.
 	 */
-	int (*write_emulated) (unsigned long addr,
-			       const void *val,
-			       unsigned int bytes,
-			       struct kvm_vcpu *vcpu);
+	int (*write_emulated)(unsigned long addr,
+			      const void *val,
+			      unsigned int bytes,
+			      struct kvm_vcpu *vcpu);
 
 	/*
 	 * cmpxchg_emulated: Emulate an atomic (LOCKed) CMPXCHG operation on an
@@ -93,11 +93,11 @@ struct x86_emulate_ops {
 	 *  @new:   [IN ] Value to write to @addr.
 	 *  @bytes: [IN ] Number of bytes to access using CMPXCHG.
 	 */
-	int (*cmpxchg_emulated) (unsigned long addr,
-				 const void *old,
-				 const void *new,
-				 unsigned int bytes,
-				 struct kvm_vcpu *vcpu);
+	int (*cmpxchg_emulated)(unsigned long addr,
+				const void *old,
+				const void *new,
+				unsigned int bytes,
+				struct kvm_vcpu *vcpu);
 
 };
 
@@ -124,7 +124,8 @@ struct decode_cache {
 	u8 rex_prefix;
 	struct operand src;
 	struct operand dst;
-	unsigned long *override_base;
+	bool has_seg_override;
+	u8 seg_override;
 	unsigned int d;
 	unsigned long regs[NR_VCPU_REGS];
 	unsigned long eip;
@@ -134,7 +135,9 @@ struct decode_cache {
 	u8 modrm_reg;
 	u8 modrm_rm;
 	u8 use_modrm_ea;
+	bool rip_relative;
 	unsigned long modrm_ea;
+	void *modrm_ptr;
 	unsigned long modrm_val;
 	struct fetch_cache fetch;
 };
@@ -143,18 +146,13 @@ struct x86_emulate_ctxt {
 	/* Register state before/after emulation. */
 	struct kvm_vcpu *vcpu;
 
-	/* Linear faulting address (if emulating a page-faulting instruction). */
+	/* Linear faulting address (if emulating a page-faulting instruction) */
 	unsigned long eflags;
 
 	/* Emulated execution mode, represented by an X86EMUL_MODE value. */
 	int mode;
 
-	unsigned long cs_base;
-	unsigned long ds_base;
-	unsigned long es_base;
-	unsigned long ss_base;
-	unsigned long gs_base;
-	unsigned long fs_base;
+	u32 cs_base;
 
 	/* decode cache */
 

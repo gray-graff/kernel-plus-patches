@@ -38,7 +38,7 @@
 /*
  * Architectures can override it:
  */
-void __attribute__((weak)) early_printk(const char *fmt, ...)
+void asmlinkage __attribute__((weak)) early_printk(const char *fmt, ...)
 {
 }
 
@@ -75,6 +75,8 @@ EXPORT_SYMBOL(oops_in_progress);
 static DECLARE_MUTEX(console_sem);
 static DECLARE_MUTEX(secondary_console_sem);
 struct console *console_drivers;
+EXPORT_SYMBOL_GPL(console_drivers);
+
 /*
  * This is used for debugging the mess that is the VT code by
  * keeping track if we have the console semaphore held. It's
@@ -111,6 +113,9 @@ struct console_cmdline
 	char	name[8];			/* Name of the driver	    */
 	int	index;				/* Minor dev. to use	    */
 	char	*options;			/* Options for the driver   */
+#ifdef CONFIG_A11Y_BRAILLE_CONSOLE
+	char	*brl_options;			/* Options for braille driver */
+#endif
 };
 
 #define MAX_CMDLINECONSOLES 8
@@ -118,6 +123,8 @@ struct console_cmdline
 static struct console_cmdline console_cmdline[MAX_CMDLINECONSOLES];
 static int selected_console = -1;
 static int preferred_console = -1;
+int console_set_on_cmdline;
+EXPORT_SYMBOL(console_set_on_cmdline);
 
 /* Flag: console code may call schedule() */
 static int console_may_schedule;
@@ -228,7 +235,7 @@ static inline void boot_delay_msec(void)
 /*
  * Return the number of unread characters in the log buffer.
  */
-int log_buf_get_len(void)
+static int log_buf_get_len(void)
 {
 	return logged_chars;
 }
@@ -262,19 +269,6 @@ int log_buf_copy(char *dest, int idx, int len)
 		spin_unlock_irq(&logbuf_lock);
 
 	return ret;
-}
-
-/*
- * Extract a single character from the log buffer.
- */
-int log_buf_read(int idx)
-{
-	char ret;
-
-	if (log_buf_copy(&ret, idx, 1) == 1)
-		return ret;
-	else
-		return -1;
 }
 
 /*
@@ -662,18 +656,17 @@ static int acquire_console_semaphore_for_printk(unsigned int cpu)
 	spin_unlock(&logbuf_lock);
 	return retval;
 }
-
-const char printk_recursion_bug_msg [] =
-			KERN_CRIT "BUG: recent printk recursion!\n";
-static int printk_recursion_bug;
+static const char recursion_bug_msg [] =
+		KERN_CRIT "BUG: recent printk recursion!\n";
+static int recursion_bug;
+	static int new_text_line = 1;
+static char printk_buf[1024];
 
 asmlinkage int vprintk(const char *fmt, va_list args)
 {
-	static int log_level_unknown = 1;
-	static char printk_buf[1024];
-
-	unsigned long flags;
 	int printed_len = 0;
+	int current_log_level = default_message_loglevel;
+	unsigned long flags;
 	int this_cpu;
 	char *p;
 
@@ -696,7 +689,7 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 		 * it can be printed at the next appropriate moment:
 		 */
 		if (!oops_in_progress) {
-			printk_recursion_bug = 1;
+			recursion_bug = 1;
 			goto out_restore_irqs;
 		}
 		zap_locks();
@@ -706,70 +699,62 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	spin_lock(&logbuf_lock);
 	printk_cpu = this_cpu;
 
-	if (printk_recursion_bug) {
-		printk_recursion_bug = 0;
-		strcpy(printk_buf, printk_recursion_bug_msg);
-		printed_len = sizeof(printk_recursion_bug_msg);
+	if (recursion_bug) {
+		recursion_bug = 0;
+		strcpy(printk_buf, recursion_bug_msg);
+		printed_len = sizeof(recursion_bug_msg);
 	}
 	/* Emit the output into the temporary buffer */
 	printed_len += vscnprintf(printk_buf + printed_len,
 				  sizeof(printk_buf) - printed_len, fmt, args);
+
 
 	/*
 	 * Copy the output into log_buf.  If the caller didn't provide
 	 * appropriate log level tags, we insert them here
 	 */
 	for (p = printk_buf; *p; p++) {
-		if (log_level_unknown) {
-                        /* log_level_unknown signals the start of a new line */
+		if (new_text_line) {
+			/* If a token, set current_log_level and skip over */
+			if (p[0] == '<' && p[1] >= '0' && p[1] <= '7' &&
+			    p[2] == '>') {
+				current_log_level = p[1] - '0';
+				p += 3;
+				printed_len -= 3;
+			}
+
+			/* Always output the token */
+			emit_log_char('<');
+			emit_log_char(current_log_level + '0');
+			emit_log_char('>');
+			printed_len += 3;
+			new_text_line = 0;
+
 			if (printk_time) {
-				int loglev_char;
+				/* Follow the token with the time */
 				char tbuf[50], *tp;
 				unsigned tlen;
 				unsigned long long t;
 				unsigned long nanosec_rem;
 
-				/*
-				 * force the log level token to be
-				 * before the time output.
-				 */
-				if (p[0] == '<' && p[1] >='0' &&
-				   p[1] <= '7' && p[2] == '>') {
-					loglev_char = p[1];
-					p += 3;
-					printed_len -= 3;
-				} else {
-					loglev_char = default_message_loglevel
-						+ '0';
-				}
 				t = cpu_clock(printk_cpu);
 				nanosec_rem = do_div(t, 1000000000);
-				tlen = sprintf(tbuf,
-						"<%c>[%5lu.%06lu] ",
-						loglev_char,
-						(unsigned long)t,
-						nanosec_rem/1000);
+				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
+						(unsigned long) t,
+						nanosec_rem / 1000);
 
 				for (tp = tbuf; tp < tbuf + tlen; tp++)
 					emit_log_char(*tp);
 				printed_len += tlen;
-			} else {
-				if (p[0] != '<' || p[1] < '0' ||
-				   p[1] > '7' || p[2] != '>') {
-					emit_log_char('<');
-					emit_log_char(default_message_loglevel
-						+ '0');
-					emit_log_char('>');
-					printed_len += 3;
-				}
 			}
-			log_level_unknown = 0;
+
 			if (!*p)
 				break;
 		}
+
 		emit_log_char(*p);
 		if (*p == '\n')
-			log_level_unknown = 1;
+			new_text_line = 1;
 	}
 
 	/*
@@ -808,14 +793,59 @@ static void call_console_drivers(unsigned start, unsigned end)
 
 #endif
 
+static int __add_preferred_console(char *name, int idx, char *options,
+				   char *brl_options)
+{
+	struct console_cmdline *c;
+	int i;
+
+	/*
+	 *	See if this tty is not yet registered, and
+	 *	if we have a slot free.
+	 */
+	for (i = 0; i < MAX_CMDLINECONSOLES && console_cmdline[i].name[0]; i++)
+		if (strcmp(console_cmdline[i].name, name) == 0 &&
+			  console_cmdline[i].index == idx) {
+				if (!brl_options)
+					selected_console = i;
+				return 0;
+		}
+	if (i == MAX_CMDLINECONSOLES)
+		return -E2BIG;
+	if (!brl_options)
+		selected_console = i;
+	c = &console_cmdline[i];
+	strlcpy(c->name, name, sizeof(c->name));
+	c->options = options;
+#ifdef CONFIG_A11Y_BRAILLE_CONSOLE
+	c->brl_options = brl_options;
+#endif
+	c->index = idx;
+	return 0;
+}
 /*
  * Set up a list of consoles.  Called from init/main.c
  */
 static int __init console_setup(char *str)
 {
 	char buf[sizeof(console_cmdline[0].name) + 4]; /* 4 for index */
-	char *s, *options;
+	char *s, *options, *brl_options = NULL;
 	int idx;
+
+#ifdef CONFIG_A11Y_BRAILLE_CONSOLE
+	if (!memcmp(str, "brl,", 4)) {
+		brl_options = "";
+		str += 4;
+	} else if (!memcmp(str, "brl=", 4)) {
+		brl_options = str + 4;
+		str = strchr(brl_options, ',');
+		if (!str) {
+			printk(KERN_ERR "need port name after brl=\n");
+			return 1;
+		}
+		*(str++) = 0;
+	}
+#endif
 
 	/*
 	 * Decode str into name, index, options.
@@ -841,7 +871,8 @@ static int __init console_setup(char *str)
 	idx = simple_strtoul(s, NULL, 10);
 	*s = 0;
 
-	add_preferred_console(buf, idx, options);
+	__add_preferred_console(buf, idx, options, brl_options);
+	console_set_on_cmdline = 1;
 	return 1;
 }
 __setup("console=", console_setup);
@@ -861,28 +892,7 @@ __setup("console=", console_setup);
  */
 int add_preferred_console(char *name, int idx, char *options)
 {
-	struct console_cmdline *c;
-	int i;
-
-	/*
-	 *	See if this tty is not yet registered, and
-	 *	if we have a slot free.
-	 */
-	for (i = 0; i < MAX_CMDLINECONSOLES && console_cmdline[i].name[0]; i++)
-		if (strcmp(console_cmdline[i].name, name) == 0 &&
-			  console_cmdline[i].index == idx) {
-				selected_console = i;
-				return 0;
-		}
-	if (i == MAX_CMDLINECONSOLES)
-		return -E2BIG;
-	selected_console = i;
-	c = &console_cmdline[i];
-	memcpy(c->name, name, sizeof(c->name));
-	c->name[sizeof(c->name) - 1] = 0;
-	c->options = options;
-	c->index = idx;
-	return 0;
+	return __add_preferred_console(name, idx, options, NULL);
 }
 
 int update_console_cmdline(char *name, int idx, char *name_new, int idx_new, char *options)
@@ -894,7 +904,7 @@ int update_console_cmdline(char *name, int idx, char *name_new, int idx_new, cha
 		if (strcmp(console_cmdline[i].name, name) == 0 &&
 			  console_cmdline[i].index == idx) {
 				c = &console_cmdline[i];
-				memcpy(c->name, name_new, sizeof(c->name));
+				strlcpy(c->name, name_new, sizeof(c->name));
 				c->name[sizeof(c->name) - 1] = 0;
 				c->options = options;
 				c->index = idx_new;
@@ -923,7 +933,7 @@ void suspend_console(void)
 {
 	if (!console_suspend_enabled)
 		return;
-	printk("Suspending console(s)\n");
+	printk("Suspending console(s) (use no_console_suspend to debug)\n");
 	acquire_console_sem();
 	console_suspended = 1;
 }
@@ -1014,7 +1024,9 @@ void release_console_sem(void)
 		_log_end = log_end;
 		con_start = log_end;		/* Flush */
 		spin_unlock(&logbuf_lock);
+		stop_critical_timings();	/* don't trace print latency */
 		call_console_drivers(_con_start, _log_end);
+		start_critical_timings();
 		local_irq_restore(flags);
 	}
 	console_locked = 0;
@@ -1145,8 +1157,11 @@ void register_console(struct console *console)
 			console->index = 0;
 		if (console->setup == NULL ||
 		    console->setup(console, NULL) == 0) {
-			console->flags |= CON_ENABLED | CON_CONSDEV;
-			preferred_console = 0;
+			console->flags |= CON_ENABLED;
+			if (console->device) {
+				console->flags |= CON_CONSDEV;
+				preferred_console = 0;
+			}
 		}
 	}
 
@@ -1163,6 +1178,16 @@ void register_console(struct console *console)
 			continue;
 		if (console->index < 0)
 			console->index = console_cmdline[i].index;
+#ifdef CONFIG_A11Y_BRAILLE_CONSOLE
+		if (console_cmdline[i].brl_options) {
+			console->flags |= CON_BRL;
+			braille_register_console(console,
+					console_cmdline[i].index,
+					console_cmdline[i].options,
+					console_cmdline[i].brl_options);
+			return;
+		}
+#endif
 		if (console->setup &&
 		    console->setup(console, console_cmdline[i].options) != 0)
 			break;
@@ -1221,6 +1246,11 @@ int unregister_console(struct console *console)
         struct console *a, *b;
 	int res = 1;
 
+#ifdef CONFIG_A11Y_BRAILLE_CONSOLE
+	if (console->flags & CON_BRL)
+		return braille_unregister_console(console);
+#endif
+
 	acquire_console_sem();
 	if (console_drivers == console) {
 		console_drivers=console->next;
@@ -1272,59 +1302,24 @@ late_initcall(disable_boot_consoles);
  */
 void tty_write_message(struct tty_struct *tty, char *msg)
 {
-	if (tty && tty->driver->write)
-		tty->driver->write(tty, msg, strlen(msg));
+	if (tty && tty->ops->write)
+		tty->ops->write(tty, msg, strlen(msg));
 	return;
 }
 
 #if defined CONFIG_PRINTK
+
 /*
  * printk rate limiting, lifted from the networking subsystem.
  *
- * This enforces a rate limit: not more than one kernel message
- * every printk_ratelimit_jiffies to make a denial-of-service
- * attack impossible.
+ * This enforces a rate limit: not more than 10 kernel messages
+ * every 5s to make a denial-of-service attack impossible.
  */
-int __printk_ratelimit(int ratelimit_jiffies, int ratelimit_burst)
-{
-	static DEFINE_SPINLOCK(ratelimit_lock);
-	static unsigned toks = 10 * 5 * HZ;
-	static unsigned long last_msg;
-	static int missed;
-	unsigned long flags;
-	unsigned long now = jiffies;
-
-	spin_lock_irqsave(&ratelimit_lock, flags);
-	toks += now - last_msg;
-	last_msg = now;
-	if (toks > (ratelimit_burst * ratelimit_jiffies))
-		toks = ratelimit_burst * ratelimit_jiffies;
-	if (toks >= ratelimit_jiffies) {
-		int lost = missed;
-
-		missed = 0;
-		toks -= ratelimit_jiffies;
-		spin_unlock_irqrestore(&ratelimit_lock, flags);
-		if (lost)
-			printk(KERN_WARNING "printk: %d messages suppressed.\n", lost);
-		return 1;
-	}
-	missed++;
-	spin_unlock_irqrestore(&ratelimit_lock, flags);
-	return 0;
-}
-EXPORT_SYMBOL(__printk_ratelimit);
-
-/* minimum time in jiffies between messages */
-int printk_ratelimit_jiffies = 5 * HZ;
-
-/* number of messages we send before ratelimiting */
-int printk_ratelimit_burst = 10;
+DEFINE_RATELIMIT_STATE(printk_ratelimit_state, 5 * HZ, 10);
 
 int printk_ratelimit(void)
 {
-	return __printk_ratelimit(printk_ratelimit_jiffies,
-				printk_ratelimit_burst);
+	return __ratelimit(&printk_ratelimit_state);
 }
 EXPORT_SYMBOL(printk_ratelimit);
 

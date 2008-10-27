@@ -65,7 +65,6 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_VERSION(DRV_VERSION);
 
 int max_mtu = 9000;
-int nics_per_function = 1;
 int interrupt_mod_interval = 0;
 
 
@@ -93,22 +92,10 @@ module_param_named(debug_level, nes_debug_level, uint, 0644);
 MODULE_PARM_DESC(debug_level, "Enable debug output level");
 
 LIST_HEAD(nes_adapter_list);
-LIST_HEAD(nes_dev_list);
+static LIST_HEAD(nes_dev_list);
 
 atomic_t qps_destroyed;
-atomic_t cqp_reqs_allocated;
-atomic_t cqp_reqs_freed;
-atomic_t cqp_reqs_dynallocated;
-atomic_t cqp_reqs_dynfreed;
-atomic_t cqp_reqs_queued;
-atomic_t cqp_reqs_redriven;
 
-static void nes_print_macaddr(struct net_device *netdev);
-static irqreturn_t nes_interrupt(int, void *);
-static int __devinit nes_probe(struct pci_dev *, const struct pci_device_id *);
-static void __devexit nes_remove(struct pci_dev *);
-static int __init nes_init_module(void);
-static void __exit nes_exit_module(void);
 static unsigned int ee_flsh_adapter;
 static unsigned int sysfs_nonidx_addr;
 static unsigned int sysfs_idx_addr;
@@ -152,8 +139,9 @@ static int nes_inetaddr_event(struct notifier_block *notifier,
 
 	addr = ntohl(ifa->ifa_address);
 	mask = ntohl(ifa->ifa_mask);
-	nes_debug(NES_DBG_NETDEV, "nes_inetaddr_event: ip address %08X, netmask %08X.\n",
-			addr, mask);
+	nes_debug(NES_DBG_NETDEV, "nes_inetaddr_event: ip address " NIPQUAD_FMT
+		  ", netmask " NIPQUAD_FMT ".\n",
+		  HIPQUAD(addr), HIPQUAD(mask));
 	list_for_each_entry(nesdev, &nes_dev_list, list) {
 		nes_debug(NES_DBG_NETDEV, "Nesdev list entry = 0x%p. (%s)\n",
 				nesdev, nesdev->netdev[0]->name);
@@ -288,6 +276,7 @@ static void nes_cqp_rem_ref_callback(struct nes_device *nesdev, struct nes_cqp_r
 	}
 	nes_free_resource(nesadapter, nesadapter->allocated_qps, nesqp->hwqp.qp_id);
 
+	nesadapter->qp_table[nesqp->hwqp.qp_id-NES_FIRST_QPN] = NULL;
 	kfree(nesqp->allocated_buffer);
 
 }
@@ -301,7 +290,6 @@ void nes_rem_ref(struct ib_qp *ibqp)
 	struct nes_qp *nesqp;
 	struct nes_vnic *nesvnic = to_nesvnic(ibqp->device);
 	struct nes_device *nesdev = nesvnic->nesdev;
-	struct nes_adapter *nesadapter = nesdev->nesadapter;
 	struct nes_hw_cqp_wqe *cqp_wqe;
 	struct nes_cqp_request *cqp_request;
 	u32 opcode;
@@ -310,13 +298,11 @@ void nes_rem_ref(struct ib_qp *ibqp)
 
 	if (atomic_read(&nesqp->refcount) == 0) {
 		printk(KERN_INFO PFX "%s: Reference count already 0 for QP%d, last aeq = 0x%04X.\n",
-				__FUNCTION__, ibqp->qp_num, nesqp->last_aeq);
+				__func__, ibqp->qp_num, nesqp->last_aeq);
 		BUG();
 	}
 
 	if (atomic_dec_and_test(&nesqp->refcount)) {
-		nesadapter->qp_table[nesqp->hwqp.qp_id-NES_FIRST_QPN] = NULL;
-
 		/* Destroy the QP */
 		cqp_request = nes_get_cqp_request(nesdev);
 		if (cqp_request == NULL) {
@@ -340,7 +326,7 @@ void nes_rem_ref(struct ib_qp *ibqp)
 		set_wqe_32bit_value(cqp_wqe->wqe_words, NES_CQP_WQE_ID_IDX, nesqp->hwqp.qp_id);
 		u64temp = (u64)nesqp->nesqp_context_pbase;
 		set_wqe_64bit_value(cqp_wqe->wqe_words, NES_CQP_QP_WQE_CONTEXT_LOW_IDX, u64temp);
-		nes_post_cqp_request(nesdev, cqp_request, NES_CQP_REQUEST_RING_DOORBELL);
+		nes_post_cqp_request(nesdev, cqp_request);
 	}
 }
 
@@ -366,13 +352,11 @@ struct ib_qp *nes_get_qp(struct ib_device *device, int qpn)
  */
 static void nes_print_macaddr(struct net_device *netdev)
 {
-	nes_debug(NES_DBG_INIT, "%s: MAC %02X:%02X:%02X:%02X:%02X:%02X, IRQ %u\n",
-			netdev->name,
-			netdev->dev_addr[0], netdev->dev_addr[1], netdev->dev_addr[2],
-			netdev->dev_addr[3], netdev->dev_addr[4], netdev->dev_addr[5],
-			netdev->irq);
-}
+	DECLARE_MAC_BUF(mac);
 
+	nes_debug(NES_DBG_INIT, "%s: %s, IRQ %u\n",
+		  netdev->name, print_mac(mac, netdev->dev_addr), netdev->irq);
+}
 
 /**
  * nes_interrupt - handle interrupts
@@ -751,12 +735,12 @@ static void __devexit nes_remove(struct pci_dev *pcidev)
 
 	list_del(&nesdev->list);
 	nes_destroy_cqp(nesdev);
+
+	free_irq(pcidev->irq, nesdev);
 	tasklet_kill(&nesdev->dpc_tasklet);
 
 	/* Deallocate the Adapter Structure */
 	nes_destroy_adapter(nesdev->nesadapter);
-
-	free_irq(pcidev->irq, nesdev);
 
 	if (nesdev->msi_enabled) {
 		pci_disable_msi(pcidev);

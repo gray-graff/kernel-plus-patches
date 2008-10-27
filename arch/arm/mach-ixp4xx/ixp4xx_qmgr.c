@@ -12,7 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <asm/arch/qmgr.h>
+#include <mach/qmgr.h>
 
 #define DEBUG		0
 
@@ -183,6 +183,8 @@ void qmgr_release_queue(unsigned int queue)
 	case 2: mask[0] = 0xF; break;
 	case 3: mask[0] = 0xFF; break;
 	}
+
+	mask[1] = mask[2] = mask[3] = 0;
 
 	while (addr--)
 		shift_mask(mask);

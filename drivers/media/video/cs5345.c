@@ -35,7 +35,7 @@ static int debug;
 
 module_param(debug, bool, 0644);
 
-MODULE_PARM_DESC(debug, "Debugging messages\n\t\t\t0=Off (default), 1=On");
+MODULE_PARM_DESC(debug, "Debugging messages, 0=Off (default), 1=On");
 
 
 /* ----------------------------------------------------------------------- */
@@ -111,7 +111,7 @@ static int cs5345_command(struct i2c_client *client, unsigned cmd, void *arg)
 		if (cmd == VIDIOC_DBG_G_REGISTER)
 			reg->val = cs5345_read(client, reg->reg & 0x1f);
 		else
-			cs5345_write(client, reg->reg & 0x1f, reg->val & 0x1f);
+			cs5345_write(client, reg->reg & 0x1f, reg->val & 0xff);
 		break;
 	}
 #endif
@@ -142,7 +142,8 @@ static int cs5345_command(struct i2c_client *client, unsigned cmd, void *arg)
 
 /* ----------------------------------------------------------------------- */
 
-static int cs5345_probe(struct i2c_client *client)
+static int cs5345_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	/* Check if the adapter supports the needed features */
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
@@ -159,10 +160,16 @@ static int cs5345_probe(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+static const struct i2c_device_id cs5345_id[] = {
+	{ "cs5345", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, cs5345_id);
+
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "cs5345",
 	.driverid = I2C_DRIVERID_CS5345,
 	.command = cs5345_command,
 	.probe = cs5345_probe,
+	.id_table = cs5345_id,
 };
-

@@ -32,6 +32,7 @@
 #include <asm/uaccess.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
+#include <linux/smp_lock.h>
 
 #include <linux/device.h>
 #include <linux/moduleparam.h>
@@ -261,8 +262,6 @@ static const char *CHIP;
 
 #define ERROR(dev,fmt,args...) \
 	xprintk(dev , KERN_ERR , fmt , ## args)
-#define WARN(dev,fmt,args...) \
-	xprintk(dev , KERN_WARNING , fmt , ## args)
 #define INFO(dev,fmt,args...) \
 	xprintk(dev , KERN_INFO , fmt , ## args)
 
@@ -483,8 +482,7 @@ ep_release (struct inode *inode, struct file *fd)
 	return 0;
 }
 
-static int ep_ioctl (struct inode *inode, struct file *fd,
-		unsigned code, unsigned long value)
+static long ep_ioctl(struct file *fd, unsigned code, unsigned long value)
 {
 	struct ep_data		*data = fd->private_data;
 	int			status;
@@ -740,7 +738,7 @@ static const struct file_operations ep_io_operations = {
 
 	.read =		ep_read,
 	.write =	ep_write,
-	.ioctl =	ep_ioctl,
+	.unlocked_ioctl = ep_ioctl,
 	.release =	ep_release,
 
 	.aio_read =	ep_aio_read,
@@ -1107,13 +1105,13 @@ scan:
 
 	switch (state) {
 	default:
-		DBG (dev, "fail %s, state %d\n", __FUNCTION__, state);
+		DBG (dev, "fail %s, state %d\n", __func__, state);
 		retval = -ESRCH;
 		break;
 	case STATE_DEV_UNCONNECTED:
 	case STATE_DEV_CONNECTED:
 		spin_unlock_irq (&dev->lock);
-		DBG (dev, "%s wait\n", __FUNCTION__);
+		DBG (dev, "%s wait\n", __func__);
 
 		/* wait for events */
 		retval = wait_event_interruptible (dev->wait,
@@ -1222,7 +1220,7 @@ ep0_write (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 			DBG(dev, "bogus ep0out stall!\n");
 		}
 	} else
-		DBG (dev, "fail %s, state %d\n", __FUNCTION__, dev->state);
+		DBG (dev, "fail %s, state %d\n", __func__, dev->state);
 
 	spin_unlock_irq (&dev->lock);
 	return retval;
@@ -1233,7 +1231,7 @@ ep0_fasync (int f, struct file *fd, int on)
 {
 	struct dev_data		*dev = fd->private_data;
 	// caller must F_SETOWN before signal delivery happens
-	VDEBUG (dev, "%s %s\n", __FUNCTION__, on ? "on" : "off");
+	VDEBUG (dev, "%s %s\n", __func__, on ? "on" : "off");
 	return fasync_helper (f, fd, on, &dev->fasync);
 }
 
@@ -1294,15 +1292,18 @@ out:
        return mask;
 }
 
-static int dev_ioctl (struct inode *inode, struct file *fd,
-		unsigned code, unsigned long value)
+static long dev_ioctl (struct file *fd, unsigned code, unsigned long value)
 {
 	struct dev_data		*dev = fd->private_data;
 	struct usb_gadget	*gadget = dev->gadget;
+	long ret = -ENOTTY;
 
-	if (gadget->ops->ioctl)
-		return gadget->ops->ioctl (gadget, code, value);
-	return -ENOTTY;
+	if (gadget->ops->ioctl) {
+		lock_kernel();
+		ret = gadget->ops->ioctl (gadget, code, value);
+		unlock_kernel();
+	}
+	return ret;
 }
 
 /* used after device configuration */
@@ -1314,7 +1315,7 @@ static const struct file_operations ep0_io_operations = {
 	.write =	ep0_write,
 	.fasync =	ep0_fasync,
 	.poll =		ep0_poll,
-	.ioctl =	dev_ioctl,
+	.unlocked_ioctl =	dev_ioctl,
 	.release =	dev_release,
 };
 
@@ -1501,7 +1502,7 @@ gadgetfs_setup (struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		}
 		break;
 
-#ifndef	CONFIG_USB_GADGET_PXA2XX
+#ifndef	CONFIG_USB_GADGET_PXA25X
 	/* PXA automagically handles this request too */
 	case USB_REQ_GET_CONFIGURATION:
 		if (ctrl->bRequestType != 0x80)
@@ -1575,7 +1576,7 @@ static void destroy_ep_files (struct dev_data *dev)
 {
 	struct list_head	*entry, *tmp;
 
-	DBG (dev, "%s %d\n", __FUNCTION__, dev->state);
+	DBG (dev, "%s %d\n", __func__, dev->state);
 
 	/* dev->state must prevent interference */
 restart:
@@ -1662,7 +1663,7 @@ enomem1:
 	put_dev (dev);
 	kfree (data);
 enomem0:
-	DBG (dev, "%s enomem\n", __FUNCTION__);
+	DBG (dev, "%s enomem\n", __func__);
 	destroy_ep_files (dev);
 	return -ENOMEM;
 }
@@ -1672,7 +1673,7 @@ gadgetfs_unbind (struct usb_gadget *gadget)
 {
 	struct dev_data		*dev = get_gadget_data (gadget);
 
-	DBG (dev, "%s\n", __FUNCTION__);
+	DBG (dev, "%s\n", __func__);
 
 	spin_lock_irq (&dev->lock);
 	dev->state = STATE_DEV_UNBOUND;
@@ -1685,7 +1686,7 @@ gadgetfs_unbind (struct usb_gadget *gadget)
 	/* we've already been disconnected ... no i/o is active */
 	if (dev->req)
 		usb_ep_free_request (gadget->ep0, dev->req);
-	DBG (dev, "%s done\n", __FUNCTION__);
+	DBG (dev, "%s done\n", __func__);
 	put_dev (dev);
 }
 
@@ -1933,7 +1934,7 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 
 fail:
 	spin_unlock_irq (&dev->lock);
-	pr_debug ("%s: %s fail %Zd, %p\n", shortname, __FUNCTION__, value, dev);
+	pr_debug ("%s: %s fail %Zd, %p\n", shortname, __func__, value, dev);
 	kfree (dev->buf);
 	dev->buf = NULL;
 	return value;
@@ -1964,7 +1965,7 @@ static const struct file_operations dev_init_operations = {
 	.open =		dev_open,
 	.write =	dev_config,
 	.fasync =	ep0_fasync,
-	.ioctl =	dev_ioctl,
+	.unlocked_ioctl = dev_ioctl,
 	.release =	dev_release,
 };
 

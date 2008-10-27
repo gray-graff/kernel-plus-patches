@@ -251,18 +251,18 @@ struct threshold_attr {
 	ssize_t(*store) (struct threshold_block *, const char *, size_t count);
 };
 
-static cpumask_t affinity_set(unsigned int cpu)
+static void affinity_set(unsigned int cpu, cpumask_t *oldmask,
+					   cpumask_t *newmask)
 {
-	cpumask_t oldmask = current->cpus_allowed;
-	cpumask_t newmask = CPU_MASK_NONE;
-	cpu_set(cpu, newmask);
-	set_cpus_allowed(current, newmask);
-	return oldmask;
+	*oldmask = current->cpus_allowed;
+	cpus_clear(*newmask);
+	cpu_set(cpu, *newmask);
+	set_cpus_allowed_ptr(current, newmask);
 }
 
-static void affinity_restore(cpumask_t oldmask)
+static void affinity_restore(const cpumask_t *oldmask)
 {
-	set_cpus_allowed(current, oldmask);
+	set_cpus_allowed_ptr(current, oldmask);
 }
 
 #define SHOW_FIELDS(name)                                           \
@@ -277,15 +277,15 @@ static ssize_t store_interrupt_enable(struct threshold_block *b,
 				      const char *buf, size_t count)
 {
 	char *end;
-	cpumask_t oldmask;
+	cpumask_t oldmask, newmask;
 	unsigned long new = simple_strtoul(buf, &end, 0);
 	if (end == buf)
 		return -EINVAL;
 	b->interrupt_enable = !!new;
 
-	oldmask = affinity_set(b->cpu);
+	affinity_set(b->cpu, &oldmask, &newmask);
 	threshold_restart_bank(b, 0, 0);
-	affinity_restore(oldmask);
+	affinity_restore(&oldmask);
 
 	return end - buf;
 }
@@ -294,7 +294,7 @@ static ssize_t store_threshold_limit(struct threshold_block *b,
 				     const char *buf, size_t count)
 {
 	char *end;
-	cpumask_t oldmask;
+	cpumask_t oldmask, newmask;
 	u16 old;
 	unsigned long new = simple_strtoul(buf, &end, 0);
 	if (end == buf)
@@ -306,9 +306,9 @@ static ssize_t store_threshold_limit(struct threshold_block *b,
 	old = b->threshold_limit;
 	b->threshold_limit = new;
 
-	oldmask = affinity_set(b->cpu);
+	affinity_set(b->cpu, &oldmask, &newmask);
 	threshold_restart_bank(b, 0, old);
-	affinity_restore(oldmask);
+	affinity_restore(&oldmask);
 
 	return end - buf;
 }
@@ -316,10 +316,10 @@ static ssize_t store_threshold_limit(struct threshold_block *b,
 static ssize_t show_error_count(struct threshold_block *b, char *buf)
 {
 	u32 high, low;
-	cpumask_t oldmask;
-	oldmask = affinity_set(b->cpu);
+	cpumask_t oldmask, newmask;
+	affinity_set(b->cpu, &oldmask, &newmask);
 	rdmsr(b->address, low, high);
-	affinity_restore(oldmask);
+	affinity_restore(&oldmask);
 	return sprintf(buf, "%x\n",
 		       (high & 0xFFF) - (THRESHOLD_MAX - b->threshold_limit));
 }
@@ -327,10 +327,10 @@ static ssize_t show_error_count(struct threshold_block *b, char *buf)
 static ssize_t store_error_count(struct threshold_block *b,
 				 const char *buf, size_t count)
 {
-	cpumask_t oldmask;
-	oldmask = affinity_set(b->cpu);
+	cpumask_t oldmask, newmask;
+	affinity_set(b->cpu, &oldmask, &newmask);
 	threshold_restart_bank(b, 1, 0);
-	affinity_restore(oldmask);
+	affinity_restore(&oldmask);
 	return 1;
 }
 
@@ -468,7 +468,7 @@ static __cpuinit int threshold_create_bank(unsigned int cpu, unsigned int bank)
 {
 	int i, err = 0;
 	struct threshold_bank *b = NULL;
-	cpumask_t oldmask = CPU_MASK_NONE;
+	cpumask_t oldmask, newmask;
 	char name[32];
 
 	sprintf(name, "threshold_bank%i", bank);
@@ -519,15 +519,15 @@ static __cpuinit int threshold_create_bank(unsigned int cpu, unsigned int bank)
 
 	per_cpu(threshold_banks, cpu)[bank] = b;
 
-	oldmask = affinity_set(cpu);
+	affinity_set(cpu, &oldmask, &newmask);
 	err = allocate_threshold_blocks(cpu, bank, 0,
 					MSR_IA32_MC0_MISC + bank * 4);
-	affinity_restore(oldmask);
+	affinity_restore(&oldmask);
 
 	if (err)
 		goto out_free;
 
-	for_each_cpu_mask(i, b->cpus) {
+	for_each_cpu_mask_nr(i, b->cpus) {
 		if (i == cpu)
 			continue;
 
@@ -617,7 +617,7 @@ static void threshold_remove_bank(unsigned int cpu, int bank)
 #endif
 
 	/* remove all sibling symlinks before unregistering */
-	for_each_cpu_mask(i, b->cpus) {
+	for_each_cpu_mask_nr(i, b->cpus) {
 		if (i == cpu)
 			continue;
 
@@ -628,6 +628,7 @@ static void threshold_remove_bank(unsigned int cpu, int bank)
 	deallocate_threshold_block(cpu, bank);
 
 free_out:
+	kobject_del(b->kobj);
 	kobject_put(b->kobj);
 	kfree(b);
 	per_cpu(threshold_banks, cpu)[bank] = NULL;
@@ -645,14 +646,11 @@ static void threshold_remove_device(unsigned int cpu)
 }
 
 /* get notified when a cpu comes on/off */
-static int __cpuinit threshold_cpu_callback(struct notifier_block *nfb,
-					    unsigned long action, void *hcpu)
+static void __cpuinit amd_64_threshold_cpu_callback(unsigned long action,
+						     unsigned int cpu)
 {
-	/* cpu was unsigned int to begin with */
-	unsigned int cpu = (unsigned long)hcpu;
-
 	if (cpu >= NR_CPUS)
-		goto out;
+		return;
 
 	switch (action) {
 	case CPU_ONLINE:
@@ -666,13 +664,7 @@ static int __cpuinit threshold_cpu_callback(struct notifier_block *nfb,
 	default:
 		break;
 	}
-      out:
-	return NOTIFY_OK;
 }
-
-static struct notifier_block threshold_cpu_notifier __cpuinitdata = {
-	.notifier_call = threshold_cpu_callback,
-};
 
 static __init int threshold_init_device(void)
 {
@@ -684,7 +676,7 @@ static __init int threshold_init_device(void)
 		if (err)
 			return err;
 	}
-	register_hotcpu_notifier(&threshold_cpu_notifier);
+	threshold_cpu_callback = amd_64_threshold_cpu_callback;
 	return 0;
 }
 

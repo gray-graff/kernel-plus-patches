@@ -21,6 +21,7 @@
 #include <linux/device.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/smp_lock.h>
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
@@ -241,7 +242,7 @@ static void input_handle_event(struct input_dev *dev,
 		break;
 	}
 
-	if (type != EV_SYN)
+	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
 		dev->sync = 0;
 
 	if ((disposition & INPUT_PASS_TO_DEVICE) && dev->event)
@@ -898,30 +899,26 @@ static int __init input_proc_init(void)
 {
 	struct proc_dir_entry *entry;
 
-	proc_bus_input_dir = proc_mkdir("input", proc_bus);
+	proc_bus_input_dir = proc_mkdir("bus/input", NULL);
 	if (!proc_bus_input_dir)
 		return -ENOMEM;
 
 	proc_bus_input_dir->owner = THIS_MODULE;
 
-	entry = create_proc_entry("devices", 0, proc_bus_input_dir);
+	entry = proc_create("devices", 0, proc_bus_input_dir,
+			    &input_devices_fileops);
 	if (!entry)
 		goto fail1;
 
-	entry->owner = THIS_MODULE;
-	entry->proc_fops = &input_devices_fileops;
-
-	entry = create_proc_entry("handlers", 0, proc_bus_input_dir);
+	entry = proc_create("handlers", 0, proc_bus_input_dir,
+			    &input_handlers_fileops);
 	if (!entry)
 		goto fail2;
-
-	entry->owner = THIS_MODULE;
-	entry->proc_fops = &input_handlers_fileops;
 
 	return 0;
 
  fail2:	remove_proc_entry("devices", proc_bus_input_dir);
- fail1: remove_proc_entry("input", proc_bus);
+ fail1: remove_proc_entry("bus/input", NULL);
 	return -ENOMEM;
 }
 
@@ -929,7 +926,7 @@ static void input_proc_exit(void)
 {
 	remove_proc_entry("devices", proc_bus_input_dir);
 	remove_proc_entry("handlers", proc_bus_input_dir);
-	remove_proc_entry("input", proc_bus);
+	remove_proc_entry("bus/input", NULL);
 }
 
 #else /* !CONFIG_PROC_FS */
@@ -1592,13 +1589,17 @@ EXPORT_SYMBOL(input_unregister_handle);
 
 static int input_open_file(struct inode *inode, struct file *file)
 {
-	struct input_handler *handler = input_table[iminor(inode) >> 5];
+	struct input_handler *handler;
 	const struct file_operations *old_fops, *new_fops = NULL;
 	int err;
 
+	lock_kernel();
 	/* No load-on-demand here? */
-	if (!handler || !(new_fops = fops_get(handler->fops)))
-		return -ENODEV;
+	handler = input_table[iminor(inode) >> 5];
+	if (!handler || !(new_fops = fops_get(handler->fops))) {
+		err = -ENODEV;
+		goto out;
+	}
 
 	/*
 	 * That's _really_ odd. Usually NULL ->open means "nothing special",
@@ -1606,7 +1607,8 @@ static int input_open_file(struct inode *inode, struct file *file)
 	 */
 	if (!new_fops->open) {
 		fops_put(new_fops);
-		return -ENODEV;
+		err = -ENODEV;
+		goto out;
 	}
 	old_fops = file->f_op;
 	file->f_op = new_fops;
@@ -1618,6 +1620,8 @@ static int input_open_file(struct inode *inode, struct file *file)
 		file->f_op = fops_get(old_fops);
 	}
 	fops_put(old_fops);
+out:
+	unlock_kernel();
 	return err;
 }
 

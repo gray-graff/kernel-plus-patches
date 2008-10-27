@@ -67,6 +67,8 @@
 #include <linux/ide.h>
 #include <linux/init.h>
 
+#define DRV_NAME "it821x"
+
 struct it821x_dev
 {
 	unsigned int smart:1,		/* Are we in smart raid mode */
@@ -418,7 +420,7 @@ static void it821x_set_dma_mode(ide_drive_t *drive, const u8 speed)
 }
 
 /**
- *	ata66_it821x	-	check for 80 pin cable
+ *	it821x_cable_detect	-	cable detection
  *	@hwif: interface to check
  *
  *	Check for the presence of an ATA66 capable cable on the
@@ -426,7 +428,7 @@ static void it821x_set_dma_mode(ide_drive_t *drive, const u8 speed)
  *	the needed logic onboard.
  */
 
-static u8 __devinit ata66_it821x(ide_hwif_t *hwif)
+static u8 it821x_cable_detect(ide_hwif_t *hwif)
 {
 	/* The reference driver also only does disk side */
 	return ATA_CBL_PATA80;
@@ -441,7 +443,7 @@ static u8 __devinit ata66_it821x(ide_hwif_t *hwif)
  *	final tuning that is needed, or fixups to work around bugs.
  */
 
-static void __devinit it821x_quirkproc(ide_drive_t *drive)
+static void it821x_quirkproc(ide_drive_t *drive)
 {
 	struct it821x_dev *itdev = ide_get_hwifdata(drive->hwif);
 	struct hd_driveid *id = drive->id;
@@ -511,6 +513,17 @@ static void __devinit it821x_quirkproc(ide_drive_t *drive)
 
 }
 
+static struct ide_dma_ops it821x_pass_through_dma_ops = {
+	.dma_host_set		= ide_dma_host_set,
+	.dma_setup		= ide_dma_setup,
+	.dma_exec_cmd		= ide_dma_exec_cmd,
+	.dma_start		= it821x_dma_start,
+	.dma_end		= it821x_dma_end,
+	.dma_test_irq		= ide_dma_test_irq,
+	.dma_timeout		= ide_dma_timeout,
+	.dma_lost_irq		= ide_dma_lost_irq,
+};
+
 /**
  *	init_hwif_it821x	-	set up hwif structs
  *	@hwif: interface to set up
@@ -523,15 +536,10 @@ static void __devinit it821x_quirkproc(ide_drive_t *drive)
 static void __devinit init_hwif_it821x(ide_hwif_t *hwif)
 {
 	struct pci_dev *dev = to_pci_dev(hwif->dev);
-	struct it821x_dev *idev = kzalloc(sizeof(struct it821x_dev), GFP_KERNEL);
+	struct ide_host *host = pci_get_drvdata(dev);
+	struct it821x_dev *itdevs = host->host_priv;
+	struct it821x_dev *idev = itdevs + hwif->channel;
 	u8 conf;
-
-	hwif->quirkproc = &it821x_quirkproc;
-
-	if (idev == NULL) {
-		printk(KERN_ERR "it821x: out of memory, falling back to legacy behaviour.\n");
-		return;
-	}
 
 	ide_set_hwifdata(hwif, idev);
 
@@ -563,20 +571,15 @@ static void __devinit init_hwif_it821x(ide_hwif_t *hwif)
 		idev->timing10 = 1;
 		hwif->host_flags |= IDE_HFLAG_NO_ATAPI_DMA;
 		if (idev->smart == 0)
-			printk(KERN_WARNING "it821x: Revision 0x10, workarounds activated.\n");
+			printk(KERN_WARNING DRV_NAME " %s: revision 0x10, "
+				"workarounds activated\n", pci_name(dev));
 	}
 
 	if (idev->smart == 0) {
-		hwif->set_pio_mode = &it821x_set_pio_mode;
-		hwif->set_dma_mode = &it821x_set_dma_mode;
-
 		/* MWDMA/PIO clock switching for pass through mode */
-		hwif->dma_start = &it821x_dma_start;
-		hwif->ide_dma_end = &it821x_dma_end;
+		hwif->dma_ops = &it821x_pass_through_dma_ops;
 	} else
 		hwif->host_flags |= IDE_HFLAG_NO_SET_MODE;
-
-	hwif->cable_detect = ata66_it821x;
 
 	if (hwif->dma_base == 0)
 		return;
@@ -602,33 +605,37 @@ static void __devinit it8212_disable_raid(struct pci_dev *dev)
 	pci_write_config_byte(dev, PCI_LATENCY_TIMER, 0x20);
 }
 
-static unsigned int __devinit init_chipset_it821x(struct pci_dev *dev, const char *name)
+static unsigned int __devinit init_chipset_it821x(struct pci_dev *dev)
 {
 	u8 conf;
 	static char *mode[2] = { "pass through", "smart" };
 
 	/* Force the card into bypass mode if so requested */
 	if (it8212_noraid) {
-		printk(KERN_INFO "it8212: forcing bypass mode.\n");
+		printk(KERN_INFO DRV_NAME " %s: forcing bypass mode\n",
+			pci_name(dev));
 		it8212_disable_raid(dev);
 	}
 	pci_read_config_byte(dev, 0x50, &conf);
-	printk(KERN_INFO "it821x: controller in %s mode.\n", mode[conf & 1]);
+	printk(KERN_INFO DRV_NAME " %s: controller in %s mode\n",
+		pci_name(dev), mode[conf & 1]);
 	return 0;
 }
 
+static const struct ide_port_ops it821x_port_ops = {
+	/* it821x_set_{pio,dma}_mode() are only used in pass-through mode */
+	.set_pio_mode		= it821x_set_pio_mode,
+	.set_dma_mode		= it821x_set_dma_mode,
+	.quirkproc		= it821x_quirkproc,
+	.cable_detect		= it821x_cable_detect,
+};
 
-#define DECLARE_ITE_DEV(name_str)			\
-	{						\
-		.name		= name_str,		\
-		.init_chipset	= init_chipset_it821x,	\
-		.init_hwif	= init_hwif_it821x,	\
-		.host_flags	= IDE_HFLAG_BOOTABLE,	\
-		.pio_mask	= ATA_PIO4,		\
-	}
-
-static const struct ide_port_info it821x_chipsets[] __devinitdata = {
-	/* 0 */ DECLARE_ITE_DEV("IT8212"),
+static const struct ide_port_info it821x_chipset __devinitdata = {
+	.name		= DRV_NAME,
+	.init_chipset	= init_chipset_it821x,
+	.init_hwif	= init_hwif_it821x,
+	.port_ops	= &it821x_port_ops,
+	.pio_mask	= ATA_PIO4,
 };
 
 /**
@@ -642,7 +649,29 @@ static const struct ide_port_info it821x_chipsets[] __devinitdata = {
 
 static int __devinit it821x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	return ide_setup_pci_device(dev, &it821x_chipsets[id->driver_data]);
+	struct it821x_dev *itdevs;
+	int rc;
+
+	itdevs = kzalloc(2 * sizeof(*itdevs), GFP_KERNEL);
+	if (itdevs == NULL) {
+		printk(KERN_ERR DRV_NAME " %s: out of memory\n", pci_name(dev));
+		return -ENOMEM;
+	}
+
+	rc = ide_pci_init_one(dev, &it821x_chipset, itdevs);
+	if (rc)
+		kfree(itdevs);
+
+	return rc;
+}
+
+static void __devexit it821x_remove(struct pci_dev *dev)
+{
+	struct ide_host *host = pci_get_drvdata(dev);
+	struct it821x_dev *itdevs = host->host_priv;
+
+	ide_pci_remove(dev);
+	kfree(itdevs);
 }
 
 static const struct pci_device_id it821x_pci_tbl[] = {
@@ -657,6 +686,7 @@ static struct pci_driver driver = {
 	.name		= "ITE821x IDE",
 	.id_table	= it821x_pci_tbl,
 	.probe		= it821x_init_one,
+	.remove		= __devexit_p(it821x_remove),
 };
 
 static int __init it821x_ide_init(void)
@@ -664,7 +694,13 @@ static int __init it821x_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit it821x_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(it821x_ide_init);
+module_exit(it821x_ide_exit);
 
 module_param_named(noraid, it8212_noraid, int, S_IRUGO);
 MODULE_PARM_DESC(noraid, "Force card into bypass mode");

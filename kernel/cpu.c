@@ -15,6 +15,28 @@
 #include <linux/stop_machine.h>
 #include <linux/mutex.h>
 
+/*
+ * Represents all cpu's present in the system
+ * In systems capable of hotplug, this map could dynamically grow
+ * as new cpu's are detected in the system via any platform specific
+ * method, such as ACPI for e.g.
+ */
+cpumask_t cpu_present_map __read_mostly;
+EXPORT_SYMBOL(cpu_present_map);
+
+#ifndef CONFIG_SMP
+
+/*
+ * Represents all cpu's that are currently online.
+ */
+cpumask_t cpu_online_map __read_mostly = CPU_MASK_ALL;
+EXPORT_SYMBOL(cpu_online_map);
+
+cpumask_t cpu_possible_map __read_mostly = CPU_MASK_ALL;
+EXPORT_SYMBOL(cpu_possible_map);
+
+#else /* CONFIG_SMP */
+
 /* Serializes the updates to cpu_online_map, cpu_present_map */
 static DEFINE_MUTEX(cpu_add_remove_lock);
 
@@ -33,18 +55,16 @@ static struct {
 	 * an ongoing cpu hotplug operation.
 	 */
 	int refcount;
-	wait_queue_head_t writer_queue;
 } cpu_hotplug;
-
-#define writer_exists() (cpu_hotplug.active_writer != NULL)
 
 void __init cpu_hotplug_init(void)
 {
 	cpu_hotplug.active_writer = NULL;
 	mutex_init(&cpu_hotplug.lock);
 	cpu_hotplug.refcount = 0;
-	init_waitqueue_head(&cpu_hotplug.writer_queue);
 }
+
+cpumask_t cpu_active_map;
 
 #ifdef CONFIG_HOTPLUG_CPU
 
@@ -65,11 +85,8 @@ void put_online_cpus(void)
 	if (cpu_hotplug.active_writer == current)
 		return;
 	mutex_lock(&cpu_hotplug.lock);
-	cpu_hotplug.refcount--;
-
-	if (unlikely(writer_exists()) && !cpu_hotplug.refcount)
-		wake_up(&cpu_hotplug.writer_queue);
-
+	if (!--cpu_hotplug.refcount && unlikely(cpu_hotplug.active_writer))
+		wake_up_process(cpu_hotplug.active_writer);
 	mutex_unlock(&cpu_hotplug.lock);
 
 }
@@ -98,8 +115,8 @@ void cpu_maps_update_done(void)
  * Note that during a cpu-hotplug operation, the new readers, if any,
  * will be blocked by the cpu_hotplug.lock
  *
- * Since cpu_maps_update_begin is always called after invoking
- * cpu_maps_update_begin, we can be sure that only one writer is active.
+ * Since cpu_hotplug_begin() is always called after invoking
+ * cpu_maps_update_begin(), we can be sure that only one writer is active.
  *
  * Note that theoretically, there is a possibility of a livelock:
  * - Refcount goes to zero, last reader wakes up the sleeping
@@ -115,19 +132,16 @@ void cpu_maps_update_done(void)
  */
 static void cpu_hotplug_begin(void)
 {
-	DECLARE_WAITQUEUE(wait, current);
-
-	mutex_lock(&cpu_hotplug.lock);
-
 	cpu_hotplug.active_writer = current;
-	add_wait_queue_exclusive(&cpu_hotplug.writer_queue, &wait);
-	while (cpu_hotplug.refcount) {
-		set_current_state(TASK_UNINTERRUPTIBLE);
+
+	for (;;) {
+		mutex_lock(&cpu_hotplug.lock);
+		if (likely(!cpu_hotplug.refcount))
+			break;
+		__set_current_state(TASK_UNINTERRUPTIBLE);
 		mutex_unlock(&cpu_hotplug.lock);
 		schedule();
-		mutex_lock(&cpu_hotplug.lock);
 	}
-	remove_wait_queue_locked(&cpu_hotplug.writer_queue, &wait);
 }
 
 static void cpu_hotplug_done(void)
@@ -136,7 +150,7 @@ static void cpu_hotplug_done(void)
 	mutex_unlock(&cpu_hotplug.lock);
 }
 /* Need to know about CPUs going up/down? */
-int __cpuinit register_cpu_notifier(struct notifier_block *nb)
+int __ref register_cpu_notifier(struct notifier_block *nb)
 {
 	int ret;
 	cpu_maps_update_begin();
@@ -149,7 +163,7 @@ int __cpuinit register_cpu_notifier(struct notifier_block *nb)
 
 EXPORT_SYMBOL(register_cpu_notifier);
 
-void unregister_cpu_notifier(struct notifier_block *nb)
+void __ref unregister_cpu_notifier(struct notifier_block *nb)
 {
 	cpu_maps_update_begin();
 	raw_notifier_chain_unregister(&cpu_chain, nb);
@@ -180,7 +194,7 @@ struct take_cpu_down_param {
 };
 
 /* Take this CPU down. */
-static int take_cpu_down(void *_param)
+static int __ref take_cpu_down(void *_param)
 {
 	struct take_cpu_down_param *param = _param;
 	int err;
@@ -199,10 +213,9 @@ static int take_cpu_down(void *_param)
 }
 
 /* Requires cpu_add_remove_lock to be held */
-static int _cpu_down(unsigned int cpu, int tasks_frozen)
+static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 {
 	int err, nr_calls = 0;
-	struct task_struct *p;
 	cpumask_t old_allowed, tmp;
 	void *hcpu = (void *)(long)cpu;
 	unsigned long mod = tasks_frozen ? CPU_TASKS_FROZEN : 0;
@@ -225,31 +238,28 @@ static int _cpu_down(unsigned int cpu, int tasks_frozen)
 		__raw_notifier_call_chain(&cpu_chain, CPU_DOWN_FAILED | mod,
 					  hcpu, nr_calls, NULL);
 		printk("%s: attempt to take down CPU %u failed\n",
-				__FUNCTION__, cpu);
+				__func__, cpu);
 		err = -EINVAL;
 		goto out_release;
 	}
 
 	/* Ensure that we are not runnable on dying cpu */
 	old_allowed = current->cpus_allowed;
-	tmp = CPU_MASK_ALL;
+	cpus_setall(tmp);
 	cpu_clear(cpu, tmp);
-	set_cpus_allowed(current, tmp);
+	set_cpus_allowed_ptr(current, &tmp);
+	tmp = cpumask_of_cpu(cpu);
 
-	p = __stop_machine_run(take_cpu_down, &tcd_param, cpu);
-
-	if (IS_ERR(p) || cpu_online(cpu)) {
+	err = __stop_machine(take_cpu_down, &tcd_param, &tmp);
+	if (err) {
 		/* CPU didn't die: tell everyone.  Can't complain. */
 		if (raw_notifier_call_chain(&cpu_chain, CPU_DOWN_FAILED | mod,
 					    hcpu) == NOTIFY_BAD)
 			BUG();
 
-		if (IS_ERR(p)) {
-			err = PTR_ERR(p);
-			goto out_allowed;
-		}
-		goto out_thread;
+		goto out_allowed;
 	}
+	BUG_ON(cpu_online(cpu));
 
 	/* Wait for it to sleep (leaving idle task). */
 	while (!idle_cpu(cpu))
@@ -265,28 +275,51 @@ static int _cpu_down(unsigned int cpu, int tasks_frozen)
 
 	check_for_tasks(cpu);
 
-out_thread:
-	err = kthread_stop(p);
 out_allowed:
-	set_cpus_allowed(current, old_allowed);
+	set_cpus_allowed_ptr(current, &old_allowed);
 out_release:
 	cpu_hotplug_done();
+	if (!err) {
+		if (raw_notifier_call_chain(&cpu_chain, CPU_POST_DEAD | mod,
+					    hcpu) == NOTIFY_BAD)
+			BUG();
+	}
 	return err;
 }
 
-int cpu_down(unsigned int cpu)
+int __ref cpu_down(unsigned int cpu)
 {
 	int err = 0;
 
 	cpu_maps_update_begin();
-	if (cpu_hotplug_disabled)
-		err = -EBUSY;
-	else
-		err = _cpu_down(cpu, 0);
 
+	if (cpu_hotplug_disabled) {
+		err = -EBUSY;
+		goto out;
+	}
+
+	cpu_clear(cpu, cpu_active_map);
+
+	/*
+	 * Make sure the all cpus did the reschedule and are not
+	 * using stale version of the cpu_active_map.
+	 * This is not strictly necessary becuase stop_machine()
+	 * that we run down the line already provides the required
+	 * synchronization. But it's really a side effect and we do not
+	 * want to depend on the innards of the stop_machine here.
+	 */
+	synchronize_sched();
+
+	err = _cpu_down(cpu, 0);
+
+	if (cpu_online(cpu))
+		cpu_set(cpu, cpu_active_map);
+
+out:
 	cpu_maps_update_done();
 	return err;
 }
+EXPORT_SYMBOL(cpu_down);
 #endif /*CONFIG_HOTPLUG_CPU*/
 
 /* Requires cpu_add_remove_lock to be held */
@@ -305,7 +338,7 @@ static int __cpuinit _cpu_up(unsigned int cpu, int tasks_frozen)
 	if (ret == NOTIFY_BAD) {
 		nr_calls--;
 		printk("%s: attempt to bring up CPU %u failed\n",
-				__FUNCTION__, cpu);
+				__func__, cpu);
 		ret = -EINVAL;
 		goto out_notify;
 	}
@@ -315,6 +348,8 @@ static int __cpuinit _cpu_up(unsigned int cpu, int tasks_frozen)
 	if (ret != 0)
 		goto out_notify;
 	BUG_ON(!cpu_online(cpu));
+
+	cpu_set(cpu, cpu_active_map);
 
 	/* Now call notifier in preparation. */
 	raw_notifier_call_chain(&cpu_chain, CPU_ONLINE | mod, hcpu);
@@ -334,7 +369,7 @@ int __cpuinit cpu_up(unsigned int cpu)
 	if (!cpu_isset(cpu, cpu_possible_map)) {
 		printk(KERN_ERR "can't online cpu %d because it is not "
 			"configured as may-hotadd at boot time\n", cpu);
-#if defined(CONFIG_IA64) || defined(CONFIG_X86_64) || defined(CONFIG_S390)
+#if defined(CONFIG_IA64) || defined(CONFIG_X86_64)
 		printk(KERN_ERR "please check additional_cpus= boot "
 				"parameter\n");
 #endif
@@ -342,11 +377,15 @@ int __cpuinit cpu_up(unsigned int cpu)
 	}
 
 	cpu_maps_update_begin();
-	if (cpu_hotplug_disabled)
-		err = -EBUSY;
-	else
-		err = _cpu_up(cpu, 0);
 
+	if (cpu_hotplug_disabled) {
+		err = -EBUSY;
+		goto out;
+	}
+
+	err = _cpu_up(cpu, 0);
+
+out:
 	cpu_maps_update_done();
 	return err;
 }
@@ -400,7 +439,7 @@ void __ref enable_nonboot_cpus(void)
 		goto out;
 
 	printk("Enabling non-boot CPUs ...\n");
-	for_each_cpu_mask(cpu, frozen_cpus) {
+	for_each_cpu_mask_nr(cpu, frozen_cpus) {
 		error = _cpu_up(cpu, 1);
 		if (!error) {
 			printk("CPU%d is up\n", cpu);
@@ -413,3 +452,30 @@ out:
 	cpu_maps_update_done();
 }
 #endif /* CONFIG_PM_SLEEP_SMP */
+
+#endif /* CONFIG_SMP */
+
+/*
+ * cpu_bit_bitmap[] is a special, "compressed" data structure that
+ * represents all NR_CPUS bits binary values of 1<<nr.
+ *
+ * It is used by cpumask_of_cpu() to get a constant address to a CPU
+ * mask value that has a single bit set only.
+ */
+
+/* cpu_bit_bitmap[0] is empty - so we can back into it */
+#define MASK_DECLARE_1(x)	[x+1][0] = 1UL << (x)
+#define MASK_DECLARE_2(x)	MASK_DECLARE_1(x), MASK_DECLARE_1(x+1)
+#define MASK_DECLARE_4(x)	MASK_DECLARE_2(x), MASK_DECLARE_2(x+2)
+#define MASK_DECLARE_8(x)	MASK_DECLARE_4(x), MASK_DECLARE_4(x+4)
+
+const unsigned long cpu_bit_bitmap[BITS_PER_LONG+1][BITS_TO_LONGS(NR_CPUS)] = {
+
+	MASK_DECLARE_8(0),	MASK_DECLARE_8(8),
+	MASK_DECLARE_8(16),	MASK_DECLARE_8(24),
+#if BITS_PER_LONG > 32
+	MASK_DECLARE_8(32),	MASK_DECLARE_8(40),
+	MASK_DECLARE_8(48),	MASK_DECLARE_8(56),
+#endif
+};
+EXPORT_SYMBOL_GPL(cpu_bit_bitmap);

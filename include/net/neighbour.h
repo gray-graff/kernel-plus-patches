@@ -38,7 +38,9 @@ struct neighbour;
 
 struct neigh_parms
 {
+#ifdef CONFIG_NET_NS
 	struct net *net;
+#endif
 	struct net_device *dev;
 	struct neigh_parms *next;
 	int	(*neigh_setup)(struct neighbour *);
@@ -73,7 +75,7 @@ struct neigh_statistics
 	unsigned long destroys;		/* number of destroyed neighs */
 	unsigned long hash_grows;	/* number of hash resizes */
 
-	unsigned long res_failed;	/* nomber of failed resolutions */
+	unsigned long res_failed;	/* number of failed resolutions */
 
 	unsigned long lookups;		/* number of lookups */
 	unsigned long hits;		/* number of hits (among lookups) */
@@ -83,6 +85,8 @@ struct neigh_statistics
 
 	unsigned long periodic_gc_runs;	/* number of periodic GC runs */
 	unsigned long forced_gc_runs;	/* number of forced GC runs */
+
+	unsigned long unres_discards;	/* number of unresolved drops */
 };
 
 #define NEIGH_CACHE_STAT_INC(tbl, field)				\
@@ -131,7 +135,9 @@ struct neigh_ops
 struct pneigh_entry
 {
 	struct pneigh_entry	*next;
+#ifdef CONFIG_NET_NS
 	struct net		*net;
+#endif
 	struct net_device	*dev;
 	u8			flags;
 	u8			key[0];
@@ -213,6 +219,17 @@ extern struct neighbour 	*neigh_event_ns(struct neigh_table *tbl,
 
 extern struct neigh_parms	*neigh_parms_alloc(struct net_device *dev, struct neigh_table *tbl);
 extern void			neigh_parms_release(struct neigh_table *tbl, struct neigh_parms *parms);
+
+static inline
+struct net			*neigh_parms_net(const struct neigh_parms *parms)
+{
+#ifdef CONFIG_NET_NS
+	return parms->net;
+#else
+	return &init_net;
+#endif
+}
+
 extern unsigned long		neigh_rand_reach_time(unsigned long base);
 
 extern void			pneigh_enqueue(struct neigh_table *tbl, struct neigh_parms *p,
@@ -223,6 +240,16 @@ extern struct pneigh_entry	*__pneigh_lookup(struct neigh_table *tbl,
 						 const void *key,
 						 struct net_device *dev);
 extern int			pneigh_delete(struct neigh_table *tbl, struct net *net, const void *key, struct net_device *dev);
+
+static inline
+struct net			*pneigh_net(const struct pneigh_entry *pneigh)
+{
+#ifdef CONFIG_NET_NS
+	return pneigh->net;
+#else
+	return &init_net;
+#endif
+}
 
 extern void neigh_app_ns(struct neighbour *n);
 extern void neigh_for_each(struct neigh_table *tbl, void (*cb)(struct neighbour *, void *), void *cookie);
@@ -287,12 +314,6 @@ static inline void neigh_confirm(struct neighbour *neigh)
 	if (neigh)
 		neigh->confirmed = jiffies;
 }
-
-static inline int neigh_is_connected(struct neighbour *neigh)
-{
-	return neigh->nud_state&NUD_CONNECTED;
-}
-
 
 static inline int neigh_event_send(struct neighbour *neigh, struct sk_buff *skb)
 {

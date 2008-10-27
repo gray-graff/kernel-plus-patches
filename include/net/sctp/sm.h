@@ -227,6 +227,9 @@ struct sctp_chunk *sctp_make_abort_violation(const struct sctp_association *,
 				   const struct sctp_chunk *,
 				   const __u8 *,
 				   const size_t );
+struct sctp_chunk *sctp_make_violation_paramlen(const struct sctp_association *,
+				   const struct sctp_chunk *,
+				   struct sctp_paramhdr *);
 struct sctp_chunk *sctp_make_heartbeat(const struct sctp_association *,
 				  const struct sctp_transport *,
 				  const void *payload,
@@ -383,14 +386,6 @@ enum {
 static inline int ADDIP_SERIAL_gte(__u16 s, __u16 t)
 {
 	return (((s) == (t)) || (((t) - (s)) & ADDIP_SERIAL_SIGN_BIT));
-}
-
-
-/* Run sctp_add_cmd() generating a BUG() if there is a failure.  */
-static inline void sctp_add_cmd_sf(sctp_cmd_seq_t *seq, sctp_verb_t verb, sctp_arg_t obj)
-{
-	if (unlikely(!sctp_add_cmd(seq, verb, obj)))
-		BUG();
 }
 
 /* Check VTAG of the packet matches the sender's own tag. */

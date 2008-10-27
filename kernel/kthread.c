@@ -13,7 +13,6 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <asm/semaphore.h>
 
 #define KTHREAD_NICE_LEVEL (-5)
 
@@ -99,7 +98,7 @@ static void create_kthread(struct kthread_create_info *create)
 		struct sched_param param = { .sched_priority = 0 };
 		wait_for_completion(&create->started);
 		read_lock(&tasklist_lock);
-		create->result = find_task_by_pid(pid);
+		create->result = find_task_by_pid_ns(pid, &init_pid_ns);
 		read_unlock(&tasklist_lock);
 		/*
 		 * root may have changed our (kthreadd's) priority or CPU mask.
@@ -107,7 +106,7 @@ static void create_kthread(struct kthread_create_info *create)
 		 */
 		sched_setscheduler(create->result, SCHED_NORMAL, &param);
 		set_user_nice(create->result, KTHREAD_NICE_LEVEL);
-		set_cpus_allowed(create->result, CPU_MASK_ALL);
+		set_cpus_allowed_ptr(create->result, CPU_MASK_ALL_PTR);
 	}
 	complete(&create->done);
 }
@@ -145,9 +144,9 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 
 	spin_lock(&kthread_create_lock);
 	list_add_tail(&create.list, &kthread_create_list);
-	wake_up_process(kthreadd_task);
 	spin_unlock(&kthread_create_lock);
 
+	wake_up_process(kthreadd_task);
 	wait_for_completion(&create.done);
 
 	if (!IS_ERR(create.result)) {
@@ -177,9 +176,11 @@ void kthread_bind(struct task_struct *k, unsigned int cpu)
 		return;
 	}
 	/* Must have done schedule() in kthread() before we set_task_cpu */
-	wait_task_inactive(k);
+	wait_task_inactive(k, 0);
 	set_task_cpu(k, cpu);
 	k->cpus_allowed = cpumask_of_cpu(cpu);
+	k->rt.nr_cpus_allowed = 1;
+	k->flags |= PF_THREAD_BOUND;
 }
 EXPORT_SYMBOL(kthread_bind);
 
@@ -232,9 +233,9 @@ int kthreadd(void *unused)
 	set_task_comm(tsk, "kthreadd");
 	ignore_signals(tsk);
 	set_user_nice(tsk, KTHREAD_NICE_LEVEL);
-	set_cpus_allowed(tsk, CPU_MASK_ALL);
+	set_cpus_allowed_ptr(tsk, CPU_MASK_ALL_PTR);
 
-	current->flags |= PF_NOFREEZE;
+	current->flags |= PF_NOFREEZE | PF_FREEZER_NOSIG;
 
 	for (;;) {
 		set_current_state(TASK_INTERRUPTIBLE);

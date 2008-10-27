@@ -13,6 +13,7 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/cpu.h>
+#include <linux/vmstat.h>
 #include <linux/sched.h>
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
@@ -26,7 +27,7 @@ static void sum_vm_events(unsigned long *ret, cpumask_t *cpumask)
 
 	memset(ret, 0, NR_VM_EVENT_ITEMS * sizeof(unsigned long));
 
-	for_each_cpu_mask(cpu, *cpumask) {
+	for_each_cpu_mask_nr(cpu, *cpumask) {
 		struct vm_event_state *this = &per_cpu(vm_event_states, cpu);
 
 		for (i = 0; i < NR_VM_EVENT_ITEMS; i++)
@@ -41,7 +42,9 @@ static void sum_vm_events(unsigned long *ret, cpumask_t *cpumask)
 */
 void all_vm_events(unsigned long *ret)
 {
+	get_online_cpus();
 	sum_vm_events(ret, &cpu_online_map);
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(all_vm_events);
 
@@ -322,6 +325,7 @@ void refresh_cpu_vm_stats(int cpu)
 				p->expire = 3;
 #endif
 			}
+		cond_resched();
 #ifdef CONFIG_NUMA
 		/*
 		 * Deal with draining the remote pageset of this
@@ -364,13 +368,13 @@ void refresh_cpu_vm_stats(int cpu)
  *
  * Must be called with interrupts disabled.
  */
-void zone_statistics(struct zonelist *zonelist, struct zone *z)
+void zone_statistics(struct zone *preferred_zone, struct zone *z)
 {
-	if (z->zone_pgdat == zonelist->zones[0]->zone_pgdat) {
+	if (z->zone_pgdat == preferred_zone->zone_pgdat) {
 		__inc_zone_state(z, NUMA_HIT);
 	} else {
 		__inc_zone_state(z, NUMA_MISS);
-		__inc_zone_state(zonelist->zones[0], NUMA_FOREIGN);
+		__inc_zone_state(preferred_zone, NUMA_FOREIGN);
 	}
 	if (z->node == numa_node_id())
 		__inc_zone_state(z, NUMA_LOCAL);
@@ -512,9 +516,26 @@ static void pagetypeinfo_showblockcount_print(struct seq_file *m,
 			continue;
 
 		page = pfn_to_page(pfn);
+#ifdef CONFIG_ARCH_FLATMEM_HAS_HOLES
+		/*
+		 * Ordinarily, memory holes in flatmem still have a valid
+		 * memmap for the PFN range. However, an architecture for
+		 * embedded systems (e.g. ARM) can free up the memmap backing
+		 * holes to save memory on the assumption the memmap is
+		 * never used. The page_zone linkages are then broken even
+		 * though pfn_valid() returns true. Skip the page if the
+		 * linkages are broken. Even if this test passed, the impact
+		 * is that the counters for the movable type are off but
+		 * fragmentation monitoring is likely meaningless on small
+		 * systems.
+		 */
+		if (page_zone(page) != zone)
+			continue;
+#endif
 		mtype = get_pageblock_migratetype(page);
 
-		count[mtype]++;
+		if (mtype < MIGRATE_TYPES)
+			count[mtype]++;
 	}
 
 	/* Print counts */
@@ -546,6 +567,10 @@ static int pagetypeinfo_showblockcount(struct seq_file *m, void *arg)
 static int pagetypeinfo_show(struct seq_file *m, void *arg)
 {
 	pg_data_t *pgdat = (pg_data_t *)arg;
+
+	/* check memoryless node */
+	if (!node_state(pgdat->node_id, N_HIGH_MEMORY))
+		return 0;
 
 	seq_printf(m, "Page block order: %d\n", pageblock_order);
 	seq_printf(m, "Pages per block:  %lu\n", pageblock_nr_pages);
@@ -607,6 +632,7 @@ static const char * const vmstat_text[] = {
 	"nr_unstable",
 	"nr_bounce",
 	"nr_vmscan_write",
+	"nr_writeback_temp",
 
 #ifdef CONFIG_NUMA
 	"numa_hit",
@@ -645,6 +671,10 @@ static const char * const vmstat_text[] = {
 	"allocstall",
 
 	"pgrotated",
+#ifdef CONFIG_HUGETLB_PAGE
+	"htlb_buddy_alloc_success",
+	"htlb_buddy_alloc_fail",
+#endif
 #endif
 };
 

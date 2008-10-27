@@ -19,6 +19,7 @@
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/i2c-addr.h>
+#include <media/tuner.h>
 
 /* ---------------------------------------------------------- */
 /* exported by bttv-cards.c                                   */
@@ -173,6 +174,8 @@
 #define BTTV_BOARD_VOODOOTV_200		   0x93
 #define BTTV_BOARD_DVICO_FUSIONHDTV_2	   0x94
 #define BTTV_BOARD_TYPHOON_TVTUNERPCI	   0x95
+#define BTTV_BOARD_GEOVISION_GV600	   0x96
+#define BTTV_BOARD_KOZUMI_KTV_01C          0x97
 
 
 /* more card-specific defines */
@@ -295,7 +298,6 @@ extern int bttv_write_gpio(unsigned int card,
 
 /* ---------------------------------------------------------- */
 /* sysfs/driver-moded based gpio access interface             */
-
 
 struct bttv_sub_device {
 	struct device    dev;

@@ -3,6 +3,10 @@
 # see Documentation/kbuild/kconfig-language.txt.
 #
 
+config SCHED_MC
+	def_bool y
+	depends on SMP
+
 config MMU
 	def_bool y
 
@@ -39,6 +43,9 @@ config GENERIC_HWEIGHT
 config GENERIC_TIME
 	def_bool y
 
+config GENERIC_CLOCKEVENTS
+	def_bool y
+
 config GENERIC_BUG
 	bool
 	depends on BUG
@@ -55,6 +62,10 @@ config GENERIC_LOCKBREAK
 	default y
 	depends on SMP && PREEMPT
 
+config PGSTE
+	bool
+	default y if KVM
+
 mainmenu "Linux Kernel Configuration"
 
 config S390
@@ -62,12 +73,15 @@ config S390
 	select HAVE_OPROFILE
 	select HAVE_KPROBES
 	select HAVE_KRETPROBES
+	select HAVE_KVM if 64BIT
 
 source "init/Kconfig"
 
 menu "Base setup"
 
 comment "Processor type and features"
+
+source "kernel/time/Kconfig"
 
 config 64BIT
 	bool "64 bit kernel"
@@ -132,6 +146,7 @@ config MATHEMU
 config COMPAT
 	bool "Kernel support for 31 bit emulation"
 	depends on 64BIT
+	select COMPAT_BINFMT_ELF
 	help
 	  Select this option if you want to enable your system kernel to
 	  handle system-calls from ELF binaries for 31 bit ESA.  This option
@@ -274,7 +289,7 @@ config WARN_STACK_SIZE
 	int "Maximum frame size considered safe (128-2048)"
 	range 128 2048
 	depends on WARN_STACK
-	default "256"
+	default "2048"
 	help
 	  This allows you to specify the maximum frame size a function may
 	  have without the compiler complaining about it.
@@ -285,6 +300,25 @@ config ARCH_POPULATES_NODE_MAP
 comment "Kernel preemption"
 
 source "kernel/Kconfig.preempt"
+
+config ARCH_SPARSEMEM_ENABLE
+	def_bool y
+	select SPARSEMEM_VMEMMAP_ENABLE
+	select SPARSEMEM_VMEMMAP
+	select SPARSEMEM_STATIC if !64BIT
+
+config ARCH_SPARSEMEM_DEFAULT
+	def_bool y
+
+config ARCH_SELECT_MEMORY_MODEL
+       def_bool y
+
+config ARCH_ENABLE_MEMORY_HOTPLUG
+	def_bool y
+	depends on SPARSEMEM
+
+config ARCH_ENABLE_MEMORY_HOTREMOVE
+	def_bool y
 
 source "mm/Kconfig"
 
@@ -301,10 +335,7 @@ config QDIO
 	tristate "QDIO support"
 	---help---
 	  This driver provides the Queued Direct I/O base support for
-	  IBM mainframes.
-
-	  For details please refer to the documentation provided by IBM at
-	  <http://www10.software.ibm.com/developerworks/opensource/linux390>
+	  IBM System z.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called qdio.
@@ -318,6 +349,22 @@ config QDIO_DEBUG
 	  Say Y here to get extended debugging output in
 	    /sys/kernel/debug/s390dbf/qdio...
 	  Warning: this option reduces the performance of the QDIO module.
+
+	  If unsure, say N.
+
+config CHSC_SCH
+	tristate "Support for CHSC subchannels"
+	help
+	  This driver allows usage of CHSC subchannels. A CHSC subchannel
+	  is usually present on LPAR only.
+	  The driver creates a device /dev/chsc, which may be used to
+	  obtain I/O configuration information about the machine and
+	  to issue asynchronous chsc commands (DANGEROUS).
+	  You will usually only want to use this interface on a special
+	  LPAR designated for system management.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called chsc_sch.
 
 	  If unsure, say N.
 
@@ -411,6 +458,13 @@ config CMM_IUCV
 	  Select this option to enable the special message interface to
 	  the cooperative memory management.
 
+config PAGE_STATES
+	bool "Unused page notification"
+	help
+	  This enables the notification of unused pages to the
+	  hypervisor. The ESSA instruction is used to do the states
+	  changes between a page that has content and the unused state.
+
 config VIRT_TIMER
 	bool "Virtual CPU timer support"
 	help
@@ -486,25 +540,6 @@ config APPLDATA_NET_SUM
 
 source kernel/Kconfig.hz
 
-config NO_IDLE_HZ
-	bool "No HZ timer ticks in idle"
-	help
-	  Switches the regular HZ timer off when the system is going idle.
-	  This helps z/VM to detect that the Linux system is idle. VM can
-	  then "swap-out" this guest which reduces memory usage. It also
-	  reduces the overhead of idle systems.
-
-	  The HZ timer can be switched on/off via /proc/sys/kernel/hz_timer.
-	  hz_timer=0 means HZ timer is disabled. hz_timer=1 means HZ
-	  timer is active.
-
-config NO_IDLE_HZ_INIT
-	bool "HZ timer in idle off by default"
-	depends on NO_IDLE_HZ
-	help
-	  The HZ timer is switched off in idle by default. That means the
-	  HZ timer is already disabled at boot time.
-
 config S390_HYPFS_FS
 	bool "s390 hypervisor file system support"
 	select SYS_HYPERVISOR
@@ -528,6 +563,14 @@ config ZFCPDUMP
 	  Select this option if you want to build an zfcpdump enabled kernel.
 	  Refer to <file:Documentation/s390/zfcpdump.txt> for more details on this.
 
+config S390_GUEST
+bool "s390 guest support (EXPERIMENTAL)"
+	depends on 64BIT && EXPERIMENTAL
+	select VIRTIO
+	select VIRTIO_RING
+	select VIRTIO_CONSOLE
+	help
+	  Select this option if you want to run the kernel under s390 linux
 endmenu
 
 source "net/Kconfig"
@@ -549,3 +592,5 @@ source "security/Kconfig"
 source "crypto/Kconfig"
 
 source "lib/Kconfig"
+
+source "arch/s390/kvm/Kconfig"

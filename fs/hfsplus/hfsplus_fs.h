@@ -11,6 +11,7 @@
 #define _LINUX_HFSPLUS_FS_H
 
 #include <linux/fs.h>
+#include <linux/mutex.h>
 #include <linux/buffer_head.h>
 #include "hfsplus_raw.h"
 
@@ -154,7 +155,7 @@ struct hfsplus_sb_info {
 
 
 struct hfsplus_inode_info {
-	struct semaphore extents_lock;
+	struct mutex extents_lock;
 	u32 clump_blocks, alloc_blocks;
 	sector_t fs_blocks;
 	/* Allocation extents from catalog record or volume header */
@@ -310,6 +311,10 @@ int hfsplus_create_cat(u32, struct inode *, struct qstr *, struct inode *);
 int hfsplus_delete_cat(u32, struct inode *, struct qstr *);
 int hfsplus_rename_cat(u32, struct inode *, struct qstr *,
 		       struct inode *, struct qstr *);
+
+/* dir.c */
+extern const struct inode_operations hfsplus_dir_inode_operations;
+extern const struct file_operations hfsplus_dir_operations;
 
 /* extents.c */
 int hfsplus_ext_cmp_key(const hfsplus_btree_key *, const hfsplus_btree_key *);

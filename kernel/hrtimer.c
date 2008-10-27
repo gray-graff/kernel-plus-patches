@@ -43,6 +43,7 @@
 #include <linux/tick.h>
 #include <linux/seq_file.h>
 #include <linux/err.h>
+#include <linux/debugobjects.h>
 
 #include <asm/uaccess.h>
 
@@ -150,15 +151,6 @@ static void hrtimer_get_softirq_time(struct hrtimer_cpu_base *base)
 	base->clock_base[CLOCK_REALTIME].softirq_time = xtim;
 	base->clock_base[CLOCK_MONOTONIC].softirq_time =
 		ktime_add(xtim, tomono);
-}
-
-/*
- * Helper function to check, whether the timer is running the callback
- * function
- */
-static inline int hrtimer_callback_running(struct hrtimer *timer)
-{
-	return timer->state & HRTIMER_STATE_CALLBACK;
 }
 
 /*
@@ -308,11 +300,10 @@ EXPORT_SYMBOL_GPL(ktime_sub_ns);
  */
 u64 ktime_divns(const ktime_t kt, s64 div)
 {
-	u64 dclc, inc, dns;
+	u64 dclc;
 	int sft = 0;
 
-	dclc = dns = ktime_to_ns(kt);
-	inc = div;
+	dclc = ktime_to_ns(kt);
 	/* Make sure the divisor is less than 2^32: */
 	while (div >> 32) {
 		sft++;
@@ -341,6 +332,115 @@ ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs)
 
 	return res;
 }
+
+#ifdef CONFIG_DEBUG_OBJECTS_TIMERS
+
+static struct debug_obj_descr hrtimer_debug_descr;
+
+/*
+ * fixup_init is called when:
+ * - an active object is initialized
+ */
+static int hrtimer_fixup_init(void *addr, enum debug_obj_state state)
+{
+	struct hrtimer *timer = addr;
+
+	switch (state) {
+	case ODEBUG_STATE_ACTIVE:
+		hrtimer_cancel(timer);
+		debug_object_init(timer, &hrtimer_debug_descr);
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * fixup_activate is called when:
+ * - an active object is activated
+ * - an unknown object is activated (might be a statically initialized object)
+ */
+static int hrtimer_fixup_activate(void *addr, enum debug_obj_state state)
+{
+	switch (state) {
+
+	case ODEBUG_STATE_NOTAVAILABLE:
+		WARN_ON_ONCE(1);
+		return 0;
+
+	case ODEBUG_STATE_ACTIVE:
+		WARN_ON(1);
+
+	default:
+		return 0;
+	}
+}
+
+/*
+ * fixup_free is called when:
+ * - an active object is freed
+ */
+static int hrtimer_fixup_free(void *addr, enum debug_obj_state state)
+{
+	struct hrtimer *timer = addr;
+
+	switch (state) {
+	case ODEBUG_STATE_ACTIVE:
+		hrtimer_cancel(timer);
+		debug_object_free(timer, &hrtimer_debug_descr);
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static struct debug_obj_descr hrtimer_debug_descr = {
+	.name		= "hrtimer",
+	.fixup_init	= hrtimer_fixup_init,
+	.fixup_activate	= hrtimer_fixup_activate,
+	.fixup_free	= hrtimer_fixup_free,
+};
+
+static inline void debug_hrtimer_init(struct hrtimer *timer)
+{
+	debug_object_init(timer, &hrtimer_debug_descr);
+}
+
+static inline void debug_hrtimer_activate(struct hrtimer *timer)
+{
+	debug_object_activate(timer, &hrtimer_debug_descr);
+}
+
+static inline void debug_hrtimer_deactivate(struct hrtimer *timer)
+{
+	debug_object_deactivate(timer, &hrtimer_debug_descr);
+}
+
+static inline void debug_hrtimer_free(struct hrtimer *timer)
+{
+	debug_object_free(timer, &hrtimer_debug_descr);
+}
+
+static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+			   enum hrtimer_mode mode);
+
+void hrtimer_init_on_stack(struct hrtimer *timer, clockid_t clock_id,
+			   enum hrtimer_mode mode)
+{
+	debug_object_init_on_stack(timer, &hrtimer_debug_descr);
+	__hrtimer_init(timer, clock_id, mode);
+}
+
+void destroy_hrtimer_on_stack(struct hrtimer *timer)
+{
+	debug_object_free(timer, &hrtimer_debug_descr);
+}
+
+#else
+static inline void debug_hrtimer_init(struct hrtimer *timer) { }
+static inline void debug_hrtimer_activate(struct hrtimer *timer) { }
+static inline void debug_hrtimer_deactivate(struct hrtimer *timer) { }
+#endif
 
 /*
  * Check, whether the timer is on the callback pending list
@@ -522,7 +622,7 @@ static void retrigger_next_event(void *arg)
 void clock_was_set(void)
 {
 	/* Retrigger the CPU local events everywhere */
-	on_each_cpu(retrigger_next_event, NULL, 0, 1);
+	on_each_cpu(retrigger_next_event, NULL, 1);
 }
 
 /*
@@ -531,8 +631,6 @@ void clock_was_set(void)
  */
 void hres_timers_resume(void)
 {
-	WARN_ON_ONCE(num_online_cpus() > 1);
-
 	/* Retrigger the CPU local events: */
 	retrigger_next_event(NULL);
 }
@@ -567,20 +665,23 @@ static inline int hrtimer_enqueue_reprogram(struct hrtimer *timer,
 		/* Timer is expired, act upon the callback mode */
 		switch(timer->cb_mode) {
 		case HRTIMER_CB_IRQSAFE_NO_RESTART:
+			debug_hrtimer_deactivate(timer);
 			/*
 			 * We can call the callback from here. No restart
 			 * happens, so no danger of recursion
 			 */
 			BUG_ON(timer->function(timer) != HRTIMER_NORESTART);
 			return 1;
-		case HRTIMER_CB_IRQSAFE_NO_SOFTIRQ:
+		case HRTIMER_CB_IRQSAFE_PERCPU:
+		case HRTIMER_CB_IRQSAFE_UNLOCKED:
 			/*
 			 * This is solely for the sched tick emulation with
 			 * dynamic tick support to ensure that we do not
 			 * restart the tick right on the edge and end up with
 			 * the tick timer in the softirq ! The calling site
-			 * takes care of this.
+			 * takes care of this. Also used for hrtimer sleeper !
 			 */
+			debug_hrtimer_deactivate(timer);
 			return 1;
 		case HRTIMER_CB_IRQSAFE:
 		case HRTIMER_CB_SOFTIRQ:
@@ -590,7 +691,6 @@ static inline int hrtimer_enqueue_reprogram(struct hrtimer *timer,
 			list_add_tail(&timer->cb_entry,
 				      &base->cpu_base->cb_pending);
 			timer->state = HRTIMER_STATE_PENDING;
-			raise_softirq(HRTIMER_SOFTIRQ);
 			return 1;
 		default:
 			BUG();
@@ -633,6 +733,11 @@ static int hrtimer_switch_to_hres(void)
 	return 1;
 }
 
+static inline void hrtimer_raise_softirq(void)
+{
+	raise_softirq(HRTIMER_SOFTIRQ);
+}
+
 #else
 
 static inline int hrtimer_hres_active(void) { return 0; }
@@ -651,6 +756,7 @@ static inline int hrtimer_reprogram(struct hrtimer *timer,
 {
 	return 0;
 }
+static inline void hrtimer_raise_softirq(void) { }
 
 #endif /* CONFIG_HIGH_RES_TIMERS */
 
@@ -729,6 +835,8 @@ static void enqueue_hrtimer(struct hrtimer *timer,
 	struct rb_node *parent = NULL;
 	struct hrtimer *entry;
 	int leftmost = 1;
+
+	debug_hrtimer_activate(timer);
 
 	/*
 	 * Find the right place in the rbtree:
@@ -826,6 +934,7 @@ remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base)
 		 * reprogramming happens in the interrupt handler. This is a
 		 * rare case and less expensive than a smp call.
 		 */
+		debug_hrtimer_deactivate(timer);
 		timer_stats_hrtimer_clear_start_info(timer);
 		reprogram = base->cpu_base == &__get_cpu_var(hrtimer_bases);
 		__remove_hrtimer(timer, base, HRTIMER_STATE_INACTIVE,
@@ -850,7 +959,7 @@ hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
 {
 	struct hrtimer_clock_base *base, *new_base;
 	unsigned long flags;
-	int ret;
+	int ret, raise;
 
 	base = lock_hrtimer_base(timer, &flags);
 
@@ -873,6 +982,7 @@ hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
 		tim = ktime_add_safe(tim, base->resolution);
 #endif
 	}
+
 	timer->expires = tim;
 
 	timer_stats_hrtimer_set_start_info(timer);
@@ -884,7 +994,25 @@ hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
 	enqueue_hrtimer(timer, new_base,
 			new_base->cpu_base == &__get_cpu_var(hrtimer_bases));
 
+	/*
+	 * The timer may be expired and moved to the cb_pending
+	 * list. We can not raise the softirq with base lock held due
+	 * to a possible deadlock with runqueue lock.
+	 */
+	raise = timer->state == HRTIMER_STATE_PENDING;
+
+	/*
+	 * We use preempt_disable to prevent this task from migrating after
+	 * setting up the softirq and raising it. Otherwise, if me migrate
+	 * we will raise the softirq on the wrong CPU.
+	 */
+	preempt_disable();
+
 	unlock_hrtimer_base(timer, &flags);
+
+	if (raise)
+		hrtimer_raise_softirq();
+	preempt_enable();
 
 	return ret;
 }
@@ -956,7 +1084,7 @@ ktime_t hrtimer_get_remaining(const struct hrtimer *timer)
 }
 EXPORT_SYMBOL_GPL(hrtimer_get_remaining);
 
-#if defined(CONFIG_NO_IDLE_HZ) || defined(CONFIG_NO_HZ)
+#ifdef CONFIG_NO_HZ
 /**
  * hrtimer_get_next_event - get the time until next expiry event
  *
@@ -996,14 +1124,8 @@ ktime_t hrtimer_get_next_event(void)
 }
 #endif
 
-/**
- * hrtimer_init - initialize a timer to the given clock
- * @timer:	the timer to be initialized
- * @clock_id:	the clock to be used
- * @mode:	timer mode abs/rel
- */
-void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
-		  enum hrtimer_mode mode)
+static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+			   enum hrtimer_mode mode)
 {
 	struct hrtimer_cpu_base *cpu_base;
 
@@ -1023,6 +1145,19 @@ void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 	timer->start_pid = -1;
 	memset(timer->start_comm, 0, TASK_COMM_LEN);
 #endif
+}
+
+/**
+ * hrtimer_init - initialize a timer to the given clock
+ * @timer:	the timer to be initialized
+ * @clock_id:	the clock to be used
+ * @mode:	timer mode abs/rel
+ */
+void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+		  enum hrtimer_mode mode)
+{
+	debug_hrtimer_init(timer);
+	__hrtimer_init(timer, clock_id, mode);
 }
 EXPORT_SYMBOL_GPL(hrtimer_init);
 
@@ -1057,6 +1192,7 @@ static void run_hrtimer_pending(struct hrtimer_cpu_base *cpu_base)
 		timer = list_entry(cpu_base->cb_pending.next,
 				   struct hrtimer, cb_entry);
 
+		debug_hrtimer_deactivate(timer);
 		timer_stats_account_hrtimer(timer);
 
 		fn = timer->function;
@@ -1080,8 +1216,19 @@ static void run_hrtimer_pending(struct hrtimer_cpu_base *cpu_base)
 			 * If the timer was rearmed on another CPU, reprogram
 			 * the event device.
 			 */
-			if (timer->base->first == &timer->node)
-				hrtimer_reprogram(timer, timer->base);
+			struct hrtimer_clock_base *base = timer->base;
+
+			if (base->first == &timer->node &&
+			    hrtimer_reprogram(timer, base)) {
+				/*
+				 * Timer is expired. Thus move it from tree to
+				 * pending list again.
+				 */
+				__remove_hrtimer(timer, base,
+						 HRTIMER_STATE_PENDING, 0);
+				list_add_tail(&timer->cb_entry,
+					      &base->cpu_base->cb_pending);
+			}
 		}
 	}
 	spin_unlock_irq(&cpu_base->lock);
@@ -1094,11 +1241,13 @@ static void __run_hrtimer(struct hrtimer *timer)
 	enum hrtimer_restart (*fn)(struct hrtimer *);
 	int restart;
 
+	debug_hrtimer_deactivate(timer);
 	__remove_hrtimer(timer, base, HRTIMER_STATE_CALLBACK, 0);
 	timer_stats_account_hrtimer(timer);
 
 	fn = timer->function;
-	if (timer->cb_mode == HRTIMER_CB_IRQSAFE_NO_SOFTIRQ) {
+	if (timer->cb_mode == HRTIMER_CB_IRQSAFE_PERCPU ||
+	    timer->cb_mode == HRTIMER_CB_IRQSAFE_UNLOCKED) {
 		/*
 		 * Used for scheduler timers, avoid lock inversion with
 		 * rq->lock and tasklist_lock.
@@ -1238,51 +1387,50 @@ void hrtimer_run_pending(void)
 /*
  * Called from hardirq context every jiffy
  */
-static inline void run_hrtimer_queue(struct hrtimer_cpu_base *cpu_base,
-				     int index)
-{
-	struct rb_node *node;
-	struct hrtimer_clock_base *base = &cpu_base->clock_base[index];
-
-	if (!base->first)
-		return;
-
-	if (base->get_softirq_time)
-		base->softirq_time = base->get_softirq_time();
-
-	spin_lock(&cpu_base->lock);
-
-	while ((node = base->first)) {
-		struct hrtimer *timer;
-
-		timer = rb_entry(node, struct hrtimer, node);
-		if (base->softirq_time.tv64 <= timer->expires.tv64)
-			break;
-
-		if (timer->cb_mode == HRTIMER_CB_SOFTIRQ) {
-			__remove_hrtimer(timer, base, HRTIMER_STATE_PENDING, 0);
-			list_add_tail(&timer->cb_entry,
-					&base->cpu_base->cb_pending);
-			continue;
-		}
-
-		__run_hrtimer(timer);
-	}
-	spin_unlock(&cpu_base->lock);
-}
-
 void hrtimer_run_queues(void)
 {
+	struct rb_node *node;
 	struct hrtimer_cpu_base *cpu_base = &__get_cpu_var(hrtimer_bases);
-	int i;
+	struct hrtimer_clock_base *base;
+	int index, gettime = 1;
 
 	if (hrtimer_hres_active())
 		return;
 
-	hrtimer_get_softirq_time(cpu_base);
+	for (index = 0; index < HRTIMER_MAX_CLOCK_BASES; index++) {
+		base = &cpu_base->clock_base[index];
 
-	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++)
-		run_hrtimer_queue(cpu_base, i);
+		if (!base->first)
+			continue;
+
+		if (base->get_softirq_time)
+			base->softirq_time = base->get_softirq_time();
+		else if (gettime) {
+			hrtimer_get_softirq_time(cpu_base);
+			gettime = 0;
+		}
+
+		spin_lock(&cpu_base->lock);
+
+		while ((node = base->first)) {
+			struct hrtimer *timer;
+
+			timer = rb_entry(node, struct hrtimer, node);
+			if (base->softirq_time.tv64 <= timer->expires.tv64)
+				break;
+
+			if (timer->cb_mode == HRTIMER_CB_SOFTIRQ) {
+				__remove_hrtimer(timer, base,
+					HRTIMER_STATE_PENDING, 0);
+				list_add_tail(&timer->cb_entry,
+					&base->cpu_base->cb_pending);
+				continue;
+			}
+
+			__run_hrtimer(timer);
+		}
+		spin_unlock(&cpu_base->lock);
+	}
 }
 
 /*
@@ -1306,7 +1454,7 @@ void hrtimer_init_sleeper(struct hrtimer_sleeper *sl, struct task_struct *task)
 	sl->timer.function = hrtimer_wakeup;
 	sl->task = task;
 #ifdef CONFIG_HIGH_RES_TIMERS
-	sl->timer.cb_mode = HRTIMER_CB_IRQSAFE_NO_SOFTIRQ;
+	sl->timer.cb_mode = HRTIMER_CB_IRQSAFE_UNLOCKED;
 #endif
 }
 
@@ -1353,22 +1501,27 @@ long __sched hrtimer_nanosleep_restart(struct restart_block *restart)
 {
 	struct hrtimer_sleeper t;
 	struct timespec __user  *rmtp;
+	int ret = 0;
 
-	hrtimer_init(&t.timer, restart->arg0, HRTIMER_MODE_ABS);
-	t.timer.expires.tv64 = ((u64)restart->arg3 << 32) | (u64) restart->arg2;
+	hrtimer_init_on_stack(&t.timer, restart->nanosleep.index,
+				HRTIMER_MODE_ABS);
+	t.timer.expires.tv64 = restart->nanosleep.expires;
 
 	if (do_nanosleep(&t, HRTIMER_MODE_ABS))
-		return 0;
+		goto out;
 
-	rmtp = (struct timespec __user *)restart->arg1;
+	rmtp = restart->nanosleep.rmtp;
 	if (rmtp) {
-		int ret = update_rmtp(&t.timer, rmtp);
+		ret = update_rmtp(&t.timer, rmtp);
 		if (ret <= 0)
-			return ret;
+			goto out;
 	}
 
 	/* The other values in restart are already filled in */
-	return -ERESTART_RESTARTBLOCK;
+	ret = -ERESTART_RESTARTBLOCK;
+out:
+	destroy_hrtimer_on_stack(&t.timer);
+	return ret;
 }
 
 long hrtimer_nanosleep(struct timespec *rqtp, struct timespec __user *rmtp,
@@ -1376,30 +1529,35 @@ long hrtimer_nanosleep(struct timespec *rqtp, struct timespec __user *rmtp,
 {
 	struct restart_block *restart;
 	struct hrtimer_sleeper t;
+	int ret = 0;
 
-	hrtimer_init(&t.timer, clockid, mode);
+	hrtimer_init_on_stack(&t.timer, clockid, mode);
 	t.timer.expires = timespec_to_ktime(*rqtp);
 	if (do_nanosleep(&t, mode))
-		return 0;
+		goto out;
 
 	/* Absolute timers do not update the rmtp value and restart: */
-	if (mode == HRTIMER_MODE_ABS)
-		return -ERESTARTNOHAND;
+	if (mode == HRTIMER_MODE_ABS) {
+		ret = -ERESTARTNOHAND;
+		goto out;
+	}
 
 	if (rmtp) {
-		int ret = update_rmtp(&t.timer, rmtp);
+		ret = update_rmtp(&t.timer, rmtp);
 		if (ret <= 0)
-			return ret;
+			goto out;
 	}
 
 	restart = &current_thread_info()->restart_block;
 	restart->fn = hrtimer_nanosleep_restart;
-	restart->arg0 = (unsigned long) t.timer.base->index;
-	restart->arg1 = (unsigned long) rmtp;
-	restart->arg2 = t.timer.expires.tv64 & 0xFFFFFFFF;
-	restart->arg3 = t.timer.expires.tv64 >> 32;
+	restart->nanosleep.index = t.timer.base->index;
+	restart->nanosleep.rmtp = rmtp;
+	restart->nanosleep.expires = t.timer.expires.tv64;
 
-	return -ERESTART_RESTARTBLOCK;
+	ret = -ERESTART_RESTARTBLOCK;
+out:
+	destroy_hrtimer_on_stack(&t.timer);
+	return ret;
 }
 
 asmlinkage long
@@ -1425,7 +1583,6 @@ static void __cpuinit init_hrtimers_cpu(int cpu)
 	int i;
 
 	spin_lock_init(&cpu_base->lock);
-	lockdep_set_class(&cpu_base->lock, &cpu_base->lock_key);
 
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++)
 		cpu_base->clock_base[i].cpu_base = cpu_base;
@@ -1436,28 +1593,95 @@ static void __cpuinit init_hrtimers_cpu(int cpu)
 
 #ifdef CONFIG_HOTPLUG_CPU
 
-static void migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
-				struct hrtimer_clock_base *new_base)
+static int migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
+				struct hrtimer_clock_base *new_base, int dcpu)
 {
 	struct hrtimer *timer;
 	struct rb_node *node;
+	int raise = 0;
 
 	while ((node = rb_first(&old_base->active))) {
 		timer = rb_entry(node, struct hrtimer, node);
 		BUG_ON(hrtimer_callback_running(timer));
-		__remove_hrtimer(timer, old_base, HRTIMER_STATE_INACTIVE, 0);
+		debug_hrtimer_deactivate(timer);
+
+		/*
+		 * Should not happen. Per CPU timers should be
+		 * canceled _before_ the migration code is called
+		 */
+		if (timer->cb_mode == HRTIMER_CB_IRQSAFE_PERCPU) {
+			__remove_hrtimer(timer, old_base,
+					 HRTIMER_STATE_INACTIVE, 0);
+			WARN(1, "hrtimer (%p %p)active but cpu %d dead\n",
+			     timer, timer->function, dcpu);
+			continue;
+		}
+
+		/*
+		 * Mark it as STATE_MIGRATE not INACTIVE otherwise the
+		 * timer could be seen as !active and just vanish away
+		 * under us on another CPU
+		 */
+		__remove_hrtimer(timer, old_base, HRTIMER_STATE_MIGRATE, 0);
 		timer->base = new_base;
 		/*
 		 * Enqueue the timer. Allow reprogramming of the event device
 		 */
 		enqueue_hrtimer(timer, new_base, 1);
+
+#ifdef CONFIG_HIGH_RES_TIMERS
+		/*
+		 * Happens with high res enabled when the timer was
+		 * already expired and the callback mode is
+		 * HRTIMER_CB_IRQSAFE_UNLOCKED (hrtimer_sleeper). The
+		 * enqueue code does not move them to the soft irq
+		 * pending list for performance/latency reasons, but
+		 * in the migration state, we need to do that
+		 * otherwise we end up with a stale timer.
+		 */
+		if (timer->state == HRTIMER_STATE_MIGRATE) {
+			timer->state = HRTIMER_STATE_PENDING;
+			list_add_tail(&timer->cb_entry,
+				      &new_base->cpu_base->cb_pending);
+			raise = 1;
+		}
+#endif
+		/* Clear the migration state bit */
+		timer->state &= ~HRTIMER_STATE_MIGRATE;
 	}
+	return raise;
 }
+
+#ifdef CONFIG_HIGH_RES_TIMERS
+static int migrate_hrtimer_pending(struct hrtimer_cpu_base *old_base,
+				   struct hrtimer_cpu_base *new_base)
+{
+	struct hrtimer *timer;
+	int raise = 0;
+
+	while (!list_empty(&old_base->cb_pending)) {
+		timer = list_entry(old_base->cb_pending.next,
+				   struct hrtimer, cb_entry);
+
+		__remove_hrtimer(timer, timer->base, HRTIMER_STATE_PENDING, 0);
+		timer->base = &new_base->clock_base[timer->base->index];
+		list_add_tail(&timer->cb_entry, &new_base->cb_pending);
+		raise = 1;
+	}
+	return raise;
+}
+#else
+static int migrate_hrtimer_pending(struct hrtimer_cpu_base *old_base,
+				   struct hrtimer_cpu_base *new_base)
+{
+	return 0;
+}
+#endif
 
 static void migrate_hrtimers(int cpu)
 {
 	struct hrtimer_cpu_base *old_base, *new_base;
-	int i;
+	int i, raise = 0;
 
 	BUG_ON(cpu_online(cpu));
 	old_base = &per_cpu(hrtimer_bases, cpu);
@@ -1466,18 +1690,25 @@ static void migrate_hrtimers(int cpu)
 	tick_cancel_sched_timer(cpu);
 
 	local_irq_disable();
-	double_spin_lock(&new_base->lock, &old_base->lock,
-			 smp_processor_id() < cpu);
+	spin_lock(&new_base->lock);
+	spin_lock_nested(&old_base->lock, SINGLE_DEPTH_NESTING);
 
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
-		migrate_hrtimer_list(&old_base->clock_base[i],
-				     &new_base->clock_base[i]);
+		if (migrate_hrtimer_list(&old_base->clock_base[i],
+					 &new_base->clock_base[i], cpu))
+			raise = 1;
 	}
 
-	double_spin_unlock(&new_base->lock, &old_base->lock,
-			   smp_processor_id() < cpu);
+	if (migrate_hrtimer_pending(old_base, new_base))
+		raise = 1;
+
+	spin_unlock(&old_base->lock);
+	spin_unlock(&new_base->lock);
 	local_irq_enable();
 	put_cpu_var(hrtimer_bases);
+
+	if (raise)
+		hrtimer_raise_softirq();
 }
 #endif /* CONFIG_HOTPLUG_CPU */
 
@@ -1518,7 +1749,7 @@ void __init hrtimers_init(void)
 			  (void *)(long)smp_processor_id());
 	register_cpu_notifier(&hrtimers_nb);
 #ifdef CONFIG_HIGH_RES_TIMERS
-	open_softirq(HRTIMER_SOFTIRQ, run_hrtimer_softirq, NULL);
+	open_softirq(HRTIMER_SOFTIRQ, run_hrtimer_softirq);
 #endif
 }
 

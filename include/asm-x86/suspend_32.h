@@ -3,6 +3,9 @@
  * Based on code
  * Copyright 2001 Patrick Mochel <mochel@osdl.org>
  */
+#ifndef __ASM_X86_32_SUSPEND_H
+#define __ASM_X86_32_SUSPEND_H
+
 #include <asm/desc.h>
 #include <asm/i387.h>
 
@@ -10,7 +13,7 @@ static inline int arch_prepare_suspend(void) { return 0; }
 
 /* image of the saved processor state */
 struct saved_context {
-  	u16 es, fs, gs, ss;
+	u16 es, fs, gs, ss;
 	unsigned long cr0, cr2, cr3, cr4;
 	struct desc_ptr gdt;
 	struct desc_ptr idt;
@@ -32,11 +35,11 @@ extern unsigned long saved_edi;
 static inline void acpi_save_register_state(unsigned long return_point)
 {
 	saved_eip = return_point;
-	asm volatile ("movl %%esp,%0" : "=m" (saved_esp));
-	asm volatile ("movl %%ebp,%0" : "=m" (saved_ebp));
-	asm volatile ("movl %%ebx,%0" : "=m" (saved_ebx));
-	asm volatile ("movl %%edi,%0" : "=m" (saved_edi));
-	asm volatile ("movl %%esi,%0" : "=m" (saved_esi));
+	asm volatile("movl %%esp,%0" : "=m" (saved_esp));
+	asm volatile("movl %%ebp,%0" : "=m" (saved_ebp));
+	asm volatile("movl %%ebx,%0" : "=m" (saved_ebx));
+	asm volatile("movl %%edi,%0" : "=m" (saved_edi));
+	asm volatile("movl %%esi,%0" : "=m" (saved_esi));
 }
 
 #define acpi_restore_register_state()  do {} while (0)
@@ -44,3 +47,5 @@ static inline void acpi_save_register_state(unsigned long return_point)
 /* routines for saving/restoring kernel state */
 extern int acpi_save_state_mem(void);
 #endif
+
+#endif /* __ASM_X86_32_SUSPEND_H */

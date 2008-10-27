@@ -162,6 +162,7 @@ static struct platform_driver tsi_eth_driver = {
 	.remove = tsi108_ether_remove,
 	.driver	= {
 		.name = "tsi-ethernet",
+		.owner = THIS_MODULE,
 	},
 };
 
@@ -802,7 +803,8 @@ static int tsi108_refill_rx(struct net_device *dev, int budget)
 		int rx = data->rxhead;
 		struct sk_buff *skb;
 
-		data->rxskbs[rx] = skb = dev_alloc_skb(TSI108_RXBUF_SIZE + 2);
+		data->rxskbs[rx] = skb = netdev_alloc_skb(dev,
+							  TSI108_RXBUF_SIZE + 2);
 		if (!skb)
 			break;
 
@@ -1351,8 +1353,9 @@ static int tsi108_open(struct net_device *dev)
 	data->rxhead = 0;
 
 	for (i = 0; i < TSI108_RXRING_LEN; i++) {
-		struct sk_buff *skb = dev_alloc_skb(TSI108_RXBUF_SIZE + NET_IP_ALIGN);
+		struct sk_buff *skb;
 
+		skb = netdev_alloc_skb(dev, TSI108_RXBUF_SIZE + NET_IP_ALIGN);
 		if (!skb) {
 			/* Bah.  No memory for now, but maybe we'll get
 			 * some more later.
@@ -1434,7 +1437,6 @@ static int tsi108_close(struct net_device *dev)
 		dev_kfree_skb(skb);
 	}
 
-	synchronize_irq(data->irq_num);
 	free_irq(data->irq_num, dev);
 
 	/* Discard the RX ring. */
@@ -1525,7 +1527,7 @@ static int tsi108_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	struct tsi108_prv_data *data = netdev_priv(dev);
 	unsigned long flags;
 	int rc;
-	
+
 	spin_lock_irqsave(&data->txlock, flags);
 	rc = mii_ethtool_gset(&data->mii_if, cmd);
 	spin_unlock_irqrestore(&data->txlock, flags);
@@ -1542,7 +1544,7 @@ static int tsi108_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	spin_lock_irqsave(&data->txlock, flags);
 	rc = mii_ethtool_sset(&data->mii_if, cmd);
 	spin_unlock_irqrestore(&data->txlock, flags);
-	
+
 	return rc;
 }
 
@@ -1729,3 +1731,4 @@ module_exit(tsi108_ether_exit);
 MODULE_AUTHOR("Tundra Semiconductor Corporation");
 MODULE_DESCRIPTION("Tsi108 Gigabit Ethernet driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:tsi-ethernet");

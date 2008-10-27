@@ -317,6 +317,14 @@ S: 2322 37th Ave SW
 S: Seattle, Washington 98126-2010
 S: USA
 
+N: Muli Ben-Yehuda
+E: mulix@mulix.org
+E: muli@il.ibm.com
+W: http://www.mulix.org
+D: trident OSS sound driver, x86-64 dma-ops and Calgary IOMMU,
+D: KVM and Xen bits and other misc. hackery.
+S: Haifa, Israel
+
 N: Johannes Berg
 E: johannes@sipsolutions.net
 W: http://johannes.sipsolutions.net/
@@ -403,6 +411,8 @@ D: Linux CD and Support Giveaway List
 N: Erik Inge Bolsø
 E: knan@mo.himolde.no
 D: Misc kernel hacks
+D: Updated PC speaker driver for 2.3
+S: Norway
 
 N: Andreas E. Bombe
 E: andreas.bombe@munich.netsurf.de
@@ -2609,8 +2619,9 @@ S: Perth, Western Australia
 S: Australia
 
 N: Miguel Ojeda Sandonis
-E: maxextreme@gmail.com
-W: http://maxextreme.googlepages.com/
+E: miguel.ojeda.sandonis@gmail.com
+W: http://miguelojeda.es
+W: http://jair.lab.fi.uva.es/~migojed/
 D: Author of the ks0108, cfag12864b and cfag12864bfb auxiliary display drivers.
 D: Maintainer of the auxiliary display drivers tree (drivers/auxdisplay/*)
 S: C/ Mieses 20, 9-B
@@ -3116,6 +3127,12 @@ S: Post Office Box 64132
 S: Sunnyvale, California 94088-4132
 S: USA
 
+N: Stas Sergeev
+E: stsp@users.sourceforge.net
+D: PCM PC-Speaker driver
+D: misc fixes
+S: Russia
+
 N: Simon Shapiro
 E: shimon@i-Connect.Net
 W: http://www.-i-Connect.Net/~shimon
@@ -3335,8 +3352,7 @@ S: Spain
 N: Linus Torvalds
 E: torvalds@linux-foundation.org
 D: Original kernel hacker
-S: 12725 SW Millikan Way, Suite 400
-S: Beaverton, Oregon 97005
+S: Portland, Oregon 97005
 S: USA
 
 N: Marcelo Tosatti

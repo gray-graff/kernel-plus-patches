@@ -27,7 +27,6 @@
 
 #include "udfdecl.h"
 #include <linux/fs.h>
-#include <linux/udf_fs.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/string.h> /* memset */
@@ -144,40 +143,6 @@ static ssize_t udf_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	return retval;
 }
 
-/*
- * udf_ioctl
- *
- * PURPOSE
- *	Issue an ioctl.
- *
- * DESCRIPTION
- *	Optional - sys_ioctl() will return -ENOTTY if this routine is not
- *	available, and the ioctl cannot be handled without filesystem help.
- *
- *	sys_ioctl() handles these ioctls that apply only to regular files:
- *		FIBMAP [requires udf_block_map()], FIGETBSZ, FIONREAD
- *	These ioctls are also handled by sys_ioctl():
- *		FIOCLEX, FIONCLEX, FIONBIO, FIOASYNC
- *	All other ioctls are passed to the filesystem.
- *
- *	Refer to sys_ioctl() in fs/ioctl.c
- *	sys_ioctl() -> .
- *
- * PRE-CONDITIONS
- *	inode			Pointer to inode that ioctl was issued on.
- *	filp			Pointer to file that ioctl was issued on.
- *	cmd			The ioctl command.
- *	arg			The ioctl argument [can be interpreted as a
- *				user-space pointer if desired].
- *
- * POST-CONDITIONS
- *	<return>		Success (>=0) or an error code (<=0) that
- *				sys_ioctl() will return.
- *
- * HISTORY
- *	July 1, 1997 - Andrew E. Mileski
- *	Written, tested, and released.
- */
 int udf_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 	      unsigned long arg)
 {
@@ -225,18 +190,6 @@ int udf_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 	return result;
 }
 
-/*
- * udf_release_file
- *
- * PURPOSE
- *  Called when all references to the file are closed
- *
- * DESCRIPTION
- *  Discard prealloced blocks
- *
- * HISTORY
- *
- */
 static int udf_release_file(struct inode *inode, struct file *filp)
 {
 	if (filp->f_mode & FMODE_WRITE) {
@@ -258,6 +211,7 @@ const struct file_operations udf_file_operations = {
 	.release		= udf_release_file,
 	.fsync			= udf_fsync_file,
 	.splice_read		= generic_file_splice_read,
+	.llseek			= generic_file_llseek,
 };
 
 const struct inode_operations udf_file_inode_operations = {

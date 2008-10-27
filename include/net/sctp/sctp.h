@@ -179,6 +179,8 @@ int sctp_eps_proc_init(void);
 void sctp_eps_proc_exit(void);
 int sctp_assocs_proc_init(void);
 void sctp_assocs_proc_exit(void);
+int sctp_remaddr_proc_init(void);
+void sctp_remaddr_proc_exit(void);
 
 
 /*
@@ -218,8 +220,6 @@ extern struct kmem_cache *sctp_bucket_cachep __read_mostly;
 #define sctp_release_sock(sk)    release_sock(sk)
 #define sctp_bh_lock_sock(sk)    bh_lock_sock(sk)
 #define sctp_bh_unlock_sock(sk)  bh_unlock_sock(sk)
-#define SCTP_SOCK_SLEEP_PRE(sk)  SOCK_SLEEP_PRE(sk)
-#define SCTP_SOCK_SLEEP_POST(sk) SOCK_SLEEP_POST(sk)
 
 /* SCTP SNMP MIB stats handlers */
 DECLARE_SNMP_STAT(struct sctp_mib, sctp_statistics);
@@ -368,11 +368,6 @@ void sctp_sysctl_unregister(void);
 #else
 static inline void sctp_sysctl_register(void) { return; }
 static inline void sctp_sysctl_unregister(void) { return; }
-static inline int sctp_sysctl_jiffies_ms(ctl_table *table, int __user *name, int nlen,
-		void __user *oldval, size_t __user *oldlenp,
-		void __user *newval, size_t newlen) {
-	return -ENOSYS;
-}
 #endif
 
 /* Size of Supported Address Parameter for 'x' address types. */

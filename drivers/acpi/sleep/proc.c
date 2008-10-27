@@ -315,8 +315,11 @@ acpi_system_write_alarm(struct file *file,
 		cmos_bcd_write(day, acpi_gbl_FADT.day_alarm, rtc_control);
 	if (acpi_gbl_FADT.month_alarm)
 		cmos_bcd_write(mo, acpi_gbl_FADT.month_alarm, rtc_control);
-	if (acpi_gbl_FADT.century)
+	if (acpi_gbl_FADT.century) {
+		if (adjust)
+			yr += cmos_bcd_read(acpi_gbl_FADT.century, rtc_control) * 100;
 		cmos_bcd_write(yr / 100, acpi_gbl_FADT.century, rtc_control);
+	}
 	/* enable the rtc alarm interrupt */
 	rtc_control |= RTC_AIE;
 	CMOS_WRITE(rtc_control, RTC_CONTROL);
@@ -374,6 +377,14 @@ acpi_system_wakeup_device_seq_show(struct seq_file *seq, void *offset)
 	return 0;
 }
 
+static void physical_device_enable_wakeup(struct acpi_device *adev)
+{
+	struct device *dev = acpi_get_physical_device(adev->handle);
+
+	if (dev && device_can_wakeup(dev))
+		device_set_wakeup_enable(dev, adev->wakeup.state.enabled);
+}
+
 static ssize_t
 acpi_system_write_wakeup_device(struct file *file,
 				const char __user * buffer,
@@ -408,6 +419,7 @@ acpi_system_write_wakeup_device(struct file *file,
 		}
 	}
 	if (found_dev) {
+		physical_device_enable_wakeup(found_dev);
 		list_for_each_safe(node, next, &acpi_wakeup_device_list) {
 			struct acpi_device *dev = container_of(node,
 							       struct
@@ -425,6 +437,7 @@ acpi_system_write_wakeup_device(struct file *file,
 				       dev->pnp.bus_id, found_dev->pnp.bus_id);
 				dev->wakeup.state.enabled =
 				    found_dev->wakeup.state.enabled;
+				physical_device_enable_wakeup(dev);
 			}
 		}
 	}
@@ -440,6 +453,7 @@ acpi_system_wakeup_device_open_fs(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations acpi_system_wakeup_device_fops = {
+	.owner = THIS_MODULE,
 	.open = acpi_system_wakeup_device_open_fs,
 	.read = seq_read,
 	.write = acpi_system_write_wakeup_device,
@@ -449,6 +463,7 @@ static const struct file_operations acpi_system_wakeup_device_fops = {
 
 #ifdef	CONFIG_ACPI_PROCFS
 static const struct file_operations acpi_system_sleep_fops = {
+	.owner = THIS_MODULE,
 	.open = acpi_system_sleep_open_fs,
 	.read = seq_read,
 	.write = acpi_system_write_sleep,
@@ -459,6 +474,7 @@ static const struct file_operations acpi_system_sleep_fops = {
 
 #ifdef	HAVE_ACPI_LEGACY_ALARM
 static const struct file_operations acpi_system_alarm_fops = {
+	.owner = THIS_MODULE,
 	.open = acpi_system_alarm_open_fs,
 	.read = seq_read,
 	.write = acpi_system_write_alarm,
@@ -477,37 +493,32 @@ static u32 rtc_handler(void *context)
 
 static int __init acpi_sleep_proc_init(void)
 {
-	struct proc_dir_entry *entry = NULL;
-
 	if (acpi_disabled)
 		return 0;
 
 #ifdef	CONFIG_ACPI_PROCFS
 	/* 'sleep' [R/W] */
-	entry =
-	    create_proc_entry("sleep", S_IFREG | S_IRUGO | S_IWUSR,
-			      acpi_root_dir);
-	if (entry)
-		entry->proc_fops = &acpi_system_sleep_fops;
+	proc_create("sleep", S_IFREG | S_IRUGO | S_IWUSR,
+		    acpi_root_dir, &acpi_system_sleep_fops);
 #endif				/* CONFIG_ACPI_PROCFS */
 
 #ifdef	HAVE_ACPI_LEGACY_ALARM
 	/* 'alarm' [R/W] */
-	entry =
-	    create_proc_entry("alarm", S_IFREG | S_IRUGO | S_IWUSR,
-			      acpi_root_dir);
-	if (entry)
-		entry->proc_fops = &acpi_system_alarm_fops;
+	proc_create("alarm", S_IFREG | S_IRUGO | S_IWUSR,
+		    acpi_root_dir, &acpi_system_alarm_fops);
 
 	acpi_install_fixed_event_handler(ACPI_EVENT_RTC, rtc_handler, NULL);
+	/*
+	 * Disable the RTC event after installing RTC handler.
+	 * Only when RTC alarm is set will it be enabled.
+	 */
+	acpi_clear_event(ACPI_EVENT_RTC);
+	acpi_disable_event(ACPI_EVENT_RTC, 0);
 #endif				/* HAVE_ACPI_LEGACY_ALARM */
 
 	/* 'wakeup device' [R/W] */
-	entry =
-	    create_proc_entry("wakeup", S_IFREG | S_IRUGO | S_IWUSR,
-			      acpi_root_dir);
-	if (entry)
-		entry->proc_fops = &acpi_system_wakeup_device_fops;
+	proc_create("wakeup", S_IFREG | S_IRUGO | S_IWUSR,
+		    acpi_root_dir, &acpi_system_wakeup_device_fops);
 
 	return 0;
 }

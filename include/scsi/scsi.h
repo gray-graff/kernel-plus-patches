@@ -9,6 +9,7 @@
 #define _SCSI_SCSI_H
 
 #include <linux/types.h>
+#include <scsi/scsi_cmnd.h>
 
 /*
  * The maximum number of SG segments that we will put inside a
@@ -28,13 +29,6 @@
 #else
 #define SCSI_MAX_SG_CHAIN_SEGMENTS	SCSI_MAX_SG_SEGMENTS
 #endif
-
-/*
- *	SCSI command lengths
- */
-
-extern const unsigned char scsi_command_size[8];
-#define COMMAND_SIZE(opcode) scsi_command_size[((opcode) >> 5) & 7]
 
 /*
  * Special value for scanning to specify scanning or rescanning of all
@@ -109,8 +103,10 @@ extern const unsigned char scsi_command_size[8];
 #define MODE_SENSE_10         0x5a
 #define PERSISTENT_RESERVE_IN 0x5e
 #define PERSISTENT_RESERVE_OUT 0x5f
+#define VARIABLE_LENGTH_CMD   0x7f
 #define REPORT_LUNS           0xa0
 #define MAINTENANCE_IN        0xa3
+#define MAINTENANCE_OUT       0xa4
 #define MOVE_MEDIUM           0xa5
 #define EXCHANGE_MEDIUM       0xa6
 #define READ_12               0xa8
@@ -130,10 +126,44 @@ extern const unsigned char scsi_command_size[8];
 #define	SAI_READ_CAPACITY_16  0x10
 /* values for maintenance in */
 #define MI_REPORT_TARGET_PGS  0x0a
+/* values for maintenance out */
+#define MO_SET_TARGET_PGS     0x0a
 
 /* Values for T10/04-262r7 */
 #define	ATA_16		      0x85	/* 16-byte pass-thru */
 #define	ATA_12		      0xa1	/* 12-byte pass-thru */
+
+/*
+ *	SCSI command lengths
+ */
+
+#define SCSI_MAX_VARLEN_CDB_SIZE 260
+
+/* defined in T10 SCSI Primary Commands-2 (SPC2) */
+struct scsi_varlen_cdb_hdr {
+	u8 opcode;        /* opcode always == VARIABLE_LENGTH_CMD */
+	u8 control;
+	u8 misc[5];
+	u8 additional_cdb_length;         /* total cdb length - 8 */
+	__be16 service_action;
+	/* service specific data follows */
+};
+
+static inline unsigned
+scsi_varlen_cdb_length(const void *hdr)
+{
+	return ((struct scsi_varlen_cdb_hdr *)hdr)->additional_cdb_length + 8;
+}
+
+extern const unsigned char scsi_command_size_tbl[8];
+#define COMMAND_SIZE(opcode) scsi_command_size_tbl[((opcode) >> 5) & 7]
+
+static inline unsigned
+scsi_command_size(const unsigned char *cmnd)
+{
+	return (cmnd[0] == VARIABLE_LENGTH_CMD) ?
+		scsi_varlen_cdb_length(cmnd) : COMMAND_SIZE(cmnd[0]);
+}
 
 /*
  *  SCSI Architecture Model (SAM) Status codes. Taken from SAM-3 draft
@@ -279,6 +309,20 @@ struct scsi_lun {
 };
 
 /*
+ * The Well Known LUNS (SAM-3) in our int representation of a LUN
+ */
+#define SCSI_W_LUN_BASE 0xc100
+#define SCSI_W_LUN_REPORT_LUNS (SCSI_W_LUN_BASE + 1)
+#define SCSI_W_LUN_ACCESS_CONTROL (SCSI_W_LUN_BASE + 2)
+#define SCSI_W_LUN_TARGET_LOG_PAGE (SCSI_W_LUN_BASE + 3)
+
+static inline int scsi_is_wlun(unsigned int lun)
+{
+	return (lun & 0xff00) == SCSI_W_LUN_BASE;
+}
+
+
+/*
  *  MESSAGE CODES
  */
 
@@ -374,6 +418,7 @@ struct scsi_lun {
 #define SOFT_ERROR      0x2005
 #define ADD_TO_MLQUEUE  0x2006
 #define TIMEOUT_ERROR   0x2007
+#define SCSI_RETURN_NOT_HANDLED   0x2008
 
 /*
  * Midlevel queue return values.
@@ -397,6 +442,22 @@ struct scsi_lun {
 #define host_byte(result)   (((result) >> 16) & 0xff)
 #define driver_byte(result) (((result) >> 24) & 0xff)
 #define suggestion(result)  (driver_byte(result) & SUGGEST_MASK)
+
+static inline void set_msg_byte(struct scsi_cmnd *cmd, char status)
+{
+	cmd->result |= status << 8;
+}
+
+static inline void set_host_byte(struct scsi_cmnd *cmd, char status)
+{
+	cmd->result |= status << 16;
+}
+
+static inline void set_driver_byte(struct scsi_cmnd *cmd, char status)
+{
+	cmd->result |= status << 24;
+}
+
 
 #define sense_class(sense)  (((sense) >> 4) & 0x7)
 #define sense_error(sense)  ((sense) & 0xf)

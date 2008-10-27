@@ -554,7 +554,7 @@ static int ax_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 
 	spin_lock_irqsave(&ax->mii_lock, flags);
 	mii_ethtool_gset(&ax->mii, cmd);
-	spin_lock_irqsave(&ax->mii_lock, flags);
+	spin_unlock_irqrestore(&ax->mii_lock, flags);
 
 	return 0;
 }
@@ -567,7 +567,7 @@ static int ax_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 
 	spin_lock_irqsave(&ax->mii_lock, flags);
 	rc = mii_ethtool_sset(&ax->mii, cmd);
-	spin_lock_irqsave(&ax->mii_lock, flags);
+	spin_unlock_irqrestore(&ax->mii_lock, flags);
 
 	return rc;
 }
@@ -1005,3 +1005,4 @@ module_exit(axdrv_exit);
 MODULE_DESCRIPTION("AX88796 10/100 Ethernet platform driver");
 MODULE_AUTHOR("Ben Dooks, <ben@simtec.co.uk>");
 MODULE_LICENSE("GPL v2");
+MODULE_ALIAS("platform:ax88796");

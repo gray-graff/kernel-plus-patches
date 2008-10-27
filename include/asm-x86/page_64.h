@@ -5,7 +5,7 @@
 
 #define THREAD_ORDER	1
 #define THREAD_SIZE  (PAGE_SIZE << THREAD_ORDER)
-#define CURRENT_MASK (~(THREAD_SIZE-1))
+#define CURRENT_MASK (~(THREAD_SIZE - 1))
 
 #define EXCEPTION_STACK_ORDER 0
 #define EXCEPTION_STKSZ (PAGE_SIZE << EXCEPTION_STACK_ORDER)
@@ -26,7 +26,13 @@
 #define PUD_PAGE_SIZE		(_AC(1, UL) << PUD_SHIFT)
 #define PUD_PAGE_MASK		(~(PUD_PAGE_SIZE-1))
 
-#define __PAGE_OFFSET           _AC(0xffff810000000000, UL)
+/*
+ * Set __PAGE_OFFSET to the most negative possible address +
+ * PGDIR_SIZE*16 (pgd slot 272).  The gap is to allow a space for a
+ * hypervisor to fit.  Choosing 16 slots here is arbitrary, but it's
+ * what Xen requires.
+ */
+#define __PAGE_OFFSET           _AC(0xffff880000000000, UL)
 
 #define __PHYSICAL_START	CONFIG_PHYSICAL_START
 #define __KERNEL_ALIGN		0x200000
@@ -48,18 +54,18 @@
 #define __VIRTUAL_MASK_SHIFT	48
 
 /*
- * Kernel image size is limited to 128 MB (see level2_kernel_pgt in
+ * Kernel image size is limited to 512 MB (see level2_kernel_pgt in
  * arch/x86/kernel/head_64.S), and it is mapped here:
  */
-#define KERNEL_IMAGE_SIZE	(128*1024*1024)
+#define KERNEL_IMAGE_SIZE	(512 * 1024 * 1024)
 #define KERNEL_IMAGE_START	_AC(0xffffffff80000000, UL)
 
 #ifndef __ASSEMBLY__
 void clear_page(void *page);
 void copy_page(void *to, void *from);
 
-extern unsigned long end_pfn;
-extern unsigned long end_pfn_map;
+/* duplicated to the one in bootmem.h */
+extern unsigned long max_pfn;
 extern unsigned long phys_base;
 
 extern unsigned long __phys_addr(unsigned long);
@@ -81,10 +87,18 @@ typedef struct { pteval_t pte; } pte_t;
 
 #define vmemmap ((struct page *)VMEMMAP_START)
 
+extern unsigned long init_memory_mapping(unsigned long start,
+					 unsigned long end);
+
+extern void initmem_init(unsigned long start_pfn, unsigned long end_pfn);
+
+extern void init_extra_mapping_uc(unsigned long phys, unsigned long size);
+extern void init_extra_mapping_wb(unsigned long phys, unsigned long size);
+
 #endif	/* !__ASSEMBLY__ */
 
 #ifdef CONFIG_FLATMEM
-#define pfn_valid(pfn)          ((pfn) < end_pfn)
+#define pfn_valid(pfn)          ((pfn) < max_pfn)
 #endif
 
 

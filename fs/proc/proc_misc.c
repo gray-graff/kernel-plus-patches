@@ -24,6 +24,7 @@
 #include <linux/tty.h>
 #include <linux/string.h>
 #include <linux/mman.h>
+#include <linux/quicklist.h>
 #include <linux/proc_fs.h>
 #include <linux/ioport.h>
 #include <linux/mm.h>
@@ -123,6 +124,11 @@ static int uptime_read_proc(char *page, char **start, off_t off,
 	return proc_calc_metrics(page, start, off, count, eof, len);
 }
 
+int __attribute__((weak)) arch_report_meminfo(char *page)
+{
+	return 0;
+}
+
 static int meminfo_read_proc(char *page, char **start, off_t off,
 				 int count, int *eof, void *data)
 {
@@ -139,7 +145,7 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	si_meminfo(&i);
 	si_swapinfo(&i);
-	committed = atomic_read(&vm_committed_space);
+	committed = atomic_long_read(&vm_committed_space);
 	allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
 
@@ -177,8 +183,12 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 		"SReclaimable: %8lu kB\n"
 		"SUnreclaim:   %8lu kB\n"
 		"PageTables:   %8lu kB\n"
+#ifdef CONFIG_QUICKLIST
+		"Quicklists:   %8lu kB\n"
+#endif
 		"NFS_Unstable: %8lu kB\n"
 		"Bounce:       %8lu kB\n"
+		"WritebackTmp: %8lu kB\n"
 		"CommitLimit:  %8lu kB\n"
 		"Committed_AS: %8lu kB\n"
 		"VmallocTotal: %8lu kB\n"
@@ -208,8 +218,12 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 		K(global_page_state(NR_SLAB_RECLAIMABLE)),
 		K(global_page_state(NR_SLAB_UNRECLAIMABLE)),
 		K(global_page_state(NR_PAGETABLE)),
+#ifdef CONFIG_QUICKLIST
+		K(quicklist_total_size()),
+#endif
 		K(global_page_state(NR_UNSTABLE_NFS)),
 		K(global_page_state(NR_BOUNCE)),
+		K(global_page_state(NR_WRITEBACK_TEMP)),
 		K(allowed),
 		K(committed),
 		(unsigned long)VMALLOC_TOTAL >> 10,
@@ -219,11 +233,12 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 
 		len += hugetlb_report_meminfo(page + len);
 
+	len += arch_report_meminfo(page + len);
+
 	return proc_calc_metrics(page, start, off, count, eof, len);
 #undef K
 }
 
-extern const struct seq_operations fragmentation_op;
 static int fragmentation_open(struct inode *inode, struct file *file)
 {
 	(void)inode;
@@ -237,7 +252,6 @@ static const struct file_operations fragmentation_file_operations = {
 	.release	= seq_release,
 };
 
-extern const struct seq_operations pagetypeinfo_op;
 static int pagetypeinfo_open(struct inode *inode, struct file *file)
 {
 	return seq_open(file, &pagetypeinfo_op);
@@ -250,7 +264,6 @@ static const struct file_operations pagetypeinfo_file_ops = {
 	.release	= seq_release,
 };
 
-extern const struct seq_operations zoneinfo_op;
 static int zoneinfo_open(struct inode *inode, struct file *file)
 {
 	return seq_open(file, &zoneinfo_op);
@@ -347,7 +360,6 @@ static const struct file_operations proc_devinfo_operations = {
 	.release	= seq_release,
 };
 
-extern const struct seq_operations vmstat_op;
 static int vmstat_open(struct inode *inode, struct file *file)
 {
 	return seq_open(file, &vmstat_op);
@@ -456,6 +468,38 @@ static const struct file_operations proc_slabstats_operations = {
 #endif
 #endif
 
+#ifdef CONFIG_MMU
+static int vmalloc_open(struct inode *inode, struct file *file)
+{
+	unsigned int *ptr = NULL;
+	int ret;
+
+	if (NUMA_BUILD)
+		ptr = kmalloc(nr_node_ids * sizeof(unsigned int), GFP_KERNEL);
+	ret = seq_open(file, &vmalloc_op);
+	if (!ret) {
+		struct seq_file *m = file->private_data;
+		m->private = ptr;
+	} else
+		kfree(ptr);
+	return ret;
+}
+
+static const struct file_operations proc_vmalloc_operations = {
+	.open		= vmalloc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release_private,
+};
+#endif
+
+#ifndef arch_irq_stat_cpu
+#define arch_irq_stat_cpu(cpu) 0
+#endif
+#ifndef arch_irq_stat
+#define arch_irq_stat() 0
+#endif
+
 static int show_stat(struct seq_file *p, void *v)
 {
 	int i;
@@ -493,7 +537,9 @@ static int show_stat(struct seq_file *p, void *v)
 			sum += temp;
 			per_irq_sum[j] += temp;
 		}
+		sum += arch_irq_stat_cpu(i);
 	}
+	sum += arch_irq_stat();
 
 	seq_printf(p, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
 		(unsigned long long)cputime64_to_clock_t(user),
@@ -700,7 +746,7 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 	pfn = src / KPMSIZE;
 	count = min_t(size_t, count, (max_pfn * KPMSIZE) - src);
 	if (src & KPMMASK || count & KPMMASK)
-		return -EIO;
+		return -EINVAL;
 
 	while (count > 0) {
 		ppage = NULL;
@@ -710,7 +756,7 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 		if (!ppage)
 			pcount = 0;
 		else
-			pcount = atomic_read(&ppage->_count);
+			pcount = page_mapcount(ppage);
 
 		if (put_user(pcount, out++)) {
 			ret = -EFAULT;
@@ -766,7 +812,7 @@ static ssize_t kpageflags_read(struct file *file, char __user *buf,
 	pfn = src / KPMSIZE;
 	count = min_t(unsigned long, count, (max_pfn * KPMSIZE) - src);
 	if (src & KPMMASK || count & KPMMASK)
-		return -EIO;
+		return -EINVAL;
 
 	while (count > 0) {
 		ppage = NULL;
@@ -812,14 +858,6 @@ static struct file_operations proc_kpageflags_operations = {
 
 struct proc_dir_entry *proc_root_kcore;
 
-void create_seq_entry(char *name, mode_t mode, const struct file_operations *f)
-{
-	struct proc_dir_entry *entry;
-	entry = create_proc_entry(name, mode, NULL);
-	if (entry)
-		entry->proc_fops = f;
-}
-
 void __init proc_misc_init(void)
 {
 	static struct {
@@ -848,63 +886,52 @@ void __init proc_misc_init(void)
 
 	/* And now for trickier ones */
 #ifdef CONFIG_PRINTK
-	{
-		struct proc_dir_entry *entry;
-		entry = create_proc_entry("kmsg", S_IRUSR, &proc_root);
-		if (entry)
-			entry->proc_fops = &proc_kmsg_operations;
-	}
+	proc_create("kmsg", S_IRUSR, NULL, &proc_kmsg_operations);
 #endif
-	create_seq_entry("locks", 0, &proc_locks_operations);
-	create_seq_entry("devices", 0, &proc_devinfo_operations);
-	create_seq_entry("cpuinfo", 0, &proc_cpuinfo_operations);
+	proc_create("locks", 0, NULL, &proc_locks_operations);
+	proc_create("devices", 0, NULL, &proc_devinfo_operations);
+	proc_create("cpuinfo", 0, NULL, &proc_cpuinfo_operations);
 #ifdef CONFIG_BLOCK
-	create_seq_entry("partitions", 0, &proc_partitions_operations);
+	proc_create("partitions", 0, NULL, &proc_partitions_operations);
 #endif
-	create_seq_entry("stat", 0, &proc_stat_operations);
-	create_seq_entry("interrupts", 0, &proc_interrupts_operations);
+	proc_create("stat", 0, NULL, &proc_stat_operations);
+	proc_create("interrupts", 0, NULL, &proc_interrupts_operations);
 #ifdef CONFIG_SLABINFO
-	create_seq_entry("slabinfo",S_IWUSR|S_IRUGO,&proc_slabinfo_operations);
+	proc_create("slabinfo",S_IWUSR|S_IRUGO,NULL,&proc_slabinfo_operations);
 #ifdef CONFIG_DEBUG_SLAB_LEAK
-	create_seq_entry("slab_allocators", 0 ,&proc_slabstats_operations);
+	proc_create("slab_allocators", 0, NULL, &proc_slabstats_operations);
 #endif
 #endif
-	create_seq_entry("buddyinfo",S_IRUGO, &fragmentation_file_operations);
-	create_seq_entry("pagetypeinfo", S_IRUGO, &pagetypeinfo_file_ops);
-	create_seq_entry("vmstat",S_IRUGO, &proc_vmstat_file_operations);
-	create_seq_entry("zoneinfo",S_IRUGO, &proc_zoneinfo_file_operations);
+#ifdef CONFIG_MMU
+	proc_create("vmallocinfo", S_IRUSR, NULL, &proc_vmalloc_operations);
+#endif
+	proc_create("buddyinfo", S_IRUGO, NULL, &fragmentation_file_operations);
+	proc_create("pagetypeinfo", S_IRUGO, NULL, &pagetypeinfo_file_ops);
+	proc_create("vmstat", S_IRUGO, NULL, &proc_vmstat_file_operations);
+	proc_create("zoneinfo", S_IRUGO, NULL, &proc_zoneinfo_file_operations);
 #ifdef CONFIG_BLOCK
-	create_seq_entry("diskstats", 0, &proc_diskstats_operations);
+	proc_create("diskstats", 0, NULL, &proc_diskstats_operations);
 #endif
 #ifdef CONFIG_MODULES
-	create_seq_entry("modules", 0, &proc_modules_operations);
+	proc_create("modules", 0, NULL, &proc_modules_operations);
 #endif
 #ifdef CONFIG_SCHEDSTATS
-	create_seq_entry("schedstat", 0, &proc_schedstat_operations);
+	proc_create("schedstat", 0, NULL, &proc_schedstat_operations);
 #endif
 #ifdef CONFIG_PROC_KCORE
-	proc_root_kcore = create_proc_entry("kcore", S_IRUSR, NULL);
-	if (proc_root_kcore) {
-		proc_root_kcore->proc_fops = &proc_kcore_operations;
+	proc_root_kcore = proc_create("kcore", S_IRUSR, NULL, &proc_kcore_operations);
+	if (proc_root_kcore)
 		proc_root_kcore->size =
 				(size_t)high_memory - PAGE_OFFSET + PAGE_SIZE;
-	}
 #endif
 #ifdef CONFIG_PROC_PAGE_MONITOR
-	create_seq_entry("kpagecount", S_IRUSR, &proc_kpagecount_operations);
-	create_seq_entry("kpageflags", S_IRUSR, &proc_kpageflags_operations);
+	proc_create("kpagecount", S_IRUSR, NULL, &proc_kpagecount_operations);
+	proc_create("kpageflags", S_IRUSR, NULL, &proc_kpageflags_operations);
 #endif
 #ifdef CONFIG_PROC_VMCORE
-	proc_vmcore = create_proc_entry("vmcore", S_IRUSR, NULL);
-	if (proc_vmcore)
-		proc_vmcore->proc_fops = &proc_vmcore_operations;
+	proc_vmcore = proc_create("vmcore", S_IRUSR, NULL, &proc_vmcore_operations);
 #endif
 #ifdef CONFIG_MAGIC_SYSRQ
-	{
-		struct proc_dir_entry *entry;
-		entry = create_proc_entry("sysrq-trigger", S_IWUSR, NULL);
-		if (entry)
-			entry->proc_fops = &proc_sysrq_trigger_operations;
-	}
+	proc_create("sysrq-trigger", S_IWUSR, NULL, &proc_sysrq_trigger_operations);
 #endif
 }

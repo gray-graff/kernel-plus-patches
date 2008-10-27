@@ -13,7 +13,7 @@
 /*
  * TODO:
  * - remove "mark pages reserved-hacks" from memory allocation code
- *   and implement nopage()
+ *   and implement fault()
  * - check decimation, calculating and reporting image size when
  *   using decimation
  * - implement read(), user mode buffers and overlay (?)
@@ -38,8 +38,10 @@
 #include <linux/i2c.h>
 #include <linux/i2c-algo-sgi.h>
 
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
+#include <media/v4l2-ioctl.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/video_decoder.h>
 #include <linux/mutex.h>
 
@@ -333,7 +335,7 @@ struct vino_settings {
  *
  * Use non-zero value to enable conversion.
  */
-static int vino_pixel_conversion = 0;
+static int vino_pixel_conversion;
 
 module_param_named(pixelconv, vino_pixel_conversion, int, 0);
 
@@ -4370,8 +4372,8 @@ static int vino_ioctl(struct inode *inode, struct file *file,
 
 /* Initialization and cleanup */
 
-// __initdata
-static int vino_init_stage = 0;
+/* __initdata */
+static int vino_init_stage;
 
 static const struct file_operations vino_fops = {
 	.owner		= THIS_MODULE,
@@ -4385,8 +4387,6 @@ static const struct file_operations vino_fops = {
 
 static struct video_device v4l_device_template = {
 	.name		= "NOT SET",
-	//.type		= VID_TYPE_CAPTURE | VID_TYPE_SUBCAPTURE |
-	//	VID_TYPE_CLIPPING | VID_TYPE_SCALES, VID_TYPE_OVERLAY
 	.fops		= &vino_fops,
 	.minor		= -1,
 };

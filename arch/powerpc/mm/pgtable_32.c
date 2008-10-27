@@ -29,6 +29,7 @@
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
+#include <asm/fixmap.h>
 #include <asm/io.h>
 
 #include "mmu_decl.h"
@@ -52,9 +53,9 @@ extern void hash_page_sync(void);
 #endif
 
 #ifdef HAVE_BATS
-extern unsigned long v_mapped_by_bats(unsigned long va);
-extern unsigned long p_mapped_by_bats(unsigned long pa);
-void setbat(int index, unsigned long virt, unsigned long phys,
+extern phys_addr_t v_mapped_by_bats(unsigned long va);
+extern unsigned long p_mapped_by_bats(phys_addr_t pa);
+void setbat(int index, unsigned long virt, phys_addr_t phys,
 	    unsigned int size, int flags);
 
 #else /* !HAVE_BATS */
@@ -144,13 +145,20 @@ void pte_free(struct mm_struct *mm, pgtable_t ptepage)
 void __iomem *
 ioremap(phys_addr_t addr, unsigned long size)
 {
-	return __ioremap(addr, size, _PAGE_NO_CACHE);
+	return __ioremap(addr, size, _PAGE_NO_CACHE | _PAGE_GUARDED);
 }
 EXPORT_SYMBOL(ioremap);
 
 void __iomem *
 ioremap_flags(phys_addr_t addr, unsigned long size, unsigned long flags)
 {
+	/* writeable implies dirty for kernel addresses */
+	if (flags & _PAGE_RW)
+		flags |= _PAGE_DIRTY | _PAGE_HWWRITE;
+
+	/* we don't want to let _PAGE_USER and _PAGE_EXEC leak out */
+	flags &= ~(_PAGE_USER | _PAGE_EXEC | _PAGE_HWEXEC);
+
 	return __ioremap(addr, size, flags);
 }
 EXPORT_SYMBOL(ioremap_flags);
@@ -161,6 +169,14 @@ __ioremap(phys_addr_t addr, unsigned long size, unsigned long flags)
 	unsigned long v, i;
 	phys_addr_t p;
 	int err;
+
+	/* Make sure we have the base flags */
+	if ((flags & _PAGE_PRESENT) == 0)
+		flags |= _PAGE_KERNEL;
+
+	/* Non-cacheable page cannot be coherent */
+	if (flags & _PAGE_NO_CACHE)
+		flags &= ~_PAGE_COHERENT;
 
 	/*
 	 * Choose an address to map it to.
@@ -217,11 +233,6 @@ __ioremap(phys_addr_t addr, unsigned long size, unsigned long flags)
 	} else {
 		v = (ioremap_bot -= size);
 	}
-
-	if ((flags & _PAGE_PRESENT) == 0)
-		flags |= _PAGE_KERNEL;
-	if (flags & _PAGE_NO_CACHE)
-		flags |= _PAGE_GUARDED;
 
 	/*
 	 * Should check if it is a candidate for a BAT mapping
@@ -281,12 +292,13 @@ int map_page(unsigned long va, phys_addr_t pa, int flags)
  */
 void __init mapin_ram(void)
 {
-	unsigned long v, p, s, f;
+	unsigned long v, s, f;
+	phys_addr_t p;
 	int ktext;
 
 	s = mmu_mapin_ram();
 	v = KERNELBASE + s;
-	p = PPC_MEMSTART + s;
+	p = memstart_addr + s;
 	for (; s < total_lowmem; s += PAGE_SIZE) {
 		ktext = ((char *) v >= _stext && (char *) v < etext);
 		f = ktext ?_PAGE_RAM_TEXT : _PAGE_RAM;
@@ -386,3 +398,25 @@ void kernel_map_pages(struct page *page, int numpages, int enable)
 	change_page_attr(page, numpages, enable ? PAGE_KERNEL : __pgprot(0));
 }
 #endif /* CONFIG_DEBUG_PAGEALLOC */
+
+static int fixmaps;
+unsigned long FIXADDR_TOP = 0xfffff000;
+EXPORT_SYMBOL(FIXADDR_TOP);
+
+void __set_fixmap (enum fixed_addresses idx, phys_addr_t phys, pgprot_t flags)
+{
+	unsigned long address = __fix_to_virt(idx);
+
+	if (idx >= __end_of_fixed_addresses) {
+		BUG();
+		return;
+	}
+
+	map_page(address, phys, pgprot_val(flags));
+	fixmaps++;
+}
+
+void __this_fixmap_does_not_exist(void)
+{
+	WARN_ON(1);
+}

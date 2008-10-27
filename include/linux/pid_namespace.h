@@ -14,16 +14,21 @@ struct pidmap {
 
 #define PIDMAP_ENTRIES         ((PID_MAX_LIMIT + 8*PAGE_SIZE - 1)/PAGE_SIZE/8)
 
+struct bsd_acct_struct;
+
 struct pid_namespace {
 	struct kref kref;
 	struct pidmap pidmap[PIDMAP_ENTRIES];
 	int last_pid;
 	struct task_struct *child_reaper;
 	struct kmem_cache *pid_cachep;
-	int level;
+	unsigned int level;
 	struct pid_namespace *parent;
 #ifdef CONFIG_PROC_FS
 	struct vfsmount *proc_mnt;
+#endif
+#ifdef CONFIG_BSD_PROCESS_ACCT
+	struct bsd_acct_struct *bacct;
 #endif
 };
 
@@ -84,5 +89,8 @@ static inline struct task_struct *task_child_reaper(struct task_struct *tsk)
 	BUG_ON(tsk != current);
 	return tsk->nsproxy->pid_ns->child_reaper;
 }
+
+void pidhash_init(void);
+void pidmap_init(void);
 
 #endif /* _LINUX_PID_NS_H */

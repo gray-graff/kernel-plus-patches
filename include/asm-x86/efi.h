@@ -20,7 +20,7 @@ extern unsigned long asmlinkage efi_call_phys(void *, ...);
  */
 
 #define efi_call_virt(f, args...) \
-     ((efi_##f##_t __attribute__((regparm(0)))*)efi.systab->runtime->f)(args)
+	((efi_##f##_t __attribute__((regparm(0)))*)efi.systab->runtime->f)(args)
 
 #define efi_call_virt0(f)		efi_call_virt(f)
 #define efi_call_virt1(f, a1)		efi_call_virt(f, a1)
@@ -86,11 +86,11 @@ extern u64 efi_call6(void *fp, u64 arg1, u64 arg2, u64 arg3,
 	efi_call6((void *)(efi.systab->runtime->f), (u64)(a1), (u64)(a2), \
 		  (u64)(a3), (u64)(a4), (u64)(a5), (u64)(a6))
 
-extern void *efi_ioremap(unsigned long addr, unsigned long size);
+extern void __iomem *efi_ioremap(unsigned long addr, unsigned long size);
 
 #endif /* CONFIG_X86_32 */
 
-extern void efi_reserve_bootmem(void);
+extern void efi_reserve_early(void);
 extern void efi_call_phys_prelog(void);
 extern void efi_call_phys_epilog(void);
 

@@ -165,7 +165,7 @@ void dlm_print_lkb(struct dlm_lkb *lkb)
 	       lkb->lkb_grmode, lkb->lkb_wait_type, lkb->lkb_ast_type);
 }
 
-void dlm_print_rsb(struct dlm_rsb *r)
+static void dlm_print_rsb(struct dlm_rsb *r)
 {
 	printk(KERN_ERR "rsb: nodeid %d flags %lx first %x rlc %d name %s\n",
 	       r->res_nodeid, r->res_flags, r->res_first_lkid,
@@ -363,6 +363,7 @@ static int search_rsb_list(struct list_head *head, char *name, int len,
 		if (len == r->res_length && !memcmp(name, r->res_name, len))
 			goto found;
 	}
+	*r_ret = NULL;
 	return -EBADR;
 
  found:
@@ -1782,7 +1783,8 @@ static void grant_pending_locks(struct dlm_rsb *r)
 
 	list_for_each_entry_safe(lkb, s, &r->res_grantqueue, lkb_statequeue) {
 		if (lkb->lkb_bastfn && lock_requires_bast(lkb, high, cw)) {
-			if (cw && high == DLM_LOCK_PR)
+			if (cw && high == DLM_LOCK_PR &&
+			    lkb->lkb_grmode == DLM_LOCK_PR)
 				queue_bast(r, lkb, DLM_LOCK_CW);
 			else
 				queue_bast(r, lkb, high);
@@ -1956,8 +1958,7 @@ static void confirm_master(struct dlm_rsb *r, int error)
 			list_del_init(&lkb->lkb_rsb_lookup);
 			r->res_first_lkid = lkb->lkb_id;
 			_request_lock(r, lkb);
-		} else
-			r->res_nodeid = -1;
+		}
 		break;
 
 	default:

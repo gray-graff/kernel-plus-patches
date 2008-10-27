@@ -7,8 +7,6 @@
  *
  *	Adapted from linux/net/ipv4/raw.c
  *
- *	$Id: raw.c,v 1.51 2002/02/01 22:01:04 davem Exp $
- *
  *	Fixes:
  *	Hideaki YOSHIFUJI	:	sin6_scope_id support
  *	YOSHIFUJI,H.@USAGI	:	raw checksum (RFC2292(bis) compliance)
@@ -53,6 +51,7 @@
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
 #include <net/mip6.h>
 #endif
+#include <linux/mroute6.h>
 
 #include <net/raw.h>
 #include <net/rawv6.h>
@@ -62,19 +61,8 @@
 #include <linux/seq_file.h>
 
 static struct raw_hashinfo raw_v6_hashinfo = {
-	.lock = __RW_LOCK_UNLOCKED(),
+	.lock = __RW_LOCK_UNLOCKED(raw_v6_hashinfo.lock),
 };
-
-static void raw_v6_hash(struct sock *sk)
-{
-	raw_hash_sk(sk, &raw_v6_hashinfo);
-}
-
-static void raw_v6_unhash(struct sock *sk)
-{
-	raw_unhash_sk(sk, &raw_v6_hashinfo);
-}
-
 
 static struct sock *__raw_v6_lookup(struct net *net, struct sock *sk,
 		unsigned short num, struct in6_addr *loc_addr,
@@ -87,7 +75,7 @@ static struct sock *__raw_v6_lookup(struct net *net, struct sock *sk,
 		if (inet_sk(sk)->num == num) {
 			struct ipv6_pinfo *np = inet6_sk(sk);
 
-			if (sk->sk_net != net)
+			if (!net_eq(sock_net(sk), net))
 				continue;
 
 			if (!ipv6_addr_any(&np->daddr) &&
@@ -179,15 +167,10 @@ static int ipv6_raw_deliver(struct sk_buff *skb, int nexthdr)
 	read_lock(&raw_v6_hashinfo.lock);
 	sk = sk_head(&raw_v6_hashinfo.ht[hash]);
 
-	/*
-	 *	The first socket found will be delivered after
-	 *	delivery to transport protocols.
-	 */
-
 	if (sk == NULL)
 		goto out;
 
-	net = skb->dev->nd_net;
+	net = dev_net(skb->dev);
 	sk = __raw_v6_lookup(net, sk, nexthdr, daddr, saddr, IP6CB(skb)->iif);
 
 	while (sk) {
@@ -291,7 +274,7 @@ static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 			if (!sk->sk_bound_dev_if)
 				goto out;
 
-			dev = dev_get_by_index(sk->sk_net, sk->sk_bound_dev_if);
+			dev = dev_get_by_index(sock_net(sk), sk->sk_bound_dev_if);
 			if (!dev) {
 				err = -ENODEV;
 				goto out;
@@ -304,7 +287,7 @@ static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		v4addr = LOOPBACK4_IPV6;
 		if (!(addr_type & IPV6_ADDR_MULTICAST))	{
 			err = -EADDRNOTAVAIL;
-			if (!ipv6_chk_addr(sk->sk_net, &addr->sin6_addr,
+			if (!ipv6_chk_addr(sock_net(sk), &addr->sin6_addr,
 					   dev, 0)) {
 				if (dev)
 					dev_put(dev);
@@ -372,11 +355,11 @@ void raw6_icmp_error(struct sk_buff *skb, int nexthdr,
 	read_lock(&raw_v6_hashinfo.lock);
 	sk = sk_head(&raw_v6_hashinfo.ht[hash]);
 	if (sk != NULL) {
-		struct ipv6hdr *hdr = (struct ipv6hdr *) skb->data;
-
-		saddr = &hdr->saddr;
-		daddr = &hdr->daddr;
-		net = skb->dev->nd_net;
+		/* Note: ipv6_hdr(skb) != skb->data */
+		struct ipv6hdr *ip6h = (struct ipv6hdr *)skb->data;
+		saddr = &ip6h->saddr;
+		daddr = &ip6h->daddr;
+		net = dev_net(skb->dev);
 
 		while ((sk = __raw_v6_lookup(net, sk, nexthdr, saddr, daddr,
 						IP6CB(skb)->iif))) {
@@ -394,14 +377,14 @@ static inline int rawv6_rcv_skb(struct sock * sk, struct sk_buff * skb)
 	    skb_checksum_complete(skb)) {
 		atomic_inc(&sk->sk_drops);
 		kfree_skb(skb);
-		return 0;
+		return NET_RX_DROP;
 	}
 
 	/* Charge it to the socket. */
 	if (sock_queue_rcv_skb(sk,skb)<0) {
 		atomic_inc(&sk->sk_drops);
 		kfree_skb(skb);
-		return 0;
+		return NET_RX_DROP;
 	}
 
 	return 0;
@@ -446,7 +429,7 @@ int rawv6_rcv(struct sock *sk, struct sk_buff *skb)
 		if (skb_checksum_complete(skb)) {
 			atomic_inc(&sk->sk_drops);
 			kfree_skb(skb);
-			return 0;
+			return NET_RX_DROP;
 		}
 	}
 
@@ -624,7 +607,6 @@ static int rawv6_send_hdrinc(struct sock *sk, void *from, int length,
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6hdr *iph;
 	struct sk_buff *skb;
-	unsigned int hh_len;
 	int err;
 
 	if (length > rt->u.dst.dev->mtu) {
@@ -634,13 +616,12 @@ static int rawv6_send_hdrinc(struct sock *sk, void *from, int length,
 	if (flags&MSG_PROBE)
 		goto out;
 
-	hh_len = LL_RESERVED_SPACE(rt->u.dst.dev);
-
-	skb = sock_alloc_send_skb(sk, length+hh_len+15,
-				  flags&MSG_DONTWAIT, &err);
+	skb = sock_alloc_send_skb(sk,
+				  length + LL_ALLOCATED_SPACE(rt->u.dst.dev) + 15,
+				  flags & MSG_DONTWAIT, &err);
 	if (skb == NULL)
 		goto error;
-	skb_reserve(skb, hh_len);
+	skb_reserve(skb, LL_RESERVED_SPACE(rt->u.dst.dev));
 
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
@@ -822,15 +803,6 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		fl.fl6_flowlabel = np->flow_label;
 	}
 
-	if (ipv6_addr_any(daddr)) {
-		/*
-		 * unspecified destination address
-		 * treated as error... is this correct ?
-		 */
-		fl6_sock_release(flowlabel);
-		return(-EINVAL);
-	}
-
 	if (fl.oif == 0)
 		fl.oif = sk->sk_bound_dev_if;
 
@@ -839,7 +811,7 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		memset(opt, 0, sizeof(struct ipv6_txoptions));
 		opt->tot_len = sizeof(struct ipv6_txoptions);
 
-		err = datagram_send_ctl(msg, &fl, opt, &hlimit, &tclass);
+		err = datagram_send_ctl(sock_net(sk), msg, &fl, opt, &hlimit, &tclass);
 		if (err < 0) {
 			fl6_sock_release(flowlabel);
 			return err;
@@ -863,7 +835,10 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 	if (err)
 		goto out;
 
-	ipv6_addr_copy(&fl.fl6_dst, daddr);
+	if (!ipv6_addr_any(daddr))
+		ipv6_addr_copy(&fl.fl6_dst, daddr);
+	else
+		fl.fl6_dst.s6_addr[15] = 0x1; /* :: means loopback (BSD'ism) */
 	if (ipv6_addr_any(&fl.fl6_src) && !ipv6_addr_any(&np->saddr))
 		ipv6_addr_copy(&fl.fl6_src, &np->saddr);
 
@@ -898,9 +873,7 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		else
 			hlimit = np->hop_limit;
 		if (hlimit < 0)
-			hlimit = dst_metric(dst, RTAX_HOPLIMIT);
-		if (hlimit < 0)
-			hlimit = ipv6_get_hoplimit(dst->dev);
+			hlimit = ip6_dst_hoplimit(dst);
 	}
 
 	if (tclass < 0) {
@@ -994,6 +967,19 @@ static int do_rawv6_setsockopt(struct sock *sk, int level, int optname,
 
 	switch (optname) {
 		case IPV6_CHECKSUM:
+			if (inet_sk(sk)->num == IPPROTO_ICMPV6 &&
+			    level == IPPROTO_IPV6) {
+				/*
+				 * RFC3542 tells that IPV6_CHECKSUM socket
+				 * option in the IPPROTO_IPV6 level is not
+				 * allowed on ICMPv6 sockets.
+				 * If you want to set it, use IPPROTO_RAW
+				 * level IPV6_CHECKSUM socket option
+				 * (Linux extension).
+				 */
+				return -EINVAL;
+			}
+
 			/* You may get strange result with a positive odd offset;
 			   RFC2292bis agrees with me. */
 			if (val > 0 && (val&1))
@@ -1069,6 +1055,11 @@ static int do_rawv6_getsockopt(struct sock *sk, int level, int optname,
 
 	switch (optname) {
 	case IPV6_CHECKSUM:
+		/*
+		 * We allow getsockopt() for IPPROTO_IPV6-level
+		 * IPV6_CHECKSUM socket option on ICMPv6 sockets
+		 * since RFC3542 is silent about it.
+		 */
 		if (rp->checksum == 0)
 			val = -1;
 		else
@@ -1155,16 +1146,29 @@ static int rawv6_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		}
 
 		default:
+#ifdef CONFIG_IPV6_MROUTE
+			return ip6mr_ioctl(sk, cmd, (void __user *)arg);
+#else
 			return -ENOIOCTLCMD;
+#endif
 	}
 }
 
 static void rawv6_close(struct sock *sk, long timeout)
 {
 	if (inet_sk(sk)->num == IPPROTO_RAW)
-		ip6_ra_control(sk, -1, NULL);
-
+		ip6_ra_control(sk, -1);
+	ip6mr_sk_done(sk);
 	sk_common_release(sk);
+}
+
+static void raw6_destroy(struct sock *sk)
+{
+	lock_sock(sk);
+	ip6_flush_pending_frames(sk);
+	release_sock(sk);
+
+	inet6_destroy_sock(sk);
 }
 
 static int rawv6_init_sk(struct sock *sk)
@@ -1186,31 +1190,29 @@ static int rawv6_init_sk(struct sock *sk)
 	return(0);
 }
 
-DEFINE_PROTO_INUSE(rawv6)
-
 struct proto rawv6_prot = {
 	.name		   = "RAWv6",
 	.owner		   = THIS_MODULE,
 	.close		   = rawv6_close,
+	.destroy	   = raw6_destroy,
 	.connect	   = ip6_datagram_connect,
 	.disconnect	   = udp_disconnect,
 	.ioctl		   = rawv6_ioctl,
 	.init		   = rawv6_init_sk,
-	.destroy	   = inet6_destroy_sock,
 	.setsockopt	   = rawv6_setsockopt,
 	.getsockopt	   = rawv6_getsockopt,
 	.sendmsg	   = rawv6_sendmsg,
 	.recvmsg	   = rawv6_recvmsg,
 	.bind		   = rawv6_bind,
 	.backlog_rcv	   = rawv6_rcv_skb,
-	.hash		   = raw_v6_hash,
-	.unhash		   = raw_v6_unhash,
+	.hash		   = raw_hash_sk,
+	.unhash		   = raw_unhash_sk,
 	.obj_size	   = sizeof(struct raw6_sock),
+	.h.raw_hash	   = &raw_v6_hashinfo,
 #ifdef CONFIG_COMPAT
 	.compat_setsockopt = compat_rawv6_setsockopt,
 	.compat_getsockopt = compat_rawv6_getsockopt,
 #endif
-	REF_PROTO_INUSE(rawv6)
 };
 
 #ifdef CONFIG_PROC_FS
@@ -1249,7 +1251,7 @@ static int raw6_seq_show(struct seq_file *seq, void *v)
 			   "local_address                         "
 			   "remote_address                        "
 			   "st tx_queue rx_queue tr tm->when retrnsmt"
-			   "   uid  timeout inode  drops\n");
+			   "   uid  timeout inode ref pointer drops\n");
 	else
 		raw6_sock_seq_show(seq, v, raw_seq_private(seq)->bucket);
 	return 0;

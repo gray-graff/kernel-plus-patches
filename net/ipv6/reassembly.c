@@ -5,8 +5,6 @@
  *	Authors:
  *	Pedro Roque		<roque@di.fc.ul.pt>
  *
- *	$Id: reassembly.c,v 1.26 2001/03/07 22:00:57 davem Exp $
- *
  *	Based on: net/ipv4/ip_fragment.c
  *
  *	This program is free software; you can redistribute it and/or
@@ -197,17 +195,19 @@ static void ip6_frag_expire(unsigned long data)
 {
 	struct frag_queue *fq;
 	struct net_device *dev = NULL;
+	struct net *net;
 
 	fq = container_of((struct inet_frag_queue *)data, struct frag_queue, q);
 
 	spin_lock(&fq->q.lock);
 
-	if (fq->q.last_in & COMPLETE)
+	if (fq->q.last_in & INET_FRAG_COMPLETE)
 		goto out;
 
 	fq_kill(fq);
 
-	dev = dev_get_by_index(&init_net, fq->iif);
+	net = container_of(fq->q.net, struct net, ipv6.frags);
+	dev = dev_get_by_index(net, fq->iif);
 	if (!dev)
 		goto out;
 
@@ -217,7 +217,7 @@ static void ip6_frag_expire(unsigned long data)
 	rcu_read_unlock();
 
 	/* Don't send error if the first segment did not arrive. */
-	if (!(fq->q.last_in&FIRST_IN) || !fq->q.fragments)
+	if (!(fq->q.last_in & INET_FRAG_FIRST_IN) || !fq->q.fragments)
 		goto out;
 
 	/*
@@ -245,6 +245,8 @@ fq_find(struct net *net, __be32 id, struct in6_addr *src, struct in6_addr *dst,
 	arg.id = id;
 	arg.src = src;
 	arg.dst = dst;
+
+	read_lock(&ip6_frags.lock);
 	hash = ip6qhashfn(id, src, dst);
 
 	q = inet_frag_find(&net->ipv6.frags, &ip6_frags, &arg, hash);
@@ -265,7 +267,7 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 	struct net_device *dev;
 	int offset, end;
 
-	if (fq->q.last_in & COMPLETE)
+	if (fq->q.last_in & INET_FRAG_COMPLETE)
 		goto err;
 
 	offset = ntohs(fhdr->frag_off) & ~0x7;
@@ -294,9 +296,9 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 		 * or have different end, the segment is corrupted.
 		 */
 		if (end < fq->q.len ||
-		    ((fq->q.last_in & LAST_IN) && end != fq->q.len))
+		    ((fq->q.last_in & INET_FRAG_LAST_IN) && end != fq->q.len))
 			goto err;
-		fq->q.last_in |= LAST_IN;
+		fq->q.last_in |= INET_FRAG_LAST_IN;
 		fq->q.len = end;
 	} else {
 		/* Check if the fragment is rounded to 8 bytes.
@@ -314,7 +316,7 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 		}
 		if (end > fq->q.len) {
 			/* Some bits beyond end -> corruption. */
-			if (fq->q.last_in & LAST_IN)
+			if (fq->q.last_in & INET_FRAG_LAST_IN)
 				goto err;
 			fq->q.len = end;
 		}
@@ -417,10 +419,11 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 	 */
 	if (offset == 0) {
 		fq->nhoffset = nhoff;
-		fq->q.last_in |= FIRST_IN;
+		fq->q.last_in |= INET_FRAG_FIRST_IN;
 	}
 
-	if (fq->q.last_in == (FIRST_IN | LAST_IN) && fq->q.meat == fq->q.len)
+	if (fq->q.last_in == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
+	    fq->q.meat == fq->q.len)
 		return ip6_frag_reasm(fq, prev, dev);
 
 	write_lock(&ip6_frags.lock);
@@ -470,8 +473,8 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 		fq->q.fragments = head;
 	}
 
-	BUG_TRAP(head != NULL);
-	BUG_TRAP(FRAG6_CB(head)->offset == 0);
+	WARN_ON(head == NULL);
+	WARN_ON(FRAG6_CB(head)->offset != 0);
 
 	/* Unfragmented part is taken from the first segment. */
 	payload_len = ((head->data - skb_network_header(head)) -
@@ -600,7 +603,7 @@ static int ipv6_frag_rcv(struct sk_buff *skb)
 		return 1;
 	}
 
-	net = skb->dev->nd_net;
+	net = dev_net(skb->dev);
 	if (atomic_read(&net->ipv6.frags.mem) > net->ipv6.frags.high_thresh)
 		ip6_evictor(net, ip6_dst_idev(skb->dst));
 
@@ -629,7 +632,7 @@ static struct inet6_protocol frag_protocol =
 };
 
 #ifdef CONFIG_SYSCTL
-static struct ctl_table ip6_frags_ctl_table[] = {
+static struct ctl_table ip6_frags_ns_ctl_table[] = {
 	{
 		.ctl_name	= NET_IPV6_IP6FRAG_HIGH_THRESH,
 		.procname	= "ip6frag_high_thresh",
@@ -655,6 +658,10 @@ static struct ctl_table ip6_frags_ctl_table[] = {
 		.proc_handler	= &proc_dointvec_jiffies,
 		.strategy	= &sysctl_jiffies,
 	},
+	{ }
+};
+
+static struct ctl_table ip6_frags_ctl_table[] = {
 	{
 		.ctl_name	= NET_IPV6_IP6FRAG_SECRET_INTERVAL,
 		.procname	= "ip6frag_secret_interval",
@@ -667,21 +674,20 @@ static struct ctl_table ip6_frags_ctl_table[] = {
 	{ }
 };
 
-static int ip6_frags_sysctl_register(struct net *net)
+static int ip6_frags_ns_sysctl_register(struct net *net)
 {
 	struct ctl_table *table;
 	struct ctl_table_header *hdr;
 
-	table = ip6_frags_ctl_table;
+	table = ip6_frags_ns_ctl_table;
 	if (net != &init_net) {
-		table = kmemdup(table, sizeof(ip6_frags_ctl_table), GFP_KERNEL);
+		table = kmemdup(table, sizeof(ip6_frags_ns_ctl_table), GFP_KERNEL);
 		if (table == NULL)
 			goto err_alloc;
 
 		table[0].data = &net->ipv6.frags.high_thresh;
 		table[1].data = &net->ipv6.frags.low_thresh;
 		table[2].data = &net->ipv6.frags.timeout;
-		table[3].mode &= ~0222;
 	}
 
 	hdr = register_net_sysctl_table(net, net_ipv6_ctl_path, table);
@@ -698,7 +704,7 @@ err_alloc:
 	return -ENOMEM;
 }
 
-static void ip6_frags_sysctl_unregister(struct net *net)
+static void ip6_frags_ns_sysctl_unregister(struct net *net)
 {
 	struct ctl_table *table;
 
@@ -706,13 +712,36 @@ static void ip6_frags_sysctl_unregister(struct net *net)
 	unregister_net_sysctl_table(net->ipv6.sysctl.frags_hdr);
 	kfree(table);
 }
+
+static struct ctl_table_header *ip6_ctl_header;
+
+static int ip6_frags_sysctl_register(void)
+{
+	ip6_ctl_header = register_net_sysctl_rotable(net_ipv6_ctl_path,
+			ip6_frags_ctl_table);
+	return ip6_ctl_header == NULL ? -ENOMEM : 0;
+}
+
+static void ip6_frags_sysctl_unregister(void)
+{
+	unregister_net_sysctl_table(ip6_ctl_header);
+}
 #else
-static inline int ip6_frags_sysctl_register(struct net *net)
+static inline int ip6_frags_ns_sysctl_register(struct net *net)
 {
 	return 0;
 }
 
-static inline void ip6_frags_sysctl_unregister(struct net *net)
+static inline void ip6_frags_ns_sysctl_unregister(struct net *net)
+{
+}
+
+static inline int ip6_frags_sysctl_register(void)
+{
+	return 0;
+}
+
+static inline void ip6_frags_sysctl_unregister(void)
 {
 }
 #endif
@@ -725,12 +754,12 @@ static int ipv6_frags_init_net(struct net *net)
 
 	inet_frags_init_net(&net->ipv6.frags);
 
-	return ip6_frags_sysctl_register(net);
+	return ip6_frags_ns_sysctl_register(net);
 }
 
 static void ipv6_frags_exit_net(struct net *net)
 {
-	ip6_frags_sysctl_unregister(net);
+	ip6_frags_ns_sysctl_unregister(net);
 	inet_frags_exit_net(&net->ipv6.frags, &ip6_frags);
 }
 
@@ -747,7 +776,13 @@ int __init ipv6_frag_init(void)
 	if (ret)
 		goto out;
 
-	register_pernet_subsys(&ip6_frags_ops);
+	ret = ip6_frags_sysctl_register();
+	if (ret)
+		goto err_sysctl;
+
+	ret = register_pernet_subsys(&ip6_frags_ops);
+	if (ret)
+		goto err_pernet;
 
 	ip6_frags.hashfn = ip6_hashfn;
 	ip6_frags.constructor = ip6_frag_init;
@@ -760,11 +795,18 @@ int __init ipv6_frag_init(void)
 	inet_frags_init(&ip6_frags);
 out:
 	return ret;
+
+err_pernet:
+	ip6_frags_sysctl_unregister();
+err_sysctl:
+	inet6_del_protocol(&frag_protocol, IPPROTO_FRAGMENT);
+	goto out;
 }
 
 void ipv6_frag_exit(void)
 {
 	inet_frags_fini(&ip6_frags);
+	ip6_frags_sysctl_unregister();
 	unregister_pernet_subsys(&ip6_frags_ops);
 	inet6_del_protocol(&frag_protocol, IPPROTO_FRAGMENT);
 }

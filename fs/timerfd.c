@@ -20,6 +20,7 @@
 #include <linux/hrtimer.h>
 #include <linux/anon_inodes.h>
 #include <linux/timerfd.h>
+#include <linux/syscalls.h>
 
 struct timerfd_ctx {
 	struct hrtimer tmr;
@@ -180,12 +181,14 @@ static struct file *timerfd_fget(int fd)
 
 asmlinkage long sys_timerfd_create(int clockid, int flags)
 {
-	int error, ufd;
+	int ufd;
 	struct timerfd_ctx *ctx;
-	struct file *file;
-	struct inode *inode;
 
-	if (flags)
+	/* Check the TFD_* constants for consistency.  */
+	BUILD_BUG_ON(TFD_CLOEXEC != O_CLOEXEC);
+	BUILD_BUG_ON(TFD_NONBLOCK != O_NONBLOCK);
+
+	if (flags & ~(TFD_CLOEXEC | TFD_NONBLOCK))
 		return -EINVAL;
 	if (clockid != CLOCK_MONOTONIC &&
 	    clockid != CLOCK_REALTIME)
@@ -199,12 +202,10 @@ asmlinkage long sys_timerfd_create(int clockid, int flags)
 	ctx->clockid = clockid;
 	hrtimer_init(&ctx->tmr, clockid, HRTIMER_MODE_ABS);
 
-	error = anon_inode_getfd(&ufd, &inode, &file, "[timerfd]",
-				 &timerfd_fops, ctx);
-	if (error) {
+	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
+			       flags & (O_CLOEXEC | O_NONBLOCK));
+	if (ufd < 0)
 		kfree(ctx);
-		return error;
-	}
 
 	return ufd;
 }

@@ -1,6 +1,6 @@
 /* arch/sparc64/kernel/traps.c
  *
- * Copyright (C) 1995,1997 David S. Miller (davem@davemloft.net)
+ * Copyright (C) 1995,1997,2008 David S. Miller (davem@davemloft.net)
  * Copyright (C) 1997,1999,2000 Jakub Jelinek (jakub@redhat.com)
  */
 
@@ -10,8 +10,8 @@
 
 #include <linux/module.h>
 #include <linux/sched.h>
+#include <linux/linkage.h>
 #include <linux/kernel.h>
-#include <linux/kallsyms.h>
 #include <linux/signal.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
@@ -37,12 +37,10 @@
 #include <asm/processor.h>
 #include <asm/timer.h>
 #include <asm/head.h>
-#ifdef CONFIG_KMOD
-#include <linux/kmod.h>
-#endif
 #include <asm/prom.h>
 
 #include "entry.h"
+#include "kstack.h"
 
 /* When an irrecoverable trap occurs at tl > 0, the trap entry
  * code logs the trap state registers at every level in the trap
@@ -74,7 +72,7 @@ static void dump_tl1_traplog(struct tl1_traplog *p)
 		       i + 1,
 		       p->trapstack[i].tstate, p->trapstack[i].tpc,
 		       p->trapstack[i].tnpc, p->trapstack[i].tt);
-		print_symbol("TRAPLOG: TPC<%s>\n", p->trapstack[i].tpc);
+		printk("TRAPLOG: TPC<%pS>\n", (void *) p->trapstack[i].tpc);
 	}
 }
 
@@ -1081,7 +1079,7 @@ static void cheetah_log_errors(struct pt_regs *regs, struct cheetah_err_info *in
 	       regs->tpc, regs->tnpc, regs->u_regs[UREG_I7], regs->tstate);
 	printk("%s" "ERROR(%d): ",
 	       (recoverable ? KERN_WARNING : KERN_CRIT), smp_processor_id());
-	print_symbol("TPC<%s>\n", regs->tpc);
+	printk("TPC<%pS>\n", (void *) regs->tpc);
 	printk("%s" "ERROR(%d): M_SYND(%lx),  E_SYND(%lx)%s%s\n",
 	       (recoverable ? KERN_WARNING : KERN_CRIT), smp_processor_id(),
 	       (afsr & CHAFSR_M_SYNDROME) >> CHAFSR_M_SYNDROME_SHIFT,
@@ -1689,7 +1687,7 @@ void cheetah_plus_parity_error(int type, struct pt_regs *regs)
 		       smp_processor_id(),
 		       (type & 0x1) ? 'I' : 'D',
 		       regs->tpc);
-		print_symbol(KERN_EMERG "TPC<%s>\n", regs->tpc);
+		printk(KERN_EMERG "TPC<%pS>\n", (void *) regs->tpc);
 		panic("Irrecoverable Cheetah+ parity error.");
 	}
 
@@ -1697,7 +1695,7 @@ void cheetah_plus_parity_error(int type, struct pt_regs *regs)
 	       smp_processor_id(),
 	       (type & 0x1) ? 'I' : 'D',
 	       regs->tpc);
-	print_symbol(KERN_WARNING "TPC<%s>\n", regs->tpc);
+	printk(KERN_WARNING "TPC<%pS>\n", (void *) regs->tpc);
 }
 
 struct sun4v_error_entry {
@@ -1781,7 +1779,7 @@ static void sun4v_log_error(struct pt_regs *regs, struct sun4v_error_entry *ent,
 	       pfx,
 	       ent->err_raddr, ent->err_size, ent->err_cpu);
 
-	__show_regs(regs);
+	show_regs(regs);
 
 	if ((cnt = atomic_read(ocnt)) != 0) {
 		atomic_set(ocnt, 0);
@@ -1904,9 +1902,10 @@ void sun4v_itlb_error_report(struct pt_regs *regs, int tl)
 
 	printk(KERN_EMERG "SUN4V-ITLB: Error at TPC[%lx], tl %d\n",
 	       regs->tpc, tl);
-	print_symbol(KERN_EMERG "SUN4V-ITLB: TPC<%s>\n", regs->tpc);
+	printk(KERN_EMERG "SUN4V-ITLB: TPC<%pS>\n", (void *) regs->tpc);
 	printk(KERN_EMERG "SUN4V-ITLB: O7[%lx]\n", regs->u_regs[UREG_I7]);
-	print_symbol(KERN_EMERG "SUN4V-ITLB: O7<%s>\n", regs->u_regs[UREG_I7]);
+	printk(KERN_EMERG "SUN4V-ITLB: O7<%pS>\n",
+	       (void *) regs->u_regs[UREG_I7]);
 	printk(KERN_EMERG "SUN4V-ITLB: vaddr[%lx] ctx[%lx] "
 	       "pte[%lx] error[%lx]\n",
 	       sun4v_err_itlb_vaddr, sun4v_err_itlb_ctx,
@@ -1927,9 +1926,10 @@ void sun4v_dtlb_error_report(struct pt_regs *regs, int tl)
 
 	printk(KERN_EMERG "SUN4V-DTLB: Error at TPC[%lx], tl %d\n",
 	       regs->tpc, tl);
-	print_symbol(KERN_EMERG "SUN4V-DTLB: TPC<%s>\n", regs->tpc);
+	printk(KERN_EMERG "SUN4V-DTLB: TPC<%pS>\n", (void *) regs->tpc);
 	printk(KERN_EMERG "SUN4V-DTLB: O7[%lx]\n", regs->u_regs[UREG_I7]);
-	print_symbol(KERN_EMERG "SUN4V-DTLB: O7<%s>\n", regs->u_regs[UREG_I7]);
+	printk(KERN_EMERG "SUN4V-DTLB: O7<%pS>\n",
+	       (void *) regs->u_regs[UREG_I7]);
 	printk(KERN_EMERG "SUN4V-DTLB: vaddr[%lx] ctx[%lx] "
 	       "pte[%lx] error[%lx]\n",
 	       sun4v_err_dtlb_vaddr, sun4v_err_dtlb_ctx,
@@ -2091,9 +2091,8 @@ static void user_instruction_dump(unsigned int __user *pc)
 
 void show_stack(struct task_struct *tsk, unsigned long *_ksp)
 {
-	unsigned long pc, fp, thread_base, ksp;
+	unsigned long fp, thread_base, ksp;
 	struct thread_info *tp;
-	struct reg_window *rw;
 	int count = 0;
 
 	ksp = (unsigned long) _ksp;
@@ -2112,24 +2111,29 @@ void show_stack(struct task_struct *tsk, unsigned long *_ksp)
 	fp = ksp + STACK_BIAS;
 	thread_base = (unsigned long) tp;
 
-	printk("Call Trace:");
-#ifdef CONFIG_KALLSYMS
-	printk("\n");
-#endif
+	printk("Call Trace:\n");
 	do {
-		/* Bogus frame pointer? */
-		if (fp < (thread_base + sizeof(struct thread_info)) ||
-		    fp >= (thread_base + THREAD_SIZE))
+		struct sparc_stackf *sf;
+		struct pt_regs *regs;
+		unsigned long pc;
+
+		if (!kstack_valid(tp, fp))
 			break;
-		rw = (struct reg_window *)fp;
-		pc = rw->ins[7];
-		printk(" [%016lx] ", pc);
-		print_symbol("%s\n", pc);
-		fp = rw->ins[6] + STACK_BIAS;
+		sf = (struct sparc_stackf *) fp;
+		regs = (struct pt_regs *) (sf + 1);
+
+		if (kstack_is_trap_frame(tp, regs)) {
+			if (!(regs->tstate & TSTATE_PRIV))
+				break;
+			pc = regs->tpc;
+			fp = regs->u_regs[UREG_I6] + STACK_BIAS;
+		} else {
+			pc = sf->callers_pc;
+			fp = (unsigned long)sf->fp + STACK_BIAS;
+		}
+
+		printk(" [%016lx] %pS\n", pc, (void *) pc);
 	} while (++count < 16);
-#ifndef CONFIG_KALLSYMS
-	printk("\n");
-#endif
 }
 
 void dump_stack(void)
@@ -2173,7 +2177,6 @@ static inline struct reg_window *kernel_stack_up(struct reg_window *rw)
 void die_if_kernel(char *str, struct pt_regs *regs)
 {
 	static int die_counter;
-	extern void smp_report_regs(void);
 	int count = 0;
 	
 	/* Amuse the user. */
@@ -2186,7 +2189,7 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 	printk("%s(%d): %s [#%d]\n", current->comm, task_pid_nr(current), str, ++die_counter);
 	notify_die(DIE_OOPS, str, regs, 0, 255, SIGSEGV);
 	__asm__ __volatile__("flushw");
-	__show_regs(regs);
+	show_regs(regs);
 	add_taint(TAINT_DIE);
 	if (regs->tstate & TSTATE_PRIV) {
 		struct reg_window *rw = (struct reg_window *)
@@ -2198,9 +2201,8 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 		while (rw &&
 		       count++ < 30&&
 		       is_kernel_stack(current, rw)) {
-			printk("Caller[%016lx]", rw->ins[7]);
-			print_symbol(": %s", rw->ins[7]);
-			printk("\n");
+			printk("Caller[%016lx]: %pS\n", rw->ins[7],
+			       (void *) rw->ins[7]);
 
 			rw = kernel_stack_up(rw);
 		}
@@ -2212,11 +2214,6 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 		}
 		user_instruction_dump ((unsigned int __user *) regs->tpc);
 	}
-#if 0
-#ifdef CONFIG_SMP
-	smp_report_regs();
-#endif
-#endif                                                	
 	if (regs->tstate & TSTATE_PRIV)
 		do_exit(SIGKILL);
 	do_exit(SIGSEGV);
@@ -2457,7 +2454,7 @@ struct trap_per_cpu trap_block[NR_CPUS];
 /* This can get invoked before sched_init() so play it super safe
  * and use hard_smp_processor_id().
  */
-void init_cur_cpu_trap(struct thread_info *t)
+void notrace init_cur_cpu_trap(struct thread_info *t)
 {
 	int cpu = hard_smp_processor_id();
 	struct trap_per_cpu *p = &trap_block[cpu];

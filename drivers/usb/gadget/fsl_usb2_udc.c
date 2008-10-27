@@ -223,7 +223,7 @@ static int dr_controller_setup(struct fsl_udc *udc)
 	fsl_writel(tmp, &dr_regs->endpointlistaddr);
 
 	VDBG("vir[qh_base] is %p phy[qh_base] is 0x%8x reg is 0x%8x",
-		(int)udc->ep_qh, (int)tmp,
+		udc->ep_qh, (int)tmp,
 		fsl_readl(&dr_regs->endpointlistaddr));
 
 	/* Config PHY interface */
@@ -773,11 +773,11 @@ fsl_ep_queue(struct usb_ep *_ep, struct usb_request *_req, gfp_t gfp_flags)
 	/* catch various bogus parameters */
 	if (!_req || !req->req.complete || !req->req.buf
 			|| !list_empty(&req->queue)) {
-		VDBG("%s, bad params\n", __FUNCTION__);
+		VDBG("%s, bad params\n", __func__);
 		return -EINVAL;
 	}
 	if (unlikely(!_ep || !ep->desc)) {
-		VDBG("%s, bad ep\n", __FUNCTION__);
+		VDBG("%s, bad ep\n", __func__);
 		return -EINVAL;
 	}
 	if (ep->desc->bmAttributes == USB_ENDPOINT_XFER_ISOC) {
@@ -1538,7 +1538,7 @@ static void dtd_complete_irq(struct fsl_udc *udc)
 
 		/* If the ep is configured */
 		if (curr_ep->name == NULL) {
-			WARN("Invalid EP?");
+			WARNING("Invalid EP?");
 			continue;
 		}
 
@@ -1627,7 +1627,9 @@ static int reset_queues(struct fsl_udc *udc)
 		udc_reset_ep_queue(udc, pipe);
 
 	/* report disconnect; the driver is already quiesced */
+	spin_unlock(&udc->lock);
 	udc->driver->disconnect(&udc->gadget);
+	spin_lock(&udc->lock);
 
 	return 0;
 }
@@ -2329,7 +2331,7 @@ static int __init fsl_udc_probe(struct platform_device *pdev)
 	udc_controller->gadget.name = driver_name;
 
 	/* Setup gadget.dev and register with kernel */
-	strcpy(udc_controller->gadget.dev.bus_id, "gadget");
+	dev_set_name(&udc_controller->gadget.dev, "gadget");
 	udc_controller->gadget.dev.release = fsl_udc_release;
 	udc_controller->gadget.dev.parent = &pdev->dev;
 	ret = device_register(&udc_controller->gadget.dev);

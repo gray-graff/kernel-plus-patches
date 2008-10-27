@@ -49,23 +49,14 @@ SECTIONS
   	_etext = .;			/* End of text section */
   } :text = 0x9090
 
+  NOTES :text :note
+
   . = ALIGN(16);		/* Exception table */
   __ex_table : AT(ADDR(__ex_table) - LOAD_OFFSET) {
   	__start___ex_table = .;
 	 *(__ex_table)
   	__stop___ex_table = .;
-  }
-
-  NOTES :text :note
-
-  BUG_TABLE :text
-
-  . = ALIGN(4);
-  .tracedata : AT(ADDR(.tracedata) - LOAD_OFFSET) {
-  	__tracedata_start = .;
-	*(.tracedata)
-  	__tracedata_end = .;
-  }
+  } :text = 0x9090
 
   RODATA
 
@@ -149,6 +140,11 @@ SECTIONS
 	*(.con_initcall.init)
   	__con_initcall_end = .;
   }
+  .x86cpuvendor.init : AT(ADDR(.x86cpuvendor.init) - LOAD_OFFSET) {
+	__x86cpuvendor_start = .;
+	*(.x86cpuvendor.init)
+	__x86cpuvendor_end = .;
+  }
   SECURITY_INIT
   . = ALIGN(4);
   .altinstructions : AT(ADDR(.altinstructions) - LOAD_OFFSET) {
@@ -213,3 +209,11 @@ SECTIONS
 
   DWARF_DEBUG
 }
+
+#ifdef CONFIG_KEXEC
+/* Link time checks */
+#include <asm/kexec.h>
+
+ASSERT(kexec_control_code_size <= KEXEC_CONTROL_CODE_MAX_SIZE,
+       "kexec control code size is too big")
+#endif

@@ -79,8 +79,10 @@ typedef int (*acpi_table_handler) (struct acpi_table_header *table);
 typedef int (*acpi_table_entry_handler) (struct acpi_subtable_header *header, const unsigned long end);
 
 char * __acpi_map_table (unsigned long phys_addr, unsigned long size);
+int early_acpi_boot_init(void);
 int acpi_boot_init (void);
 int acpi_boot_table_init (void);
+int acpi_mps_check (void);
 int acpi_numa_init (void);
 
 int acpi_table_init (void);
@@ -233,14 +235,27 @@ int acpi_check_region(resource_size_t start, resource_size_t n,
 int acpi_check_mem_region(resource_size_t start, resource_size_t n,
 		      const char *name);
 
+#ifdef CONFIG_PM_SLEEP
+void __init acpi_no_s4_hw_signature(void);
+void __init acpi_old_suspend_ordering(void);
+#endif /* CONFIG_PM_SLEEP */
 #else	/* CONFIG_ACPI */
 
+static inline int early_acpi_boot_init(void)
+{
+	return 0;
+}
 static inline int acpi_boot_init(void)
 {
 	return 0;
 }
 
 static inline int acpi_boot_table_init(void)
+{
+	return 0;
+}
+
+static inline int acpi_mps_check(void)
 {
 	return 0;
 }

@@ -191,6 +191,43 @@ static int aio_setup_ring(struct kioctx *ctx)
 	kunmap_atomic((void *)((unsigned long)__event & PAGE_MASK), km); \
 } while(0)
 
+
+/* __put_ioctx
+ *	Called when the last user of an aio context has gone away,
+ *	and the struct needs to be freed.
+ */
+static void __put_ioctx(struct kioctx *ctx)
+{
+	unsigned nr_events = ctx->max_reqs;
+
+	BUG_ON(ctx->reqs_active);
+
+	cancel_delayed_work(&ctx->wq);
+	cancel_work_sync(&ctx->wq.work);
+	aio_free_ring(ctx);
+	mmdrop(ctx->mm);
+	ctx->mm = NULL;
+	pr_debug("__put_ioctx: freeing %p\n", ctx);
+	kmem_cache_free(kioctx_cachep, ctx);
+
+	if (nr_events) {
+		spin_lock(&aio_nr_lock);
+		BUG_ON(aio_nr - nr_events > aio_nr);
+		aio_nr -= nr_events;
+		spin_unlock(&aio_nr_lock);
+	}
+}
+
+#define get_ioctx(kioctx) do {						\
+	BUG_ON(atomic_read(&(kioctx)->users) <= 0);			\
+	atomic_inc(&(kioctx)->users);					\
+} while (0)
+#define put_ioctx(kioctx) do {						\
+	BUG_ON(atomic_read(&(kioctx)->users) <= 0);			\
+	if (unlikely(atomic_dec_and_test(&(kioctx)->users))) 		\
+		__put_ioctx(kioctx);					\
+} while (0)
+
 /* ioctx_alloc
  *	Allocates and initializes an ioctx.  Returns an ERR_PTR if it failed.
  */
@@ -240,7 +277,7 @@ static struct kioctx *ioctx_alloc(unsigned nr_events)
 	if (ctx->max_reqs == 0)
 		goto out_cleanup;
 
-	/* now link into global list.  kludge.  FIXME */
+	/* now link into global list. */
 	write_lock(&mm->ioctx_list_lock);
 	ctx->next = mm->ioctx_list;
 	mm->ioctx_list = ctx;
@@ -361,32 +398,6 @@ void exit_aio(struct mm_struct *mm)
 	}
 }
 
-/* __put_ioctx
- *	Called when the last user of an aio context has gone away,
- *	and the struct needs to be freed.
- */
-void __put_ioctx(struct kioctx *ctx)
-{
-	unsigned nr_events = ctx->max_reqs;
-
-	BUG_ON(ctx->reqs_active);
-
-	cancel_delayed_work(&ctx->wq);
-	cancel_work_sync(&ctx->wq.work);
-	aio_free_ring(ctx);
-	mmdrop(ctx->mm);
-	ctx->mm = NULL;
-	pr_debug("__put_ioctx: freeing %p\n", ctx);
-	kmem_cache_free(kioctx_cachep, ctx);
-
-	if (nr_events) {
-		spin_lock(&aio_nr_lock);
-		BUG_ON(aio_nr - nr_events > aio_nr);
-		aio_nr -= nr_events;
-		spin_unlock(&aio_nr_lock);
-	}
-}
-
 /* aio_get_req
  *	Allocate a slot for an aio request.  Increments the users count
  * of the kioctx so that the kioctx stays around until all requests are
@@ -501,8 +512,8 @@ static void aio_fput_routine(struct work_struct *data)
  */
 static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
 {
-	dprintk(KERN_DEBUG "aio_put(%p): f_count=%d\n",
-		req, atomic_read(&req->ki_filp->f_count));
+	dprintk(KERN_DEBUG "aio_put(%p): f_count=%ld\n",
+		req, atomic_long_read(&req->ki_filp->f_count));
 
 	assert_spin_locked(&ctx->ctx_lock);
 
@@ -517,7 +528,7 @@ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
 	/* Must be done under the lock to serialise against cancellation.
 	 * Call this aio_fput as it duplicates fput via the fput_work.
 	 */
-	if (unlikely(atomic_dec_and_test(&req->ki_filp->f_count))) {
+	if (unlikely(atomic_long_dec_and_test(&req->ki_filp->f_count))) {
 		get_ioctx(ctx);
 		spin_lock(&fput_lock);
 		list_add(&req->ki_list, &fput_head);
@@ -542,10 +553,7 @@ int aio_put_req(struct kiocb *req)
 	return ret;
 }
 
-/*	Lookup an ioctx id.  ioctx_list is lockless for reads.
- *	FIXME: this is O(n) and is only suitable for development.
- */
-struct kioctx *lookup_ioctx(unsigned long ctx_id)
+static struct kioctx *lookup_ioctx(unsigned long ctx_id)
 {
 	struct kioctx *ioctx;
 	struct mm_struct *mm;
@@ -578,15 +586,10 @@ static void use_mm(struct mm_struct *mm)
 	struct task_struct *tsk = current;
 
 	task_lock(tsk);
-	tsk->flags |= PF_BORROWED_MM;
 	active_mm = tsk->active_mm;
 	atomic_inc(&mm->mm_count);
 	tsk->mm = mm;
 	tsk->active_mm = mm;
-	/*
-	 * Note that on UML this *requires* PF_BORROWED_MM to be set, otherwise
-	 * it won't work. Update it accordingly if you change it here
-	 */
 	switch_mm(active_mm, mm, tsk);
 	task_unlock(tsk);
 
@@ -606,7 +609,6 @@ static void unuse_mm(struct mm_struct *mm)
 	struct task_struct *tsk = current;
 
 	task_lock(tsk);
-	tsk->flags &= ~PF_BORROWED_MM;
 	tsk->mm = NULL;
 	/* active_mm is still 'mm' */
 	enter_lazy_tlb(mm, tsk);
@@ -1070,9 +1072,7 @@ static void timeout_func(unsigned long data)
 
 static inline void init_timeout(struct aio_timeout *to)
 {
-	init_timer(&to->timer);
-	to->timer.data = (unsigned long)to;
-	to->timer.function = timeout_func;
+	setup_timer_on_stack(&to->timer, timeout_func, (unsigned long) to);
 	to->timed_out = 0;
 	to->p = current;
 }
@@ -1166,7 +1166,10 @@ retry:
 				break;
 			if (min_nr <= i)
 				break;
-			ret = 0;
+			if (unlikely(ctx->dead)) {
+				ret = -EINVAL;
+				break;
+			}
 			if (to.timed_out)	/* Only check after read evt */
 				break;
 			/* Try to only show up in io wait if there are ops
@@ -1202,6 +1205,7 @@ retry:
 	if (timeout)
 		clear_timeout(&to);
 out:
+	destroy_timer_on_stack(&to.timer);
 	return i ? i : ret;
 }
 
@@ -1231,6 +1235,13 @@ static void io_destroy(struct kioctx *ioctx)
 
 	aio_cancel_all(ioctx);
 	wait_for_all_aios(ioctx);
+
+	/*
+	 * Wake up any waiters.  The setting of ctx->dead must be seen
+	 * by other CPUs at this point.  Right now, we rely on the
+	 * locking done by the above calls to ensure this consistency.
+	 */
+	wake_up(&ioctx->wait);
 	put_ioctx(ioctx);	/* once for the lookup */
 }
 
@@ -1542,7 +1553,7 @@ static int aio_wake_function(wait_queue_t *wait, unsigned mode,
 	return 1;
 }
 
-int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 struct iocb *iocb)
 {
 	struct kiocb *req;
@@ -1583,7 +1594,7 @@ int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		 * event using the eventfd_signal() function.
 		 */
 		req->ki_eventfd = eventfd_fget((int) iocb->aio_resfd);
-		if (unlikely(IS_ERR(req->ki_eventfd))) {
+		if (IS_ERR(req->ki_eventfd)) {
 			ret = PTR_ERR(req->ki_eventfd);
 			goto out_put_req;
 		}

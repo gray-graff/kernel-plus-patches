@@ -37,7 +37,6 @@
 
 #include <asm/processor.h>
 #include <asm/topology.h>
-#include <asm/semaphore.h>
 #include <asm/uaccess.h>
 #include <asm/sal.h>
 #include <asm/sn/io.h>
@@ -630,7 +629,7 @@ static int sn_hwperf_op_cpu(struct sn_hwperf_op_info *op_info)
 		if (use_ipi) {
 			/* use an interprocessor interrupt to call SAL */
 			smp_call_function_single(cpu, sn_hwperf_call_sal,
-				op_info, 1, 1);
+				op_info, 1);
 		}
 		else {
 			/* migrate the task before calling SAL */ 

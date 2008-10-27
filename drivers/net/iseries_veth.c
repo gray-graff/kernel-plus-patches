@@ -308,7 +308,8 @@ static void veth_complete_allocation(void *parm, int number)
 
 static int veth_allocate_events(HvLpIndex rlp, int number)
 {
-	struct veth_allocation vc = { COMPLETION_INITIALIZER(vc.c), 0 };
+	struct veth_allocation vc =
+		{ COMPLETION_INITIALIZER_ONSTACK(vc.c), 0 };
 
 	mf_allocate_lp_events(rlp, HvLpEvent_Type_VirtualLan,
 			    sizeof(struct veth_lpevent), number,
@@ -1127,7 +1128,7 @@ static int veth_transmit_to_one(struct sk_buff *skb, HvLpIndex rlp,
 	msg->data.addr[0] = dma_map_single(port->dev, skb->data,
 				skb->len, DMA_TO_DEVICE);
 
-	if (dma_mapping_error(msg->data.addr[0]))
+	if (dma_mapping_error(port->dev, msg->data.addr[0]))
 		goto recycle_and_drop;
 
 	msg->dev = port->dev;
@@ -1225,7 +1226,7 @@ static void veth_recycle_msg(struct veth_lpar_connection *cnx,
 		dma_address = msg->data.addr[0];
 		dma_length = msg->data.len[0];
 
-		if (!dma_mapping_error(dma_address))
+		if (!dma_mapping_error(msg->dev, dma_address))
 			dma_unmap_single(msg->dev, dma_address, dma_length,
 					DMA_TO_DEVICE);
 

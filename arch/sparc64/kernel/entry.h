@@ -20,11 +20,9 @@ extern void timer_interrupt(int irq, struct pt_regs *regs);
 
 extern void do_notify_resume(struct pt_regs *regs,
 			     unsigned long orig_i0,
-			     int restart_syscall,
 			     unsigned long thread_info_flags);
 
-extern asmlinkage void syscall_trace(struct pt_regs *regs,
-				     int syscall_exit_p);
+extern asmlinkage int syscall_trace(struct pt_regs *regs, int syscall_exit_p);
 
 extern void bad_trap_tl1(struct pt_regs *regs, long lvl);
 

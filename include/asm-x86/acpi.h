@@ -28,6 +28,7 @@
 #include <asm/numa.h>
 #include <asm/processor.h>
 #include <asm/mmu.h>
+#include <asm/mpspec.h>
 
 #define COMPILER_DEPENDENT_INT64   long long
 #define COMPILER_DEPENDENT_UINT64  unsigned long long
@@ -67,16 +68,16 @@ int __acpi_release_global_lock(unsigned int *lock);
  */
 #define ACPI_DIV_64_BY_32(n_hi, n_lo, d32, q32, r32) \
 	asm("divl %2;"				     \
-	    :"=a"(q32), "=d"(r32)		     \
-	    :"r"(d32),				     \
+	    : "=a"(q32), "=d"(r32)		     \
+	    : "r"(d32),				     \
 	     "0"(n_lo), "1"(n_hi))
 
 
 #define ACPI_SHIFT_RIGHT_64(n_hi, n_lo) \
 	asm("shrl   $1,%2	;"	\
 	    "rcrl   $1,%3;"		\
-	    :"=r"(n_hi), "=r"(n_lo)	\
-	    :"0"(n_hi), "1"(n_lo))
+	    : "=r"(n_hi), "=r"(n_lo)	\
+	    : "0"(n_hi), "1"(n_lo))
 
 #ifdef CONFIG_ACPI
 extern int acpi_lapic;
@@ -139,6 +140,8 @@ static inline unsigned int acpi_processor_cstate_check(unsigned int max_cstate)
 	    boot_cpu_data.x86_model <= 0x05 &&
 	    boot_cpu_data.x86_mask < 0x0A)
 		return 1;
+	else if (boot_cpu_has(X86_FEATURE_AMDC1E))
+		return 1;
 	else
 		return max_cstate;
 }
@@ -160,9 +163,7 @@ struct bootnode;
 #ifdef CONFIG_ACPI_NUMA
 extern int acpi_numa;
 extern int acpi_scan_nodes(unsigned long start, unsigned long end);
-#ifdef CONFIG_X86_64
-# define NR_NODE_MEMBLKS (MAX_NUMNODES*2)
-#endif
+#define NR_NODE_MEMBLKS (MAX_NUMNODES*2)
 extern void acpi_fake_nodes(const struct bootnode *fake_nodes,
 				   int num_nodes);
 #else

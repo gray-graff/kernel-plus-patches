@@ -18,15 +18,17 @@
 #include <linux/platform_device.h>
 #include <linux/sysdev.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
-#include <asm/arch/irqs.h>
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/pxa2xx-regs.h>
-#include <asm/arch/ohci.h>
-#include <asm/arch/pm.h>
-#include <asm/arch/dma.h>
-#include <asm/arch/i2c.h>
+#include <mach/irqs.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-regs.h>
+#include <mach/mfp-pxa27x.h>
+#include <mach/reset.h>
+#include <mach/ohci.h>
+#include <mach/pm.h>
+#include <mach/dma.h>
+#include <mach/i2c.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -145,20 +147,24 @@ static struct clk pxa27x_clks[] = {
 
 	INIT_CKEN("I2SCLK",  I2S,  14682000, 0, &pxa_device_i2s.dev),
 	INIT_CKEN("I2CCLK",  I2C,  32842000, 0, &pxa_device_i2c.dev),
-	INIT_CKEN("UDCCLK",  USB,  48000000, 5, &pxa_device_udc.dev),
+	INIT_CKEN("UDCCLK",  USB,  48000000, 5, &pxa27x_device_udc.dev),
 	INIT_CKEN("MMCCLK",  MMC,  19500000, 0, &pxa_device_mci.dev),
 	INIT_CKEN("FICPCLK", FICP, 48000000, 0, &pxa_device_ficp.dev),
 
 	INIT_CKEN("USBCLK", USBHOST, 48000000, 0, &pxa27x_device_ohci.dev),
 	INIT_CKEN("I2CCLK", PWRI2C, 13000000, 0, &pxa27x_device_i2c_power.dev),
-	INIT_CKEN("KBDCLK", KEYPAD, 32768, 0, NULL),
+	INIT_CKEN("KBDCLK", KEYPAD, 32768, 0, &pxa27x_device_keypad.dev),
 
 	INIT_CKEN("SSPCLK", SSP1, 13000000, 0, &pxa27x_device_ssp1.dev),
 	INIT_CKEN("SSPCLK", SSP2, 13000000, 0, &pxa27x_device_ssp2.dev),
 	INIT_CKEN("SSPCLK", SSP3, 13000000, 0, &pxa27x_device_ssp3.dev),
+	INIT_CKEN("PWMCLK", PWM0, 13000000, 0, &pxa27x_device_pwm0.dev),
+	INIT_CKEN("PWMCLK", PWM1, 13000000, 0, &pxa27x_device_pwm1.dev),
+
+	INIT_CKEN("AC97CLK",     AC97,     24576000, 0, NULL),
+	INIT_CKEN("AC97CONFCLK", AC97CONF, 24576000, 0, NULL),
 
 	/*
-	INIT_CKEN("PWMCLK",  PWM0, 13000000, 0, NULL),
 	INIT_CKEN("MSLCLK",  MSL,  48000000, 0, NULL),
 	INIT_CKEN("USIMCLK", USIM, 48000000, 0, NULL),
 	INIT_CKEN("MSTKCLK", MEMSTK, 19500000, 0, NULL),
@@ -177,9 +183,7 @@ static struct clk pxa27x_clks[] = {
  * More ones like CP and general purpose register values are preserved
  * with the stack pointer in sleep.S.
  */
-enum {	SLEEP_SAVE_START = 0,
-
-	SLEEP_SAVE_PGSR0, SLEEP_SAVE_PGSR1, SLEEP_SAVE_PGSR2, SLEEP_SAVE_PGSR3,
+enum {	SLEEP_SAVE_PGSR0, SLEEP_SAVE_PGSR1, SLEEP_SAVE_PGSR2, SLEEP_SAVE_PGSR3,
 
 	SLEEP_SAVE_GAFR0_L, SLEEP_SAVE_GAFR0_U,
 	SLEEP_SAVE_GAFR1_L, SLEEP_SAVE_GAFR1_U,
@@ -194,7 +198,7 @@ enum {	SLEEP_SAVE_START = 0,
 	SLEEP_SAVE_PWER, SLEEP_SAVE_PCFR, SLEEP_SAVE_PRER,
 	SLEEP_SAVE_PFER, SLEEP_SAVE_PKWR,
 
-	SLEEP_SAVE_SIZE
+	SLEEP_SAVE_COUNT
 };
 
 void pxa27x_cpu_pm_save(unsigned long *sleep_save)
@@ -247,6 +251,9 @@ void pxa27x_cpu_pm_enter(suspend_state_t state)
 	/* Clear edge-detect status register. */
 	PEDR = 0xDF12FE1B;
 
+	/* Clear reset status */
+	RCSR = RCSR_HWR | RCSR_WDR | RCSR_SMR | RCSR_GPR;
+
 	switch (state) {
 	case PM_SUSPEND_STANDBY:
 		pxa_cpu_standby();
@@ -265,7 +272,7 @@ static int pxa27x_cpu_pm_valid(suspend_state_t state)
 }
 
 static struct pxa_cpu_pm_fns pxa27x_cpu_pm_fns = {
-	.save_size	= SLEEP_SAVE_SIZE,
+	.save_count	= SLEEP_SAVE_COUNT,
 	.save		= pxa27x_cpu_pm_save,
 	.restore	= pxa27x_cpu_pm_restore,
 	.valid		= pxa27x_cpu_pm_valid,
@@ -283,37 +290,16 @@ static inline void pxa27x_init_pm(void) {}
 /* PXA27x:  Various gpios can issue wakeup events.  This logic only
  * handles the simple cases, not the WEMUX2 and WEMUX3 options
  */
-#define PXA27x_GPIO_NOWAKE_MASK \
-        ((1 << 8) | (1 << 7) | (1 << 6) | (1 << 5) | (1 << 2))
-#define WAKEMASK(gpio) \
-        (((gpio) <= 15) \
-                 ? ((1 << (gpio)) & ~PXA27x_GPIO_NOWAKE_MASK) \
-                 : ((gpio == 35) ? (1 << 24) : 0))
-
 static int pxa27x_set_wake(unsigned int irq, unsigned int on)
 {
 	int gpio = IRQ_TO_GPIO(irq);
 	uint32_t mask;
 
-	if ((gpio >= 0 && gpio <= 15) || (gpio == 35)) {
-		if (WAKEMASK(gpio) == 0)
-			return -EINVAL;
+	if (gpio >= 0 && gpio < 128)
+		return gpio_set_wake(gpio, on);
 
-		mask = WAKEMASK(gpio);
-
-		if (on) {
-			if (GRER(gpio) | GPIO_bit(gpio))
-				PRER |= mask;
-			else
-				PRER &= ~mask;
-
-			if (GFER(gpio) | GPIO_bit(gpio))
-				PFER |= mask;
-			else
-				PFER &= ~mask;
-		}
-		goto set_pwer;
-	}
+	if (irq == IRQ_KEYPAD)
+		return keypad_set_wake(on);
 
 	switch (irq) {
 	case IRQ_RTCAlrm:
@@ -326,7 +312,6 @@ static int pxa27x_set_wake(unsigned int irq, unsigned int on)
 		return -EINVAL;
 	}
 
-set_pwer:
 	if (on)
 		PWER |= mask;
 	else
@@ -337,10 +322,8 @@ set_pwer:
 
 void __init pxa27x_init_irq(void)
 {
-	pxa_init_irq_low();
-	pxa_init_irq_high();
-	pxa_init_irq_gpio(128);
-	pxa_init_irq_set_wake(pxa27x_set_wake);
+	pxa_init_irq(34, pxa27x_set_wake);
+	pxa_init_gpio(128, pxa27x_set_wake);
 }
 
 /*
@@ -368,11 +351,14 @@ struct platform_device pxa27x_device_i2c_power = {
 
 void __init pxa_set_i2c_power_info(struct i2c_pxa_platform_data *info)
 {
+	local_irq_disable();
+	PCFR |= PCFR_PI2CEN;
+	local_irq_enable();
 	pxa27x_device_i2c_power.dev.platform_data = info;
 }
 
 static struct platform_device *devices[] __initdata = {
-	&pxa_device_udc,
+	&pxa27x_device_udc,
 	&pxa_device_ffuart,
 	&pxa_device_btuart,
 	&pxa_device_stuart,
@@ -382,14 +368,12 @@ static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_ssp1,
 	&pxa27x_device_ssp2,
 	&pxa27x_device_ssp3,
+	&pxa27x_device_pwm0,
+	&pxa27x_device_pwm1,
 };
 
 static struct sys_device pxa27x_sysdev[] = {
 	{
-		.id	= 0,
-		.cls	= &pxa_irq_sysclass,
-	}, {
-		.id	= 1,
 		.cls	= &pxa_irq_sysclass,
 	}, {
 		.cls	= &pxa_gpio_sysclass,
@@ -401,6 +385,9 @@ static int __init pxa27x_init(void)
 	int i, ret = 0;
 
 	if (cpu_is_pxa27x()) {
+
+		reset_status = RCSR;
+
 		clks_register(pxa27x_clks, ARRAY_SIZE(pxa27x_clks));
 
 		if ((ret = pxa_init_dma(32)))
@@ -420,4 +407,4 @@ static int __init pxa27x_init(void)
 	return ret;
 }
 
-subsys_initcall(pxa27x_init);
+postcore_initcall(pxa27x_init);

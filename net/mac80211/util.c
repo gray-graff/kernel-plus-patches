@@ -25,7 +25,8 @@
 #include <net/rtnetlink.h>
 
 #include "ieee80211_i.h"
-#include "ieee80211_rate.h"
+#include "rate.h"
+#include "mesh.h"
 #include "wme.h"
 
 /* privid for wiphys to determine whether they belong to us or not */
@@ -33,135 +34,48 @@ void *mac80211_wiphy_privid = &mac80211_wiphy_privid;
 
 /* See IEEE 802.1H for LLC/SNAP encapsulation/decapsulation */
 /* Ethernet-II snap header (RFC1042 for most EtherTypes) */
-const unsigned char rfc1042_header[] =
+const unsigned char rfc1042_header[] __aligned(2) =
 	{ 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00 };
 
 /* Bridge-Tunnel header (for EtherTypes ETH_P_AARP and ETH_P_IPX) */
-const unsigned char bridge_tunnel_header[] =
+const unsigned char bridge_tunnel_header[] __aligned(2) =
 	{ 0xaa, 0xaa, 0x03, 0x00, 0x00, 0xf8 };
 
-
-static int rate_list_match(const int *rate_list, int rate)
-{
-	int i;
-
-	if (!rate_list)
-		return 0;
-
-	for (i = 0; rate_list[i] >= 0; i++)
-		if (rate_list[i] == rate)
-			return 1;
-
-	return 0;
-}
-
-void ieee80211_prepare_rates(struct ieee80211_local *local,
-			     struct ieee80211_hw_mode *mode)
-{
-	int i;
-
-	for (i = 0; i < mode->num_rates; i++) {
-		struct ieee80211_rate *rate = &mode->rates[i];
-
-		rate->flags &= ~(IEEE80211_RATE_SUPPORTED |
-				 IEEE80211_RATE_BASIC);
-
-		if (local->supp_rates[mode->mode]) {
-			if (!rate_list_match(local->supp_rates[mode->mode],
-					     rate->rate))
-				continue;
-		}
-
-		rate->flags |= IEEE80211_RATE_SUPPORTED;
-
-		/* Use configured basic rate set if it is available. If not,
-		 * use defaults that are sane for most cases. */
-		if (local->basic_rates[mode->mode]) {
-			if (rate_list_match(local->basic_rates[mode->mode],
-					    rate->rate))
-				rate->flags |= IEEE80211_RATE_BASIC;
-		} else switch (mode->mode) {
-		case MODE_IEEE80211A:
-			if (rate->rate == 60 || rate->rate == 120 ||
-			    rate->rate == 240)
-				rate->flags |= IEEE80211_RATE_BASIC;
-			break;
-		case MODE_IEEE80211B:
-			if (rate->rate == 10 || rate->rate == 20)
-				rate->flags |= IEEE80211_RATE_BASIC;
-			break;
-		case MODE_IEEE80211G:
-			if (rate->rate == 10 || rate->rate == 20 ||
-			    rate->rate == 55 || rate->rate == 110)
-				rate->flags |= IEEE80211_RATE_BASIC;
-			break;
-		case NUM_IEEE80211_MODES:
-			/* not useful */
-			break;
-		}
-
-		/* Set ERP and MANDATORY flags based on phymode */
-		switch (mode->mode) {
-		case MODE_IEEE80211A:
-			if (rate->rate == 60 || rate->rate == 120 ||
-			    rate->rate == 240)
-				rate->flags |= IEEE80211_RATE_MANDATORY;
-			break;
-		case MODE_IEEE80211B:
-			if (rate->rate == 10)
-				rate->flags |= IEEE80211_RATE_MANDATORY;
-			break;
-		case MODE_IEEE80211G:
-			if (rate->rate == 10 || rate->rate == 20 ||
-			    rate->rate == 55 || rate->rate == 110 ||
-			    rate->rate == 60 || rate->rate == 120 ||
-			    rate->rate == 240)
-				rate->flags |= IEEE80211_RATE_MANDATORY;
-			break;
-		case NUM_IEEE80211_MODES:
-			/* not useful */
-			break;
-		}
-		if (ieee80211_is_erp_rate(mode->mode, rate->rate))
-			rate->flags |= IEEE80211_RATE_ERP;
-	}
-}
 
 u8 *ieee80211_get_bssid(struct ieee80211_hdr *hdr, size_t len,
 			enum ieee80211_if_types type)
 {
-	u16 fc;
+	__le16 fc = hdr->frame_control;
 
 	 /* drop ACK/CTS frames and incorrect hdr len (ctrl) */
 	if (len < 16)
 		return NULL;
 
-	fc = le16_to_cpu(hdr->frame_control);
-
-	switch (fc & IEEE80211_FCTL_FTYPE) {
-	case IEEE80211_FTYPE_DATA:
+	if (ieee80211_is_data(fc)) {
 		if (len < 24) /* drop incorrect hdr len (data) */
 			return NULL;
-		switch (fc & (IEEE80211_FCTL_TODS | IEEE80211_FCTL_FROMDS)) {
-		case IEEE80211_FCTL_TODS:
-			return hdr->addr1;
-		case (IEEE80211_FCTL_TODS | IEEE80211_FCTL_FROMDS):
+
+		if (ieee80211_has_a4(fc))
 			return NULL;
-		case IEEE80211_FCTL_FROMDS:
+		if (ieee80211_has_tods(fc))
+			return hdr->addr1;
+		if (ieee80211_has_fromds(fc))
 			return hdr->addr2;
-		case 0:
-			return hdr->addr3;
-		}
-		break;
-	case IEEE80211_FTYPE_MGMT:
+
+		return hdr->addr3;
+	}
+
+	if (ieee80211_is_mgmt(fc)) {
 		if (len < 24) /* drop incorrect hdr len (mgmt) */
 			return NULL;
 		return hdr->addr3;
-	case IEEE80211_FTYPE_CTL:
-		if ((fc & IEEE80211_FCTL_STYPE) == IEEE80211_STYPE_PSPOLL)
+	}
+
+	if (ieee80211_is_ctl(fc)) {
+		if(ieee80211_is_pspoll(fc))
 			return hdr->addr1;
-		else if ((fc & IEEE80211_FCTL_STYPE) ==
-						IEEE80211_STYPE_BACK_REQ) {
+
+		if (ieee80211_is_back_req(fc)) {
 			switch (type) {
 			case IEEE80211_IF_TYPE_STA:
 				return hdr->addr2;
@@ -169,11 +83,9 @@ u8 *ieee80211_get_bssid(struct ieee80211_hdr *hdr, size_t len,
 			case IEEE80211_IF_TYPE_VLAN:
 				return hdr->addr1;
 			default:
-				return NULL;
+				break; /* fall through to the return */
 			}
 		}
-		else
-			return NULL;
 	}
 
 	return NULL;
@@ -218,31 +130,81 @@ int ieee80211_get_hdrlen(u16 fc)
 }
 EXPORT_SYMBOL(ieee80211_get_hdrlen);
 
-int ieee80211_get_hdrlen_from_skb(const struct sk_buff *skb)
+unsigned int ieee80211_hdrlen(__le16 fc)
 {
-	const struct ieee80211_hdr *hdr = (const struct ieee80211_hdr *) skb->data;
-	int hdrlen;
+	unsigned int hdrlen = 24;
+
+	if (ieee80211_is_data(fc)) {
+		if (ieee80211_has_a4(fc))
+			hdrlen = 30;
+		if (ieee80211_is_data_qos(fc))
+			hdrlen += IEEE80211_QOS_CTL_LEN;
+		goto out;
+	}
+
+	if (ieee80211_is_ctl(fc)) {
+		/*
+		 * ACK and CTS are 10 bytes, all others 16. To see how
+		 * to get this condition consider
+		 *   subtype mask:   0b0000000011110000 (0x00F0)
+		 *   ACK subtype:    0b0000000011010000 (0x00D0)
+		 *   CTS subtype:    0b0000000011000000 (0x00C0)
+		 *   bits that matter:         ^^^      (0x00E0)
+		 *   value of those: 0b0000000011000000 (0x00C0)
+		 */
+		if ((fc & cpu_to_le16(0x00E0)) == cpu_to_le16(0x00C0))
+			hdrlen = 10;
+		else
+			hdrlen = 16;
+	}
+out:
+	return hdrlen;
+}
+EXPORT_SYMBOL(ieee80211_hdrlen);
+
+unsigned int ieee80211_get_hdrlen_from_skb(const struct sk_buff *skb)
+{
+	const struct ieee80211_hdr *hdr = (const struct ieee80211_hdr *)skb->data;
+	unsigned int hdrlen;
 
 	if (unlikely(skb->len < 10))
 		return 0;
-	hdrlen = ieee80211_get_hdrlen(le16_to_cpu(hdr->frame_control));
+	hdrlen = ieee80211_hdrlen(hdr->frame_control);
 	if (unlikely(hdrlen > skb->len))
 		return 0;
 	return hdrlen;
 }
 EXPORT_SYMBOL(ieee80211_get_hdrlen_from_skb);
 
-void ieee80211_tx_set_iswep(struct ieee80211_txrx_data *tx)
+int ieee80211_get_mesh_hdrlen(struct ieee80211s_hdr *meshhdr)
+{
+	int ae = meshhdr->flags & IEEE80211S_FLAGS_AE;
+	/* 7.1.3.5a.2 */
+	switch (ae) {
+	case 0:
+		return 6;
+	case 1:
+		return 12;
+	case 2:
+		return 18;
+	case 3:
+		return 24;
+	default:
+		return 6;
+	}
+}
+
+void ieee80211_tx_set_protected(struct ieee80211_tx_data *tx)
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) tx->skb->data;
 
 	hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
-	if (tx->u.tx.extra_frag) {
+	if (tx->extra_frag) {
 		struct ieee80211_hdr *fhdr;
 		int i;
-		for (i = 0; i < tx->u.tx.num_extra_frag; i++) {
+		for (i = 0; i < tx->num_extra_frag; i++) {
 			fhdr = (struct ieee80211_hdr *)
-				tx->u.tx.extra_frag[i]->data;
+				tx->extra_frag[i]->data;
 			fhdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
 		}
 	}
@@ -262,7 +224,7 @@ int ieee80211_frame_duration(struct ieee80211_local *local, size_t len,
 	 * DIV_ROUND_UP() operations.
 	 */
 
-	if (local->hw.conf.phymode == MODE_IEEE80211A || erp) {
+	if (local->hw.conf.channel->band == IEEE80211_BAND_5GHZ || erp) {
 		/*
 		 * OFDM:
 		 *
@@ -304,15 +266,19 @@ int ieee80211_frame_duration(struct ieee80211_local *local, size_t len,
 /* Exported duration function for driver use */
 __le16 ieee80211_generic_frame_duration(struct ieee80211_hw *hw,
 					struct ieee80211_vif *vif,
-					size_t frame_len, int rate)
+					size_t frame_len,
+					struct ieee80211_rate *rate)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 	u16 dur;
 	int erp;
 
-	erp = ieee80211_is_erp_rate(hw->conf.phymode, rate);
-	dur = ieee80211_frame_duration(local, frame_len, rate, erp,
+	erp = 0;
+	if (sdata->flags & IEEE80211_SDATA_OPERATING_GMODE)
+		erp = rate->flags & IEEE80211_RATE_ERP_G;
+
+	dur = ieee80211_frame_duration(local, frame_len, rate->bitrate, erp,
 				       sdata->bss_conf.use_short_preamble);
 
 	return cpu_to_le16(dur);
@@ -321,7 +287,7 @@ EXPORT_SYMBOL(ieee80211_generic_frame_duration);
 
 __le16 ieee80211_rts_duration(struct ieee80211_hw *hw,
 			      struct ieee80211_vif *vif, size_t frame_len,
-			      const struct ieee80211_tx_control *frame_txctl)
+			      const struct ieee80211_tx_info *frame_txctl)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct ieee80211_rate *rate;
@@ -329,20 +295,26 @@ __le16 ieee80211_rts_duration(struct ieee80211_hw *hw,
 	bool short_preamble;
 	int erp;
 	u16 dur;
+	struct ieee80211_supported_band *sband;
+
+	sband = local->hw.wiphy->bands[local->hw.conf.channel->band];
 
 	short_preamble = sdata->bss_conf.use_short_preamble;
 
-	rate = frame_txctl->rts_rate;
-	erp = !!(rate->flags & IEEE80211_RATE_ERP);
+	rate = &sband->bitrates[frame_txctl->control.rts_cts_rate_idx];
+
+	erp = 0;
+	if (sdata->flags & IEEE80211_SDATA_OPERATING_GMODE)
+		erp = rate->flags & IEEE80211_RATE_ERP_G;
 
 	/* CTS duration */
-	dur = ieee80211_frame_duration(local, 10, rate->rate,
+	dur = ieee80211_frame_duration(local, 10, rate->bitrate,
 				       erp, short_preamble);
 	/* Data frame duration */
-	dur += ieee80211_frame_duration(local, frame_len, rate->rate,
+	dur += ieee80211_frame_duration(local, frame_len, rate->bitrate,
 					erp, short_preamble);
 	/* ACK duration */
-	dur += ieee80211_frame_duration(local, 10, rate->rate,
+	dur += ieee80211_frame_duration(local, 10, rate->bitrate,
 					erp, short_preamble);
 
 	return cpu_to_le16(dur);
@@ -352,7 +324,7 @@ EXPORT_SYMBOL(ieee80211_rts_duration);
 __le16 ieee80211_ctstoself_duration(struct ieee80211_hw *hw,
 				    struct ieee80211_vif *vif,
 				    size_t frame_len,
-				    const struct ieee80211_tx_control *frame_txctl)
+				    const struct ieee80211_tx_info *frame_txctl)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct ieee80211_rate *rate;
@@ -360,18 +332,23 @@ __le16 ieee80211_ctstoself_duration(struct ieee80211_hw *hw,
 	bool short_preamble;
 	int erp;
 	u16 dur;
+	struct ieee80211_supported_band *sband;
+
+	sband = local->hw.wiphy->bands[local->hw.conf.channel->band];
 
 	short_preamble = sdata->bss_conf.use_short_preamble;
 
-	rate = frame_txctl->rts_rate;
-	erp = !!(rate->flags & IEEE80211_RATE_ERP);
+	rate = &sband->bitrates[frame_txctl->control.rts_cts_rate_idx];
+	erp = 0;
+	if (sdata->flags & IEEE80211_SDATA_OPERATING_GMODE)
+		erp = rate->flags & IEEE80211_RATE_ERP_G;
 
 	/* Data frame duration */
-	dur = ieee80211_frame_duration(local, frame_len, rate->rate,
+	dur = ieee80211_frame_duration(local, frame_len, rate->bitrate,
 				       erp, short_preamble);
-	if (!(frame_txctl->flags & IEEE80211_TXCTL_NO_ACK)) {
+	if (!(frame_txctl->flags & IEEE80211_TX_CTL_NO_ACK)) {
 		/* ACK duration */
-		dur += ieee80211_frame_duration(local, 10, rate->rate,
+		dur += ieee80211_frame_duration(local, 10, rate->bitrate,
 						erp, short_preamble);
 	}
 
@@ -379,42 +356,15 @@ __le16 ieee80211_ctstoself_duration(struct ieee80211_hw *hw,
 }
 EXPORT_SYMBOL(ieee80211_ctstoself_duration);
 
-struct ieee80211_rate *
-ieee80211_get_rate(struct ieee80211_local *local, int phymode, int hw_rate)
-{
-	struct ieee80211_hw_mode *mode;
-	int r;
-
-	list_for_each_entry(mode, &local->modes_list, list) {
-		if (mode->mode != phymode)
-			continue;
-		for (r = 0; r < mode->num_rates; r++) {
-			struct ieee80211_rate *rate = &mode->rates[r];
-			if (rate->val == hw_rate ||
-			    (rate->flags & IEEE80211_RATE_PREAMBLE2 &&
-			     rate->val2 == hw_rate))
-				return rate;
-		}
-	}
-
-	return NULL;
-}
-
 void ieee80211_wake_queue(struct ieee80211_hw *hw, int queue)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 
-	if (test_and_clear_bit(IEEE80211_LINK_STATE_XOFF,
-			       &local->state[queue])) {
-		if (test_bit(IEEE80211_LINK_STATE_PENDING,
-			     &local->state[queue]))
-			tasklet_schedule(&local->tx_pending_tasklet);
-		else
-			if (!ieee80211_qdisc_installed(local->mdev)) {
-				if (queue == 0)
-					netif_wake_queue(local->mdev);
-			} else
-				__netif_schedule(local->mdev);
+	if (test_bit(queue, local->queues_pending)) {
+		set_bit(queue, local->queues_pending_run);
+		tasklet_schedule(&local->tx_pending_tasklet);
+	} else {
+		netif_wake_subqueue(local->mdev, queue);
 	}
 }
 EXPORT_SYMBOL(ieee80211_wake_queue);
@@ -423,29 +373,15 @@ void ieee80211_stop_queue(struct ieee80211_hw *hw, int queue)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 
-	if (!ieee80211_qdisc_installed(local->mdev) && queue == 0)
-		netif_stop_queue(local->mdev);
-	set_bit(IEEE80211_LINK_STATE_XOFF, &local->state[queue]);
+	netif_stop_subqueue(local->mdev, queue);
 }
 EXPORT_SYMBOL(ieee80211_stop_queue);
-
-void ieee80211_start_queues(struct ieee80211_hw *hw)
-{
-	struct ieee80211_local *local = hw_to_local(hw);
-	int i;
-
-	for (i = 0; i < local->hw.queues; i++)
-		clear_bit(IEEE80211_LINK_STATE_XOFF, &local->state[i]);
-	if (!ieee80211_qdisc_installed(local->mdev))
-		netif_start_queue(local->mdev);
-}
-EXPORT_SYMBOL(ieee80211_start_queues);
 
 void ieee80211_stop_queues(struct ieee80211_hw *hw)
 {
 	int i;
 
-	for (i = 0; i < hw->queues; i++)
+	for (i = 0; i < ieee80211_num_queues(hw); i++)
 		ieee80211_stop_queue(hw, i);
 }
 EXPORT_SYMBOL(ieee80211_stop_queues);
@@ -454,12 +390,45 @@ void ieee80211_wake_queues(struct ieee80211_hw *hw)
 {
 	int i;
 
-	for (i = 0; i < hw->queues; i++)
+	for (i = 0; i < hw->queues + hw->ampdu_queues; i++)
 		ieee80211_wake_queue(hw, i);
 }
 EXPORT_SYMBOL(ieee80211_wake_queues);
 
 void ieee80211_iterate_active_interfaces(
+	struct ieee80211_hw *hw,
+	void (*iterator)(void *data, u8 *mac,
+			 struct ieee80211_vif *vif),
+	void *data)
+{
+	struct ieee80211_local *local = hw_to_local(hw);
+	struct ieee80211_sub_if_data *sdata;
+
+	rtnl_lock();
+
+	list_for_each_entry(sdata, &local->interfaces, list) {
+		switch (sdata->vif.type) {
+		case IEEE80211_IF_TYPE_INVALID:
+		case IEEE80211_IF_TYPE_MNTR:
+		case IEEE80211_IF_TYPE_VLAN:
+			continue;
+		case IEEE80211_IF_TYPE_AP:
+		case IEEE80211_IF_TYPE_STA:
+		case IEEE80211_IF_TYPE_IBSS:
+		case IEEE80211_IF_TYPE_WDS:
+		case IEEE80211_IF_TYPE_MESH_POINT:
+			break;
+		}
+		if (netif_running(sdata->dev))
+			iterator(data, sdata->dev->dev_addr,
+				 &sdata->vif);
+	}
+
+	rtnl_unlock();
+}
+EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces);
+
+void ieee80211_iterate_active_interfaces_atomic(
 	struct ieee80211_hw *hw,
 	void (*iterator)(void *data, u8 *mac,
 			 struct ieee80211_vif *vif),
@@ -480,10 +449,9 @@ void ieee80211_iterate_active_interfaces(
 		case IEEE80211_IF_TYPE_STA:
 		case IEEE80211_IF_TYPE_IBSS:
 		case IEEE80211_IF_TYPE_WDS:
+		case IEEE80211_IF_TYPE_MESH_POINT:
 			break;
 		}
-		if (sdata->dev == local->mdev)
-			continue;
 		if (netif_running(sdata->dev))
 			iterator(data, sdata->dev->dev_addr,
 				 &sdata->vif);
@@ -491,4 +459,4 @@ void ieee80211_iterate_active_interfaces(
 
 	rcu_read_unlock();
 }
-EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces);
+EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces_atomic);

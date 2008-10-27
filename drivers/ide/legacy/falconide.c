@@ -22,6 +22,7 @@
 #include <asm/atariints.h>
 #include <asm/atari_stdma.h>
 
+#define DRV_NAME "falconide"
 
     /*
      *  Base of the IDE interface
@@ -43,21 +44,66 @@
 int falconide_intr_lock;
 EXPORT_SYMBOL(falconide_intr_lock);
 
+static void falconide_input_data(ide_drive_t *drive, struct request *rq,
+				 void *buf, unsigned int len)
+{
+	unsigned long data_addr = drive->hwif->io_ports.data_addr;
+
+	if (drive->media == ide_disk && rq && rq->cmd_type == REQ_TYPE_FS)
+		return insw(data_addr, buf, (len + 1) / 2);
+
+	insw_swapw(data_addr, buf, (len + 1) / 2);
+}
+
+static void falconide_output_data(ide_drive_t *drive, struct request *rq,
+				  void *buf, unsigned int len)
+{
+	unsigned long data_addr = drive->hwif->io_ports.data_addr;
+
+	if (drive->media == ide_disk && rq && rq->cmd_type == REQ_TYPE_FS)
+		return outsw(data_addr, buf, (len + 1) / 2);
+
+	outsw_swapw(data_addr, buf, (len + 1) / 2);
+}
+
+/* Atari has a byte-swapped IDE interface */
+static const struct ide_tp_ops falconide_tp_ops = {
+	.exec_command		= ide_exec_command,
+	.read_status		= ide_read_status,
+	.read_altstatus		= ide_read_altstatus,
+	.read_sff_dma_status	= ide_read_sff_dma_status,
+
+	.set_irq		= ide_set_irq,
+
+	.tf_load		= ide_tf_load,
+	.tf_read		= ide_tf_read,
+
+	.input_data		= falconide_input_data,
+	.output_data		= falconide_output_data,
+};
+
+static const struct ide_port_info falconide_port_info = {
+	.tp_ops			= &falconide_tp_ops,
+	.host_flags		= IDE_HFLAG_NO_DMA,
+};
+
 static void __init falconide_setup_ports(hw_regs_t *hw)
 {
 	int i;
 
 	memset(hw, 0, sizeof(*hw));
 
-	hw->io_ports[IDE_DATA_OFFSET] = ATA_HD_BASE;
+	hw->io_ports.data_addr = ATA_HD_BASE;
 
 	for (i = 1; i < 8; i++)
-		hw->io_ports[i] = ATA_HD_BASE + 1 + i * 4;
+		hw->io_ports_array[i] = ATA_HD_BASE + 1 + i * 4;
 
-	hw->io_ports[IDE_CONTROL_OFFSET] = ATA_HD_BASE + ATA_HD_CONTROL;
+	hw->io_ports.ctl_addr = ATA_HD_BASE + ATA_HD_CONTROL;
 
 	hw->irq = IRQ_MFP_IDE;
 	hw->ack_intr = NULL;
+
+	hw->chipset = ide_generic;
 }
 
     /*
@@ -66,30 +112,41 @@ static void __init falconide_setup_ports(hw_regs_t *hw)
 
 static int __init falconide_init(void)
 {
-	hw_regs_t hw;
-	ide_hwif_t *hwif;
+	struct ide_host *host;
+	hw_regs_t hw, *hws[] = { &hw, NULL, NULL, NULL };
+	int rc;
 
 	if (!MACH_IS_ATARI || !ATARIHW_PRESENT(IDE))
-		return 0;
+		return -ENODEV;
 
 	printk(KERN_INFO "ide: Falcon IDE controller\n");
 
-	falconide_setup_ports(&hw);
-
-	hwif = ide_find_port(hw.io_ports[IDE_DATA_OFFSET]);
-	if (hwif) {
-		u8 index = hwif->index;
-		u8 idx[4] = { index, 0xff, 0xff, 0xff };
-
-		ide_init_port_data(hwif, index);
-		ide_init_port_hw(hwif, &hw);
-
-		ide_get_lock(NULL, NULL);
-		ide_device_add(idx, NULL);
-		ide_release_lock();
+	if (!request_mem_region(ATA_HD_BASE, 0x40, DRV_NAME)) {
+		printk(KERN_ERR "%s: resources busy\n", DRV_NAME);
+		return -EBUSY;
 	}
 
+	falconide_setup_ports(&hw);
+
+	host = ide_host_alloc(&falconide_port_info, hws);
+	if (host == NULL) {
+		rc = -ENOMEM;
+		goto err;
+	}
+
+	ide_get_lock(NULL, NULL);
+	rc = ide_host_register(host, &falconide_port_info, hws);
+	ide_release_lock();
+
+	if (rc)
+		goto err_free;
+
 	return 0;
+err_free:
+	ide_host_free(host);
+err:
+	release_mem_region(ATA_HD_BASE, 0x40);
+	return rc;
 }
 
 module_init(falconide_init);

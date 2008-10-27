@@ -40,7 +40,7 @@
 extern int av7110_debug;
 
 #define dprintk(level,args...) \
-	    do { if ((av7110_debug & level)) { printk("dvb-ttpci: %s(): ", __FUNCTION__); printk(args); } } while (0)
+	    do { if ((av7110_debug & level)) { printk("dvb-ttpci: %s(): ", __func__); printk(args); } } while (0)
 
 #define MAXFILT 32
 
@@ -188,7 +188,6 @@ struct av7110 {
 	struct dvb_net		dvb_net1;
 	spinlock_t		feedlock1;
 	int			feeding1;
-	u8			tsf;
 	u32			ttbp;
 	unsigned char           *grabbing;
 	struct saa7146_pgtable  pt;

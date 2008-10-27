@@ -18,15 +18,18 @@
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"00.00.03.16-rc1"
-#define MEGASAS_RELDATE				"Nov. 07, 2007"
-#define MEGASAS_EXT_VERSION			"Thu. Nov. 07 10:09:32 PDT 2007"
+#define MEGASAS_VERSION				"00.00.04.01"
+#define MEGASAS_RELDATE				"July 24, 2008"
+#define MEGASAS_EXT_VERSION			"Thu July 24 11:41:51 PST 2008"
 
 /*
  * Device IDs
  */
 #define	PCI_DEVICE_ID_LSI_SAS1078R		0x0060
+#define	PCI_DEVICE_ID_LSI_SAS1078DE		0x007C
 #define	PCI_DEVICE_ID_LSI_VERDE_ZCR		0x0413
+#define	PCI_DEVICE_ID_LSI_SAS1078GEN2		0x0078
+#define	PCI_DEVICE_ID_LSI_SAS0079GEN2		0x0079
 
 /*
  * =====================================
@@ -542,6 +545,10 @@ struct megasas_ctrl_info {
 
 #define MEGASAS_FW_BUSY				1
 
+/* Frame Type */
+#define IO_FRAME				0
+#define PTHRU_FRAME				1
+
 /*
  * When SCSI mid-layer calls driver's reset routine, driver waits for
  * MEGASAS_RESET_WAIT_TIME seconds for all outstanding IO to complete. Note
@@ -575,6 +582,8 @@ struct megasas_ctrl_info {
 #define MEGASAS_COMPLETION_TIMER_INTERVAL      (HZ/10)
 
 #define MFI_REPLY_1078_MESSAGE_INTERRUPT	0x80000000
+#define MFI_REPLY_GEN2_MESSAGE_INTERRUPT	0x00000001
+#define MFI_GEN2_ENABLE_INTERRUPT_MASK		(0x00000001 | 0x00000004)
 
 /*
 * register set for both 1068 and 1078 controllers

@@ -110,7 +110,7 @@ static void gelic_card_get_ether_port_status(struct gelic_card *card,
 void gelic_card_up(struct gelic_card *card)
 {
 	pr_debug("%s: called\n", __func__);
-	down(&card->updown_lock);
+	mutex_lock(&card->updown_lock);
 	if (atomic_inc_return(&card->users) == 1) {
 		pr_debug("%s: real do\n", __func__);
 		/* enable irq */
@@ -120,7 +120,7 @@ void gelic_card_up(struct gelic_card *card)
 
 		napi_enable(&card->napi);
 	}
-	up(&card->updown_lock);
+	mutex_unlock(&card->updown_lock);
 	pr_debug("%s: done\n", __func__);
 }
 
@@ -128,7 +128,7 @@ void gelic_card_down(struct gelic_card *card)
 {
 	u64 mask;
 	pr_debug("%s: called\n", __func__);
-	down(&card->updown_lock);
+	mutex_lock(&card->updown_lock);
 	if (atomic_dec_if_positive(&card->users) == 0) {
 		pr_debug("%s: real do\n", __func__);
 		napi_disable(&card->napi);
@@ -146,7 +146,7 @@ void gelic_card_down(struct gelic_card *card)
 		/* stop tx */
 		gelic_card_disable_txdmac(card);
 	}
-	up(&card->updown_lock);
+	mutex_unlock(&card->updown_lock);
 	pr_debug("%s: done\n", __func__);
 }
 
@@ -1266,6 +1266,85 @@ int gelic_net_set_rx_csum(struct net_device *netdev, u32 data)
 	return 0;
 }
 
+static void gelic_net_get_wol(struct net_device *netdev,
+			      struct ethtool_wolinfo *wol)
+{
+	if (0 <= ps3_compare_firmware_version(2, 2, 0))
+		wol->supported = WAKE_MAGIC;
+	else
+		wol->supported = 0;
+
+	wol->wolopts = ps3_sys_manager_get_wol() ? wol->supported : 0;
+	memset(&wol->sopass, 0, sizeof(wol->sopass));
+}
+static int gelic_net_set_wol(struct net_device *netdev,
+			     struct ethtool_wolinfo *wol)
+{
+	int status;
+	struct gelic_card *card;
+	u64 v1, v2;
+
+	if (ps3_compare_firmware_version(2, 2, 0) < 0 ||
+	    !capable(CAP_NET_ADMIN))
+		return -EPERM;
+
+	if (wol->wolopts & ~WAKE_MAGIC)
+		return -EINVAL;
+
+	card = netdev_card(netdev);
+	if (wol->wolopts & WAKE_MAGIC) {
+		status = lv1_net_control(bus_id(card), dev_id(card),
+					 GELIC_LV1_SET_WOL,
+					 GELIC_LV1_WOL_MAGIC_PACKET,
+					 0, GELIC_LV1_WOL_MP_ENABLE,
+					 &v1, &v2);
+		if (status) {
+			pr_info("%s: enabling WOL failed %d\n", __func__,
+				status);
+			status = -EIO;
+			goto done;
+		}
+		status = lv1_net_control(bus_id(card), dev_id(card),
+					 GELIC_LV1_SET_WOL,
+					 GELIC_LV1_WOL_ADD_MATCH_ADDR,
+					 0, GELIC_LV1_WOL_MATCH_ALL,
+					 &v1, &v2);
+		if (!status)
+			ps3_sys_manager_set_wol(1);
+		else {
+			pr_info("%s: enabling WOL filter failed %d\n",
+				__func__, status);
+			status = -EIO;
+		}
+	} else {
+		status = lv1_net_control(bus_id(card), dev_id(card),
+					 GELIC_LV1_SET_WOL,
+					 GELIC_LV1_WOL_MAGIC_PACKET,
+					 0, GELIC_LV1_WOL_MP_DISABLE,
+					 &v1, &v2);
+		if (status) {
+			pr_info("%s: disabling WOL failed %d\n", __func__,
+				status);
+			status = -EIO;
+			goto done;
+		}
+		status = lv1_net_control(bus_id(card), dev_id(card),
+					 GELIC_LV1_SET_WOL,
+					 GELIC_LV1_WOL_DELETE_MATCH_ADDR,
+					 0, GELIC_LV1_WOL_MATCH_ALL,
+					 &v1, &v2);
+		if (!status)
+			ps3_sys_manager_set_wol(0);
+		else {
+			pr_info("%s: removing WOL filter failed %d\n",
+				__func__, status);
+			status = -EIO;
+		}
+	}
+done:
+	return status;
+}
+
 static struct ethtool_ops gelic_ether_ethtool_ops = {
 	.get_drvinfo	= gelic_net_get_drvinfo,
 	.get_settings	= gelic_ether_get_settings,
@@ -1274,6 +1353,8 @@ static struct ethtool_ops gelic_ether_ethtool_ops = {
 	.set_tx_csum	= ethtool_op_set_tx_csum,
 	.get_rx_csum	= gelic_net_get_rx_csum,
 	.set_rx_csum	= gelic_net_set_rx_csum,
+	.get_wol	= gelic_net_get_wol,
+	.set_wol	= gelic_net_set_wol,
 };
 
 /**
@@ -1453,7 +1534,7 @@ static struct gelic_card *gelic_alloc_card_net(struct net_device **netdev)
 	INIT_WORK(&card->tx_timeout_task, gelic_net_tx_timeout_task);
 	init_waitqueue_head(&card->waitq);
 	atomic_set(&card->tx_timeout_task_counter, 0);
-	init_MUTEX(&card->updown_lock);
+	mutex_init(&card->updown_lock);
 	atomic_set(&card->users, 0);
 
 	return card;

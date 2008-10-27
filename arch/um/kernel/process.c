@@ -243,7 +243,7 @@ void default_idle(void)
 		if (need_resched())
 			schedule();
 
-		tick_nohz_stop_sched_tick();
+		tick_nohz_stop_sched_tick(1);
 		nsecs = disable_timer();
 		idle_sleep(nsecs);
 		tick_nohz_restart_sched_tick();
@@ -364,7 +364,7 @@ int __init make_proc_sysemu(void)
 	if (!sysemu_supported)
 		return 0;
 
-	ent = create_proc_entry("sysemu", 0600, &proc_root);
+	ent = create_proc_entry("sysemu", 0600, NULL);
 
 	if (ent == NULL)
 	{

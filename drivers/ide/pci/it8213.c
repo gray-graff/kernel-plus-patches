@@ -14,6 +14,8 @@
 #include <linux/ide.h>
 #include <linux/init.h>
 
+#define DRV_NAME "it8213"
+
 /**
  *	it8213_set_pio_mode	-	set host controller for PIO mode
  *	@drive: drive
@@ -35,7 +37,7 @@ static void it8213_set_pio_mode(ide_drive_t *drive, const u8 pio)
 	static DEFINE_SPINLOCK(tune_lock);
 	int control = 0;
 
-	static const u8 timings[][2]= {
+	static const u8 timings[][2] = {
 					{ 0, 0 },
 					{ 0, 0 },
 					{ 1, 0 },
@@ -105,11 +107,10 @@ static void it8213_set_dma_mode(ide_drive_t *drive, const u8 speed)
 
 		if (!(reg48 & u_flag))
 			pci_write_config_byte(dev, 0x48, reg48 | u_flag);
-		if (speed >= XFER_UDMA_5) {
+		if (speed >= XFER_UDMA_5)
 			pci_write_config_byte(dev, 0x55, (u8) reg55|w_flag);
-		} else {
+		else
 			pci_write_config_byte(dev, 0x55, (u8) reg55 & ~w_flag);
-		}
 
 		if ((reg4a & a_speed) != u_speed)
 			pci_write_config_word(dev, 0x4a, (reg4a & ~a_speed) | u_speed);
@@ -140,7 +141,7 @@ static void it8213_set_dma_mode(ide_drive_t *drive, const u8 speed)
 	}
 }
 
-static u8 __devinit it8213_cable_detect(ide_hwif_t *hwif)
+static u8 it8213_cable_detect(ide_hwif_t *hwif)
 {
 	struct pci_dev *dev = to_pci_dev(hwif->dev);
 	u8 reg42h = 0;
@@ -150,39 +151,22 @@ static u8 __devinit it8213_cable_detect(ide_hwif_t *hwif)
 	return (reg42h & 0x02) ? ATA_CBL_PATA40 : ATA_CBL_PATA80;
 }
 
-/**
- *	init_hwif_it8213	-	set up hwif structs
- *	@hwif: interface to set up
- *
- *	We do the basic set up of the interface structure.
- */
-
-static void __devinit init_hwif_it8213(ide_hwif_t *hwif)
-{
-	hwif->set_dma_mode = &it8213_set_dma_mode;
-	hwif->set_pio_mode = &it8213_set_pio_mode;
-
-	hwif->cable_detect = it8213_cable_detect;
-}
-
-
-#define DECLARE_ITE_DEV(name_str)			\
-	{						\
-		.name		= name_str,		\
-		.init_hwif	= init_hwif_it8213,	\
-		.enablebits	= {{0x41,0x80,0x80}}, \
-		.host_flags	= IDE_HFLAG_SINGLE |	\
-				  IDE_HFLAG_BOOTABLE,	\
-		.pio_mask	= ATA_PIO4,		\
-		.swdma_mask	= ATA_SWDMA2_ONLY,	\
-		.mwdma_mask	= ATA_MWDMA12_ONLY,	\
-		.udma_mask	= ATA_UDMA6,		\
-	}
-
-static const struct ide_port_info it8213_chipsets[] __devinitdata = {
-	/* 0 */ DECLARE_ITE_DEV("IT8213"),
+static const struct ide_port_ops it8213_port_ops = {
+	.set_pio_mode		= it8213_set_pio_mode,
+	.set_dma_mode		= it8213_set_dma_mode,
+	.cable_detect		= it8213_cable_detect,
 };
 
+static const struct ide_port_info it8213_chipset __devinitdata = {
+	.name		= DRV_NAME,
+	.enablebits	= { {0x41, 0x80, 0x80} },
+	.port_ops	= &it8213_port_ops,
+	.host_flags	= IDE_HFLAG_SINGLE,
+	.pio_mask	= ATA_PIO4,
+	.swdma_mask	= ATA_SWDMA2_ONLY,
+	.mwdma_mask	= ATA_MWDMA12_ONLY,
+	.udma_mask	= ATA_UDMA6,
+};
 
 /**
  *	it8213_init_one	-	pci layer discovery entry
@@ -196,8 +180,7 @@ static const struct ide_port_info it8213_chipsets[] __devinitdata = {
 
 static int __devinit it8213_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	ide_setup_pci_device(dev, &it8213_chipsets[id->driver_data]);
-	return 0;
+	return ide_pci_init_one(dev, &it8213_chipset, NULL);
 }
 
 static const struct pci_device_id it8213_pci_tbl[] = {
@@ -211,6 +194,7 @@ static struct pci_driver driver = {
 	.name		= "ITE8213_IDE",
 	.id_table	= it8213_pci_tbl,
 	.probe		= it8213_init_one,
+	.remove		= ide_pci_remove,
 };
 
 static int __init it8213_ide_init(void)
@@ -218,7 +202,13 @@ static int __init it8213_ide_init(void)
 	return ide_pci_register_driver(&driver);
 }
 
+static void __exit it8213_ide_exit(void)
+{
+	pci_unregister_driver(&driver);
+}
+
 module_init(it8213_ide_init);
+module_exit(it8213_ide_exit);
 
 MODULE_AUTHOR("Jack Lee, Alan Cox");
 MODULE_DESCRIPTION("PCI driver module for the ITE 8213");

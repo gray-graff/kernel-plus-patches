@@ -33,7 +33,7 @@ static DEFINE_RWLOCK(sctp_lock);
 
    And so for me for SCTP :D -Kiran */
 
-static const char *sctp_conntrack_names[] = {
+static const char *const sctp_conntrack_names[] = {
 	"NONE",
 	"CLOSED",
 	"COOKIE_WAIT",
@@ -130,28 +130,28 @@ static const u8 sctp_conntracks[2][9][SCTP_CONNTRACK_MAX] = {
 	}
 };
 
-static int sctp_pkt_to_tuple(const struct sk_buff *skb,
-			     unsigned int dataoff,
-			     struct nf_conntrack_tuple *tuple)
+static bool sctp_pkt_to_tuple(const struct sk_buff *skb, unsigned int dataoff,
+			      struct nf_conntrack_tuple *tuple)
 {
-	sctp_sctphdr_t _hdr, *hp;
+	const struct sctphdr *hp;
+	struct sctphdr _hdr;
 
 	/* Actually only need first 8 bytes. */
 	hp = skb_header_pointer(skb, dataoff, 8, &_hdr);
 	if (hp == NULL)
-		return 0;
+		return false;
 
 	tuple->src.u.sctp.port = hp->source;
 	tuple->dst.u.sctp.port = hp->dest;
-	return 1;
+	return true;
 }
 
-static int sctp_invert_tuple(struct nf_conntrack_tuple *tuple,
-			     const struct nf_conntrack_tuple *orig)
+static bool sctp_invert_tuple(struct nf_conntrack_tuple *tuple,
+			      const struct nf_conntrack_tuple *orig)
 {
 	tuple->src.u.sctp.port = orig->dst.u.sctp.port;
 	tuple->dst.u.sctp.port = orig->src.u.sctp.port;
-	return 1;
+	return true;
 }
 
 /* Print out the per-protocol part of the tuple. */
@@ -292,8 +292,10 @@ static int sctp_packet(struct nf_conn *ct,
 {
 	enum sctp_conntrack new_state, old_state;
 	enum ip_conntrack_dir dir = CTINFO2DIR(ctinfo);
-	sctp_sctphdr_t _sctph, *sh;
-	sctp_chunkhdr_t _sch, *sch;
+	const struct sctphdr *sh;
+	struct sctphdr _sctph;
+	const struct sctp_chunkhdr *sch;
+	struct sctp_chunkhdr _sch;
 	u_int32_t offset, count;
 	unsigned long map[256 / sizeof(unsigned long)] = { 0 };
 
@@ -390,27 +392,29 @@ out:
 }
 
 /* Called when a new connection for this protocol found. */
-static int sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
-		    unsigned int dataoff)
+static bool sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
+		     unsigned int dataoff)
 {
 	enum sctp_conntrack new_state;
-	sctp_sctphdr_t _sctph, *sh;
-	sctp_chunkhdr_t _sch, *sch;
+	const struct sctphdr *sh;
+	struct sctphdr _sctph;
+	const struct sctp_chunkhdr *sch;
+	struct sctp_chunkhdr _sch;
 	u_int32_t offset, count;
 	unsigned long map[256 / sizeof(unsigned long)] = { 0 };
 
 	sh = skb_header_pointer(skb, dataoff, sizeof(_sctph), &_sctph);
 	if (sh == NULL)
-		return 0;
+		return false;
 
 	if (do_basic_checks(ct, skb, dataoff, map) != 0)
-		return 0;
+		return false;
 
 	/* If an OOTB packet has any of these chunks discard (Sec 8.4) */
 	if (test_bit(SCTP_CID_ABORT, map) ||
 	    test_bit(SCTP_CID_SHUTDOWN_COMPLETE, map) ||
 	    test_bit(SCTP_CID_COOKIE_ACK, map))
-		return 0;
+		return false;
 
 	new_state = SCTP_CONNTRACK_MAX;
 	for_each_sctp_chunk (skb, sch, _sch, offset, dataoff, count) {
@@ -422,7 +426,7 @@ static int sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
 		if (new_state == SCTP_CONNTRACK_NONE ||
 		    new_state == SCTP_CONNTRACK_MAX) {
 			pr_debug("nf_conntrack_sctp: invalid new deleting.\n");
-			return 0;
+			return false;
 		}
 
 		/* Copy the vtag into the state info */
@@ -433,7 +437,7 @@ static int sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
 				ih = skb_header_pointer(skb, offset + sizeof(sctp_chunkhdr_t),
 							sizeof(_inithdr), &_inithdr);
 				if (ih == NULL)
-					return 0;
+					return false;
 
 				pr_debug("Setting vtag %x for new conn\n",
 					 ih->init_tag);
@@ -442,7 +446,7 @@ static int sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
 								ih->init_tag;
 			} else {
 				/* Sec 8.5.1 (A) */
-				return 0;
+				return false;
 			}
 		}
 		/* If it is a shutdown ack OOTB packet, we expect a return
@@ -456,8 +460,84 @@ static int sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
 		ct->proto.sctp.state = new_state;
 	}
 
-	return 1;
+	return true;
 }
+
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
+
+#include <linux/netfilter/nfnetlink.h>
+#include <linux/netfilter/nfnetlink_conntrack.h>
+
+static int sctp_to_nlattr(struct sk_buff *skb, struct nlattr *nla,
+			  const struct nf_conn *ct)
+{
+	struct nlattr *nest_parms;
+
+	read_lock_bh(&sctp_lock);
+	nest_parms = nla_nest_start(skb, CTA_PROTOINFO_SCTP | NLA_F_NESTED);
+	if (!nest_parms)
+		goto nla_put_failure;
+
+	NLA_PUT_U8(skb, CTA_PROTOINFO_SCTP_STATE, ct->proto.sctp.state);
+
+	NLA_PUT_BE32(skb,
+		     CTA_PROTOINFO_SCTP_VTAG_ORIGINAL,
+		     ct->proto.sctp.vtag[IP_CT_DIR_ORIGINAL]);
+
+	NLA_PUT_BE32(skb,
+		     CTA_PROTOINFO_SCTP_VTAG_REPLY,
+		     ct->proto.sctp.vtag[IP_CT_DIR_REPLY]);
+
+	read_unlock_bh(&sctp_lock);
+
+	nla_nest_end(skb, nest_parms);
+
+	return 0;
+
+nla_put_failure:
+	read_unlock_bh(&sctp_lock);
+	return -1;
+}
+
+static const struct nla_policy sctp_nla_policy[CTA_PROTOINFO_SCTP_MAX+1] = {
+	[CTA_PROTOINFO_SCTP_STATE]	    = { .type = NLA_U8 },
+	[CTA_PROTOINFO_SCTP_VTAG_ORIGINAL]  = { .type = NLA_U32 },
+	[CTA_PROTOINFO_SCTP_VTAG_REPLY]     = { .type = NLA_U32 },
+};
+
+static int nlattr_to_sctp(struct nlattr *cda[], struct nf_conn *ct)
+{
+	struct nlattr *attr = cda[CTA_PROTOINFO_SCTP];
+	struct nlattr *tb[CTA_PROTOINFO_SCTP_MAX+1];
+	int err;
+
+	/* updates may not contain the internal protocol info, skip parsing */
+	if (!attr)
+		return 0;
+
+	err = nla_parse_nested(tb,
+			       CTA_PROTOINFO_SCTP_MAX,
+			       attr,
+			       sctp_nla_policy);
+	if (err < 0)
+		return err;
+
+	if (!tb[CTA_PROTOINFO_SCTP_STATE] ||
+	    !tb[CTA_PROTOINFO_SCTP_VTAG_ORIGINAL] ||
+	    !tb[CTA_PROTOINFO_SCTP_VTAG_REPLY])
+		return -EINVAL;
+
+	write_lock_bh(&sctp_lock);
+	ct->proto.sctp.state = nla_get_u8(tb[CTA_PROTOINFO_SCTP_STATE]);
+	ct->proto.sctp.vtag[IP_CT_DIR_ORIGINAL] =
+		nla_get_be32(tb[CTA_PROTOINFO_SCTP_VTAG_ORIGINAL]);
+	ct->proto.sctp.vtag[IP_CT_DIR_REPLY] =
+		nla_get_be32(tb[CTA_PROTOINFO_SCTP_VTAG_REPLY]);
+	write_unlock_bh(&sctp_lock);
+
+	return 0;
+}
+#endif
 
 #ifdef CONFIG_SYSCTL
 static unsigned int sctp_sysctl_table_users;
@@ -587,6 +667,8 @@ static struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp4 __read_mostly = {
 	.new 			= sctp_new,
 	.me 			= THIS_MODULE,
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
+	.to_nlattr		= sctp_to_nlattr,
+	.from_nlattr		= nlattr_to_sctp,
 	.tuple_to_nlattr	= nf_ct_port_tuple_to_nlattr,
 	.nlattr_to_tuple	= nf_ct_port_nlattr_to_tuple,
 	.nla_policy		= nf_ct_port_nla_policy,
@@ -613,6 +695,8 @@ static struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp6 __read_mostly = {
 	.new 			= sctp_new,
 	.me 			= THIS_MODULE,
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
+	.to_nlattr		= sctp_to_nlattr,
+	.from_nlattr		= nlattr_to_sctp,
 	.tuple_to_nlattr	= nf_ct_port_tuple_to_nlattr,
 	.nlattr_to_tuple	= nf_ct_port_nlattr_to_tuple,
 	.nla_policy		= nf_ct_port_nla_policy,

@@ -1,6 +1,4 @@
 /*
- * arch/i386/kernel/acpi/processor.c
- *
  * Copyright (C) 2005 Intel Corporation
  * 	Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
  * 	- Added _PDC for platforms with Intel CPUs
@@ -57,6 +55,12 @@ static void init_intel_pdc(struct acpi_processor *pr, struct cpuinfo_x86 *c)
 
 	if (cpu_has(c, X86_FEATURE_ACPI))
 		buf[2] |= ACPI_PDC_T_FFH;
+
+	/*
+	 * If mwait/monitor is unsupported, C2/C3_FFH will be disabled
+	 */
+	if (!cpu_has(c, X86_FEATURE_MWAIT))
+		buf[2] &= ~(ACPI_PDC_C_C2C3_FFH);
 
 	obj->type = ACPI_TYPE_BUFFER;
 	obj->buffer.length = 12;

@@ -65,7 +65,6 @@ void gfs2_tune_init(struct gfs2_tune *gt)
 	gt->gt_quota_quantum = 60;
 	gt->gt_atime_quantum = 3600;
 	gt->gt_new_files_jdata = 0;
-	gt->gt_new_files_directio = 0;
 	gt->gt_max_readahead = 1 << 18;
 	gt->gt_stall_secs = 600;
 	gt->gt_complain_secs = 10;
@@ -210,7 +209,7 @@ int gfs2_read_super(struct gfs2_sbd *sdp, sector_t sector)
 	struct page *page;
 	struct bio *bio;
 
-	page = alloc_page(GFP_KERNEL);
+	page = alloc_page(GFP_NOFS);
 	if (unlikely(!page))
 		return -ENOBUFS;
 
@@ -218,7 +217,7 @@ int gfs2_read_super(struct gfs2_sbd *sdp, sector_t sector)
 	ClearPageDirty(page);
 	lock_page(page);
 
-	bio = bio_alloc(GFP_KERNEL, 1);
+	bio = bio_alloc(GFP_NOFS, 1);
 	if (unlikely(!bio)) {
 		__free_page(page);
 		return -ENOBUFS;
@@ -316,6 +315,7 @@ int gfs2_read_sb(struct gfs2_sbd *sdp, struct gfs2_glock *gl, int silent)
 		sdp->sd_heightsize[x] = space;
 	}
 	sdp->sd_max_height = x;
+	sdp->sd_heightsize[x] = ~0;
 	gfs2_assert(sdp, sdp->sd_max_height <= GFS2_MAX_META_HEIGHT);
 
 	sdp->sd_jheightsize[0] = sdp->sd_sb.sb_bsize -
@@ -334,6 +334,7 @@ int gfs2_read_sb(struct gfs2_sbd *sdp, struct gfs2_glock *gl, int silent)
 		sdp->sd_jheightsize[x] = space;
 	}
 	sdp->sd_max_jheight = x;
+	sdp->sd_jheightsize[x] = ~0;
 	gfs2_assert(sdp, sdp->sd_max_jheight <= GFS2_MAX_META_HEIGHT);
 
 	return 0;
@@ -388,7 +389,7 @@ int gfs2_jindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ji_gh)
 			break;
 
 		INIT_LIST_HEAD(&jd->extent_list);
-		jd->jd_inode = gfs2_lookupi(sdp->sd_jindex, &name, 1, NULL);
+		jd->jd_inode = gfs2_lookupi(sdp->sd_jindex, &name, 1);
 		if (!jd->jd_inode || IS_ERR(jd->jd_inode)) {
 			if (!jd->jd_inode)
 				error = -ENOENT;
@@ -939,8 +940,7 @@ static int gfs2_lock_fs_check_clean(struct gfs2_sbd *sdp,
 	}
 
 	error = gfs2_glock_nq_init(sdp->sd_trans_gl, LM_ST_DEFERRED,
-			       LM_FLAG_PRIORITY | GL_NOCACHE,
-			       t_gh);
+				   GL_NOCACHE, t_gh);
 
 	list_for_each_entry(jd, &sdp->sd_jindex_list, jd_list) {
 		error = gfs2_jdesc_check(jd);

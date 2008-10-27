@@ -23,7 +23,6 @@
 #include <linux/highmem.h>
 #include <linux/mutex.h>
 #include <asm/sections.h>
-#include <asm/semaphore.h>
 #include <asm/irq_regs.h>
 #include <asm/ptrace.h>
 
@@ -112,8 +111,6 @@ void __init profile_init(void)
 }
 
 /* Profile event notifications */
-
-#ifdef CONFIG_PROFILING
 
 static BLOCKING_NOTIFIER_HEAD(task_exit_notifier);
 static ATOMIC_NOTIFIER_HEAD(task_free_notifier);
@@ -204,8 +201,6 @@ void unregister_timer_hook(int (*hook)(struct pt_regs *))
 }
 EXPORT_SYMBOL_GPL(unregister_timer_hook);
 
-#endif /* CONFIG_PROFILING */
-
 
 #ifdef CONFIG_SMP
 /*
@@ -253,7 +248,7 @@ static void profile_flip_buffers(void)
 	mutex_lock(&profile_flip_mutex);
 	j = per_cpu(cpu_profile_flip, get_cpu());
 	put_cpu();
-	on_each_cpu(__profile_flip_buffers, NULL, 0, 1);
+	on_each_cpu(__profile_flip_buffers, NULL, 1);
 	for_each_online_cpu(cpu) {
 		struct profile_hit *hits = per_cpu(cpu_profile_hits, cpu)[j];
 		for (i = 0; i < NR_PROFILE_HIT; ++i) {
@@ -276,7 +271,7 @@ static void profile_discard_flip_buffers(void)
 	mutex_lock(&profile_flip_mutex);
 	i = per_cpu(cpu_profile_flip, get_cpu());
 	put_cpu();
-	on_each_cpu(__profile_flip_buffers, NULL, 0, 1);
+	on_each_cpu(__profile_flip_buffers, NULL, 1);
 	for_each_online_cpu(cpu) {
 		struct profile_hit *hits = per_cpu(cpu_profile_hits, cpu)[i];
 		memset(hits, 0, NR_PROFILE_HIT*sizeof(struct profile_hit));
@@ -559,7 +554,7 @@ static int __init create_hash_tables(void)
 out_cleanup:
 	prof_on = 0;
 	smp_mb();
-	on_each_cpu(profile_nop, NULL, 0, 1);
+	on_each_cpu(profile_nop, NULL, 1);
 	for_each_online_cpu(cpu) {
 		struct page *page;
 
@@ -588,10 +583,10 @@ static int __init create_proc_profile(void)
 		return 0;
 	if (create_hash_tables())
 		return -1;
-	entry = create_proc_entry("profile", S_IWUSR | S_IRUGO, NULL);
+	entry = proc_create("profile", S_IWUSR | S_IRUGO,
+			    NULL, &proc_profile_operations);
 	if (!entry)
 		return 0;
-	entry->proc_fops = &proc_profile_operations;
 	entry->size = (1+prof_len) * sizeof(atomic_t);
 	hotcpu_notifier(profile_cpu_callback, 0);
 	return 0;

@@ -23,7 +23,6 @@
 #include <linux/mutex.h>
 #include <net/flow.h>
 #include <asm/atomic.h>
-#include <asm/semaphore.h>
 #include <linux/security.h>
 
 struct flow_cache_entry {
@@ -299,7 +298,7 @@ void flow_cache_flush(void)
 	init_completion(&info.completion);
 
 	local_bh_disable();
-	smp_call_function(flow_cache_flush_per_cpu, &info, 1, 0);
+	smp_call_function(flow_cache_flush_per_cpu, &info, 0);
 	flow_cache_flush_tasklet((unsigned long)&info);
 	local_bh_enable();
 

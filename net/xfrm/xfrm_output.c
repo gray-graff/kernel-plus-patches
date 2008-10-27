@@ -25,12 +25,16 @@ static int xfrm_state_check_space(struct xfrm_state *x, struct sk_buff *skb)
 	struct dst_entry *dst = skb->dst;
 	int nhead = dst->header_len + LL_RESERVED_SPACE(dst->dev)
 		- skb_headroom(skb);
+	int ntail = dst->dev->needed_tailroom - skb_tailroom(skb);
 
-	if (nhead > 0)
-		return pskb_expand_head(skb, nhead, 0, GFP_ATOMIC);
+	if (nhead <= 0) {
+		if (ntail <= 0)
+			return 0;
+		nhead = 0;
+	} else if (ntail < 0)
+		ntail = 0;
 
-	/* Check tail too... */
-	return 0;
+	return pskb_expand_head(skb, nhead, ntail, GFP_ATOMIC);
 }
 
 static int xfrm_output_one(struct sk_buff *skb, int err)
@@ -112,16 +116,13 @@ error_nolock:
 int xfrm_output_resume(struct sk_buff *skb, int err)
 {
 	while (likely((err = xfrm_output_one(skb, err)) == 0)) {
-		struct xfrm_state *x;
-
 		nf_reset(skb);
 
 		err = skb->dst->ops->local_out(skb);
 		if (unlikely(err != 1))
 			goto out;
 
-		x = skb->dst->xfrm;
-		if (!x)
+		if (!skb->dst->xfrm)
 			return dst_output(skb);
 
 		err = nf_hook(skb->dst->ops->family,
@@ -150,7 +151,7 @@ static int xfrm_output_gso(struct sk_buff *skb)
 
 	segs = skb_gso_segment(skb, 0);
 	kfree_skb(skb);
-	if (unlikely(IS_ERR(segs)))
+	if (IS_ERR(segs))
 		return PTR_ERR(segs);
 
 	do {

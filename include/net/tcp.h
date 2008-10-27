@@ -29,6 +29,7 @@
 #include <linux/skbuff.h>
 #include <linux/dmaengine.h>
 #include <linux/crypto.h>
+#include <linux/cryptohash.h>
 
 #include <net/inet_connection_sock.h>
 #include <net/inet_timewait_sock.h>
@@ -49,6 +50,7 @@ extern atomic_t tcp_orphan_count;
 extern void tcp_time_wait(struct sock *sk, int state, int timeo);
 
 #define MAX_TCP_HEADER	(128 + MAX_HEADER)
+#define MAX_TCP_OPTION_SPACE 40
 
 /* 
  * Never offer a window over 32767 without using window scaling. Some
@@ -183,6 +185,7 @@ extern void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCPOLEN_SACK_BASE_ALIGNED	4
 #define TCPOLEN_SACK_PERBLOCK		8
 #define TCPOLEN_MD5SIG_ALIGNED		20
+#define TCPOLEN_MSS_ALIGNED		4
 
 /* Flags in tp->nonagle */
 #define TCP_NAGLE_OFF		1	/* Nagle's algo is disabled */
@@ -264,13 +267,10 @@ static inline int tcp_too_many_orphans(struct sock *sk, int num)
 
 extern struct proto tcp_prot;
 
-DECLARE_SNMP_STAT(struct tcp_mib, tcp_statistics);
-#define TCP_INC_STATS(field)		SNMP_INC_STATS(tcp_statistics, field)
-#define TCP_INC_STATS_BH(field)		SNMP_INC_STATS_BH(tcp_statistics, field)
-#define TCP_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(tcp_statistics, field)
-#define TCP_DEC_STATS(field)		SNMP_DEC_STATS(tcp_statistics, field)
-#define TCP_ADD_STATS_BH(field, val)	SNMP_ADD_STATS_BH(tcp_statistics, field, val)
-#define TCP_ADD_STATS_USER(field, val)	SNMP_ADD_STATS_USER(tcp_statistics, field, val)
+#define TCP_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.tcp_statistics, field)
+#define TCP_INC_STATS_BH(net, field)	SNMP_INC_STATS_BH((net)->mib.tcp_statistics, field)
+#define TCP_DEC_STATS(net, field)	SNMP_DEC_STATS((net)->mib.tcp_statistics, field)
+#define TCP_ADD_STATS_USER(net, field, val) SNMP_ADD_STATS_USER((net)->mib.tcp_statistics, field, val)
 
 extern void			tcp_v4_err(struct sk_buff *skb, u32);
 
@@ -397,6 +397,8 @@ extern void			tcp_parse_options(struct sk_buff *skb,
 						  struct tcp_options_received *opt_rx,
 						  int estab);
 
+extern u8			*tcp_parse_md5sig_option(struct tcphdr *th);
+
 /*
  *	TCP v4 functions exported for the inet6 API
  */
@@ -431,12 +433,20 @@ extern struct sk_buff *		tcp_make_synack(struct sock *sk,
 
 extern int			tcp_disconnect(struct sock *sk, int flags);
 
-extern void			tcp_unhash(struct sock *sk);
 
 /* From syncookies.c */
+extern __u32 syncookie_secret[2][16-4+SHA_DIGEST_WORDS];
 extern struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb, 
 				    struct ip_options *opt);
 extern __u32 cookie_v4_init_sequence(struct sock *sk, struct sk_buff *skb, 
+				     __u16 *mss);
+
+extern __u32 cookie_init_timestamp(struct request_sock *req);
+extern void cookie_check_timestamp(struct tcp_options_received *tcp_opt);
+
+/* From net/ipv6/syncookies.c */
+extern struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb);
+extern __u32 cookie_v6_init_sequence(struct sock *sk, struct sk_buff *skb,
 				     __u16 *mss);
 
 /* tcp_output.c */
@@ -776,11 +786,14 @@ extern void tcp_enter_cwr(struct sock *sk, const int set_ssthresh);
 extern __u32 tcp_init_cwnd(struct tcp_sock *tp, struct dst_entry *dst);
 
 /* Slow start with delack produces 3 packets of burst, so that
- * it is safe "de facto".
+ * it is safe "de facto".  This will be the default - same as
+ * the default reordering threshold - but if reordering increases,
+ * we must be able to allow cwnd to burst at least this much in order
+ * to not pull it back when holes are filled.
  */
 static __inline__ __u32 tcp_max_burst(const struct tcp_sock *tp)
 {
-	return 3;
+	return tp->reordering;
 }
 
 /* Returns end sequence number of the receiver's advertised window */
@@ -882,7 +895,7 @@ static inline int tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 
 			while ((skb1 = __skb_dequeue(&tp->ucopy.prequeue)) != NULL) {
 				sk->sk_backlog_rcv(sk, skb1);
-				NET_INC_STATS_BH(LINUX_MIB_TCPPREQUEUEDROPPED);
+				NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPPREQUEUEDROPPED);
 			}
 
 			tp->ucopy.memory = 0;
@@ -950,6 +963,7 @@ static inline void tcp_openreq_init(struct request_sock *req,
 	struct inet_request_sock *ireq = inet_rsk(req);
 
 	req->rcv_wnd = 0;		/* So that tcp_send_synack() knows! */
+	req->cookie_ts = 0;
 	tcp_rsk(req)->rcv_isn = TCP_SKB_CB(skb)->seq;
 	req->mss = rx_opt->mss_clamp;
 	req->ts_recent = rx_opt->saw_tstamp ? rx_opt->rcv_tsval : 0;
@@ -962,7 +976,7 @@ static inline void tcp_openreq_init(struct request_sock *req,
 	ireq->rmt_port = tcp_hdr(skb)->source;
 }
 
-extern void tcp_enter_memory_pressure(void);
+extern void tcp_enter_memory_pressure(struct sock *sk);
 
 static inline int keepalive_intvl_when(const struct tcp_sock *tp)
 {
@@ -1011,13 +1025,13 @@ static inline int tcp_paws_check(const struct tcp_options_received *rx_opt, int 
 
 #define TCP_CHECK_TIMER(sk) do { } while (0)
 
-static inline void tcp_mib_init(void)
+static inline void tcp_mib_init(struct net *net)
 {
 	/* See RFC 2012 */
-	TCP_ADD_STATS_USER(TCP_MIB_RTOALGORITHM, 1);
-	TCP_ADD_STATS_USER(TCP_MIB_RTOMIN, TCP_RTO_MIN*1000/HZ);
-	TCP_ADD_STATS_USER(TCP_MIB_RTOMAX, TCP_RTO_MAX*1000/HZ);
-	TCP_ADD_STATS_USER(TCP_MIB_MAXCONN, -1);
+	TCP_ADD_STATS_USER(net, TCP_MIB_RTOALGORITHM, 1);
+	TCP_ADD_STATS_USER(net, TCP_MIB_RTOMIN, TCP_RTO_MIN*1000/HZ);
+	TCP_ADD_STATS_USER(net, TCP_MIB_RTOMAX, TCP_RTO_MAX*1000/HZ);
+	TCP_ADD_STATS_USER(net, TCP_MIB_MAXCONN, -1);
 }
 
 /* from STCP */
@@ -1100,14 +1114,12 @@ struct tcp_md5sig_pool {
 #define TCP_MD5SIG_MAXKEYS	(~(u32)0)	/* really?! */
 
 /* - functions */
-extern int			tcp_v4_calc_md5_hash(char *md5_hash,
-						     struct tcp_md5sig_key *key,
-						     struct sock *sk,
-						     struct dst_entry *dst,
-						     struct request_sock *req,
-						     struct tcphdr *th,
-						     int protocol,
-						     unsigned int tcplen);
+extern int			tcp_v4_md5_hash_skb(char *md5_hash,
+						    struct tcp_md5sig_key *key,
+						    struct sock *sk,
+						    struct request_sock *req,
+						    struct sk_buff *skb);
+
 extern struct tcp_md5sig_key	*tcp_v4_md5_lookup(struct sock *sk,
 						   struct sock *addr_sk);
 
@@ -1119,11 +1131,26 @@ extern int			tcp_v4_md5_do_add(struct sock *sk,
 extern int			tcp_v4_md5_do_del(struct sock *sk,
 						  __be32 addr);
 
+#ifdef CONFIG_TCP_MD5SIG
+#define tcp_twsk_md5_key(twsk)	((twsk)->tw_md5_keylen ? 		 \
+				 &(struct tcp_md5sig_key) {		 \
+					.key = (twsk)->tw_md5_key,	 \
+					.keylen = (twsk)->tw_md5_keylen, \
+				} : NULL)
+#else
+#define tcp_twsk_md5_key(twsk)	NULL
+#endif
+
 extern struct tcp_md5sig_pool	**tcp_alloc_md5sig_pool(void);
 extern void			tcp_free_md5sig_pool(void);
 
 extern struct tcp_md5sig_pool	*__tcp_get_md5sig_pool(int cpu);
 extern void			__tcp_put_md5sig_pool(void);
+extern int tcp_md5_hash_header(struct tcp_md5sig_pool *, struct tcphdr *);
+extern int tcp_md5_hash_skb_data(struct tcp_md5sig_pool *, struct sk_buff *,
+				 unsigned header_len);
+extern int tcp_md5_hash_key(struct tcp_md5sig_pool *hp,
+			    struct tcp_md5sig_key *key);
 
 static inline
 struct tcp_md5sig_pool		*tcp_get_md5sig_pool(void)
@@ -1237,7 +1264,7 @@ static inline void tcp_insert_write_queue_after(struct sk_buff *skb,
 						struct sk_buff *buff,
 						struct sock *sk)
 {
-	__skb_append(skb, buff, &sk->sk_write_queue);
+	__skb_queue_after(&sk->sk_write_queue, skb, buff);
 }
 
 /* Insert skb between prev and next on the write queue of sk.  */
@@ -1315,27 +1342,27 @@ enum tcp_seq_states {
 };
 
 struct tcp_seq_afinfo {
-	struct module		*owner;
 	char			*name;
 	sa_family_t		family;
-	int			(*seq_show) (struct seq_file *m, void *v);
-	struct file_operations	*seq_fops;
+	struct file_operations	seq_fops;
+	struct seq_operations	seq_ops;
 };
 
 struct tcp_iter_state {
+	struct seq_net_private	p;
 	sa_family_t		family;
 	enum tcp_seq_states	state;
 	struct sock		*syn_wait_sk;
 	int			bucket, sbucket, num, uid;
-	struct seq_operations	seq_ops;
 };
 
-extern int tcp_proc_register(struct tcp_seq_afinfo *afinfo);
-extern void tcp_proc_unregister(struct tcp_seq_afinfo *afinfo);
+extern int tcp_proc_register(struct net *net, struct tcp_seq_afinfo *afinfo);
+extern void tcp_proc_unregister(struct net *net, struct tcp_seq_afinfo *afinfo);
 
 extern struct request_sock_ops tcp_request_sock_ops;
+extern struct request_sock_ops tcp6_request_sock_ops;
 
-extern int tcp_v4_destroy_sock(struct sock *sk);
+extern void tcp_v4_destroy_sock(struct sock *sk);
 
 extern int tcp_v4_gso_send_check(struct sk_buff *skb);
 extern struct sk_buff *tcp_tso_segment(struct sk_buff *skb, int features);
@@ -1353,11 +1380,8 @@ struct tcp_sock_af_ops {
 	int			(*calc_md5_hash) (char *location,
 						  struct tcp_md5sig_key *md5,
 						  struct sock *sk,
-						  struct dst_entry *dst,
 						  struct request_sock *req,
-						  struct tcphdr *th,
-						  int protocol,
-						  unsigned int len);
+						  struct sk_buff *skb);
 	int			(*md5_add) (struct sock *sk,
 					    struct sock *addr_sk,
 					    u8 *newkey,
@@ -1375,7 +1399,7 @@ struct tcp_request_sock_ops {
 #endif
 };
 
-extern void tcp_v4_init(struct net_proto_family *ops);
+extern void tcp_v4_init(void);
 extern void tcp_init(void);
 
 #endif	/* _TCP_H */

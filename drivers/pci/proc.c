@@ -1,6 +1,4 @@
 /*
- *	$Id: proc.c,v 1.13 1998/05/12 07:36:07 mj Exp $
- *
  *	Procfs interface for the PCI bus.
  *
  *	Copyright (c) 1997--1999 Martin Mares <mj@ucw.cz>
@@ -90,7 +88,7 @@ proc_bus_pci_read(struct file *file, char __user *buf, size_t nbytes, loff_t *pp
 	if ((pos & 3) && cnt > 2) {
 		unsigned short val;
 		pci_user_read_config_word(dev, pos, &val);
-		__put_user(cpu_to_le16(val), (unsigned short __user *) buf);
+		__put_user(cpu_to_le16(val), (__le16 __user *) buf);
 		buf += 2;
 		pos += 2;
 		cnt -= 2;
@@ -99,7 +97,7 @@ proc_bus_pci_read(struct file *file, char __user *buf, size_t nbytes, loff_t *pp
 	while (cnt >= 4) {
 		unsigned int val;
 		pci_user_read_config_dword(dev, pos, &val);
-		__put_user(cpu_to_le32(val), (unsigned int __user *) buf);
+		__put_user(cpu_to_le32(val), (__le32 __user *) buf);
 		buf += 4;
 		pos += 4;
 		cnt -= 4;
@@ -108,7 +106,7 @@ proc_bus_pci_read(struct file *file, char __user *buf, size_t nbytes, loff_t *pp
 	if (cnt >= 2) {
 		unsigned short val;
 		pci_user_read_config_word(dev, pos, &val);
-		__put_user(cpu_to_le16(val), (unsigned short __user *) buf);
+		__put_user(cpu_to_le16(val), (__le16 __user *) buf);
 		buf += 2;
 		pos += 2;
 		cnt -= 2;
@@ -158,8 +156,8 @@ proc_bus_pci_write(struct file *file, const char __user *buf, size_t nbytes, lof
 	}
 
 	if ((pos & 3) && cnt > 2) {
-		unsigned short val;
-		__get_user(val, (unsigned short __user *) buf);
+		__le16 val;
+		__get_user(val, (__le16 __user *) buf);
 		pci_user_write_config_word(dev, pos, le16_to_cpu(val));
 		buf += 2;
 		pos += 2;
@@ -167,8 +165,8 @@ proc_bus_pci_write(struct file *file, const char __user *buf, size_t nbytes, lof
 	}
 
 	while (cnt >= 4) {
-		unsigned int val;
-		__get_user(val, (unsigned int __user *) buf);
+		__le32 val;
+		__get_user(val, (__le32 __user *) buf);
 		pci_user_write_config_dword(dev, pos, le32_to_cpu(val));
 		buf += 4;
 		pos += 4;
@@ -176,8 +174,8 @@ proc_bus_pci_write(struct file *file, const char __user *buf, size_t nbytes, lof
 	}
 
 	if (cnt >= 2) {
-		unsigned short val;
-		__get_user(val, (unsigned short __user *) buf);
+		__le16 val;
+		__get_user(val, (__le16 __user *) buf);
 		pci_user_write_config_word(dev, pos, le16_to_cpu(val));
 		buf += 2;
 		pos += 2;
@@ -293,6 +291,7 @@ static int proc_bus_pci_release(struct inode *inode, struct file *file)
 #endif /* HAVE_PCI_MMAP */
 
 static const struct file_operations proc_bus_pci_operations = {
+	.owner		= THIS_MODULE,
 	.llseek		= proc_bus_pci_lseek,
 	.read		= proc_bus_pci_read,
 	.write		= proc_bus_pci_write,
@@ -406,11 +405,10 @@ int pci_proc_attach_device(struct pci_dev *dev)
 	}
 
 	sprintf(name, "%02x.%x", PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
-	e = create_proc_entry(name, S_IFREG | S_IRUGO | S_IWUSR, bus->procdir);
+	e = proc_create_data(name, S_IFREG | S_IRUGO | S_IWUSR, bus->procdir,
+			     &proc_bus_pci_operations, dev);
 	if (!e)
 		return -ENOMEM;
-	e->proc_fops = &proc_bus_pci_operations;
-	e->data = dev;
 	e->size = dev->cfg_size;
 	dev->procent = e;
 
@@ -462,6 +460,7 @@ static int proc_bus_pci_dev_open(struct inode *inode, struct file *file)
 	return seq_open(file, &proc_bus_pci_devices_op);
 }
 static const struct file_operations proc_bus_pci_dev_operations = {
+	.owner		= THIS_MODULE,
 	.open		= proc_bus_pci_dev_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -470,12 +469,10 @@ static const struct file_operations proc_bus_pci_dev_operations = {
 
 static int __init pci_proc_init(void)
 {
-	struct proc_dir_entry *entry;
 	struct pci_dev *dev = NULL;
-	proc_bus_pci_dir = proc_mkdir("pci", proc_bus);
-	entry = create_proc_entry("devices", 0, proc_bus_pci_dir);
-	if (entry)
-		entry->proc_fops = &proc_bus_pci_dev_operations;
+	proc_bus_pci_dir = proc_mkdir("bus/pci", NULL);
+	proc_create("devices", 0, proc_bus_pci_dir,
+		    &proc_bus_pci_dev_operations);
 	proc_initialized = 1;
 	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
 		pci_proc_attach_device(dev);
@@ -483,5 +480,5 @@ static int __init pci_proc_init(void)
 	return 0;
 }
 
-__initcall(pci_proc_init);
+device_initcall(pci_proc_init);
 

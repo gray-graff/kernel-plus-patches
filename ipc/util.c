@@ -33,6 +33,7 @@
 #include <linux/audit.h>
 #include <linux/nsproxy.h>
 #include <linux/rwsem.h>
+#include <linux/memory.h>
 #include <linux/ipc_namespace.h>
 
 #include <asm/unistd.h>
@@ -52,11 +53,57 @@ struct ipc_namespace init_ipc_ns = {
 	},
 };
 
+atomic_t nr_ipc_ns = ATOMIC_INIT(1);
+
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+
+static void ipc_memory_notifier(struct work_struct *work)
+{
+	ipcns_notify(IPCNS_MEMCHANGED);
+}
+
+static DECLARE_WORK(ipc_memory_wq, ipc_memory_notifier);
+
+
+static int ipc_memory_callback(struct notifier_block *self,
+				unsigned long action, void *arg)
+{
+	switch (action) {
+	case MEM_ONLINE:    /* memory successfully brought online */
+	case MEM_OFFLINE:   /* or offline: it's time to recompute msgmni */
+		/*
+		 * This is done by invoking the ipcns notifier chain with the
+		 * IPC_MEMCHANGED event.
+		 * In order not to keep the lock on the hotplug memory chain
+		 * for too long, queue a work item that will, when waken up,
+		 * activate the ipcns notification chain.
+		 * No need to keep several ipc work items on the queue.
+		 */
+		if (!work_pending(&ipc_memory_wq))
+			schedule_work(&ipc_memory_wq);
+		break;
+	case MEM_GOING_ONLINE:
+	case MEM_GOING_OFFLINE:
+	case MEM_CANCEL_ONLINE:
+	case MEM_CANCEL_OFFLINE:
+	default:
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
+#endif /* CONFIG_MEMORY_HOTPLUG */
+
 /**
  *	ipc_init	-	initialise IPC subsystem
  *
  *	The various system5 IPC resources (semaphores, messages and shared
  *	memory) are initialised
+ *	A callback routine is registered into the memory hotplug notifier
+ *	chain: since msgmni scales to lowmem this callback routine will be
+ *	called upon successful memory add / remove to recompute msmgni.
  */
  
 static int __init ipc_init(void)
@@ -64,6 +111,8 @@ static int __init ipc_init(void)
 	sem_init();
 	msg_init();
 	shm_init();
+	hotplug_memory_notifier(ipc_memory_callback, IPC_CALLBACK_PRI);
+	register_ipcns_notifier(&init_ipc_ns);
 	return 0;
 }
 __initcall(ipc_init);
@@ -84,8 +133,8 @@ void ipc_init_ids(struct ipc_ids *ids)
 	ids->seq = 0;
 	{
 		int seq_limit = INT_MAX/SEQ_MULTIPLIER;
-		if(seq_limit > USHRT_MAX)
-			ids->seq_max = USHRT_MAX;
+		if (seq_limit > USHORT_MAX)
+			ids->seq_max = USHORT_MAX;
 		 else
 		 	ids->seq_max = seq_limit;
 	}
@@ -116,13 +165,12 @@ void __init ipc_init_proc_interface(const char *path, const char *header,
 	iface->ids	= ids;
 	iface->show	= show;
 
-	pde = create_proc_entry(path,
-				S_IRUGO,        /* world readable */
-				NULL            /* parent dir */);
-	if (pde) {
-		pde->data = iface;
-		pde->proc_fops = &sysvipc_proc_fops;
-	} else {
+	pde = proc_create_data(path,
+			       S_IRUGO,        /* world readable */
+			       NULL,           /* parent dir */
+			       &sysvipc_proc_fops,
+			       iface);
+	if (!pde) {
 		kfree(iface);
 	}
 }
@@ -231,6 +279,7 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size)
 	if(ids->seq > ids->seq_max)
 		ids->seq = 0;
 
+	new->id = ipc_buildid(id, new->seq);
 	spin_lock_init(&new->lock);
 	new->deleted = 0;
 	rcu_read_lock();
@@ -639,10 +688,6 @@ void ipc64_perm_to_ipc_perm (struct ipc64_perm *in, struct ipc_perm *out)
  * Look for an id in the ipc ids idr and lock the associated ipc object.
  *
  * The ipc object is locked on exit.
- *
- * This is the routine that should be called when the rw_mutex is not already
- * held, i.e. idr tree not protected: it protects the idr tree in read mode
- * during the idr_find().
  */
 
 struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
@@ -650,17 +695,12 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 	struct kern_ipc_perm *out;
 	int lid = ipcid_to_idx(id);
 
-	down_read(&ids->rw_mutex);
-
 	rcu_read_lock();
 	out = idr_find(&ids->ipcs_idr, lid);
 	if (out == NULL) {
 		rcu_read_unlock();
-		up_read(&ids->rw_mutex);
 		return ERR_PTR(-EINVAL);
 	}
-
-	up_read(&ids->rw_mutex);
 
 	spin_lock(&out->lock);
 	
@@ -671,56 +711,6 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 		spin_unlock(&out->lock);
 		rcu_read_unlock();
 		return ERR_PTR(-EINVAL);
-	}
-
-	return out;
-}
-
-/**
- * ipc_lock_down - Lock an ipc structure with rw_sem held
- * @ids: IPC identifier set
- * @id: ipc id to look for
- *
- * Look for an id in the ipc ids idr and lock the associated ipc object.
- *
- * The ipc object is locked on exit.
- *
- * This is the routine that should be called when the rw_mutex is already
- * held, i.e. idr tree protected.
- */
-
-struct kern_ipc_perm *ipc_lock_down(struct ipc_ids *ids, int id)
-{
-	struct kern_ipc_perm *out;
-	int lid = ipcid_to_idx(id);
-
-	rcu_read_lock();
-	out = idr_find(&ids->ipcs_idr, lid);
-	if (out == NULL) {
-		rcu_read_unlock();
-		return ERR_PTR(-EINVAL);
-	}
-
-	spin_lock(&out->lock);
-
-	/*
-	 * No need to verify that the structure is still valid since the
-	 * rw_mutex is held.
-	 */
-	return out;
-}
-
-struct kern_ipc_perm *ipc_lock_check_down(struct ipc_ids *ids, int id)
-{
-	struct kern_ipc_perm *out;
-
-	out = ipc_lock_down(ids, id);
-	if (IS_ERR(out))
-		return out;
-
-	if (ipc_checkid(out, id)) {
-		ipc_unlock(out);
-		return ERR_PTR(-EIDRM);
 	}
 
 	return out;
@@ -759,6 +749,70 @@ int ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
 		return ipcget_new(ns, ids, ops, params);
 	else
 		return ipcget_public(ns, ids, ops, params);
+}
+
+/**
+ * ipc_update_perm - update the permissions of an IPC.
+ * @in:  the permission given as input.
+ * @out: the permission of the ipc to set.
+ */
+void ipc_update_perm(struct ipc64_perm *in, struct kern_ipc_perm *out)
+{
+	out->uid = in->uid;
+	out->gid = in->gid;
+	out->mode = (out->mode & ~S_IRWXUGO)
+		| (in->mode & S_IRWXUGO);
+}
+
+/**
+ * ipcctl_pre_down - retrieve an ipc and check permissions for some IPC_XXX cmd
+ * @ids:  the table of ids where to look for the ipc
+ * @id:   the id of the ipc to retrieve
+ * @cmd:  the cmd to check
+ * @perm: the permission to set
+ * @extra_perm: one extra permission parameter used by msq
+ *
+ * This function does some common audit and permissions check for some IPC_XXX
+ * cmd and is called from semctl_down, shmctl_down and msgctl_down.
+ * It must be called without any lock held and
+ *  - retrieves the ipc with the given id in the given table.
+ *  - performs some audit and permission check, depending on the given cmd
+ *  - returns the ipc with both ipc and rw_mutex locks held in case of success
+ *    or an err-code without any lock held otherwise.
+ */
+struct kern_ipc_perm *ipcctl_pre_down(struct ipc_ids *ids, int id, int cmd,
+				      struct ipc64_perm *perm, int extra_perm)
+{
+	struct kern_ipc_perm *ipcp;
+	int err;
+
+	down_write(&ids->rw_mutex);
+	ipcp = ipc_lock_check(ids, id);
+	if (IS_ERR(ipcp)) {
+		err = PTR_ERR(ipcp);
+		goto out_up;
+	}
+
+	err = audit_ipc_obj(ipcp);
+	if (err)
+		goto out_unlock;
+
+	if (cmd == IPC_SET) {
+		err = audit_ipc_set_perm(extra_perm, perm->uid,
+					 perm->gid, perm->mode);
+		if (err)
+			goto out_unlock;
+	}
+	if (current->euid == ipcp->cuid ||
+	    current->euid == ipcp->uid || capable(CAP_SYS_ADMIN))
+		return ipcp;
+
+	err = -EPERM;
+out_unlock:
+	ipc_unlock(ipcp);
+out_up:
+	up_write(&ids->rw_mutex);
+	return ERR_PTR(err);
 }
 
 #ifdef __ARCH_WANT_IPC_PARSE_VERSION

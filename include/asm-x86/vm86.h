@@ -12,19 +12,7 @@
  * Linus
  */
 
-#define TF_MASK		0x00000100
-#define IF_MASK		0x00000200
-#define IOPL_MASK	0x00003000
-#define NT_MASK		0x00004000
-#ifdef CONFIG_VM86
-#define VM_MASK		0x00020000
-#else
-#define VM_MASK		0 /* ignored */
-#endif
-#define AC_MASK		0x00040000
-#define VIF_MASK	0x00080000	/* virtual interrupt flag */
-#define VIP_MASK	0x00100000	/* virtual interrupt pending */
-#define ID_MASK		0x00200000
+#include <asm/processor-flags.h>
 
 #define BIOSSEG		0x0f000
 
@@ -42,9 +30,11 @@
 #define VM86_ARG(retval)	((retval) >> 8)
 
 #define VM86_SIGNAL	0	/* return due to signal */
-#define VM86_UNKNOWN	1	/* unhandled GP fault - IO-instruction or similar */
+#define VM86_UNKNOWN	1	/* unhandled GP fault
+				   - IO-instruction or similar */
 #define VM86_INTx	2	/* int3/int x instruction (ARG = x) */
-#define VM86_STI	3	/* sti/popf/iret instruction enabled virtual interrupts */
+#define VM86_STI	3	/* sti/popf/iret instruction enabled
+				   virtual interrupts */
 
 /*
  * Additional return values when invoking new vm86()
@@ -125,7 +115,6 @@ struct vm86plus_info_struct {
 	unsigned long is_vm86pus:1;	      /* for vm86 internal use */
 	unsigned char vm86dbg_intxxtab[32];   /* for debugger */
 };
-
 struct vm86plus_struct {
 	struct vm86_regs regs;
 	unsigned long flags;
@@ -137,6 +126,9 @@ struct vm86plus_struct {
 };
 
 #ifdef __KERNEL__
+
+#include <asm/ptrace.h>
+
 /*
  * This is the (kernel) stack-layout when we have done a "SAVE_ALL" from vm86
  * mode - the main change is that the old segment descriptors aren't
@@ -145,7 +137,6 @@ struct vm86plus_struct {
  * at the end of the structure. Look at ptrace.h to see the "normal"
  * setup. For user space layout see 'struct vm86_regs' above.
  */
-#include <asm/ptrace.h>
 
 struct kernel_vm86_regs {
 /*
@@ -205,7 +196,8 @@ void release_vm86_irqs(struct task_struct *);
 #define handle_vm86_fault(a, b)
 #define release_vm86_irqs(a)
 
-static inline int handle_vm86_trap(struct kernel_vm86_regs *a, long b, int c) {
+static inline int handle_vm86_trap(struct kernel_vm86_regs *a, long b, int c)
+{
 	return 0;
 }
 

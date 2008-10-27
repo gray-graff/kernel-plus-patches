@@ -11,7 +11,6 @@ struct ip_tunnel
 {
 	struct ip_tunnel	*next;
 	struct net_device	*dev;
-	struct net_device_stats	stat;
 
 	int			recursion;	/* Depth of hard_start_xmit recursion */
 	int			err_count;	/* Number of arrived ICMP errors */
@@ -24,6 +23,16 @@ struct ip_tunnel
 	int			mlink;
 
 	struct ip_tunnel_parm	parms;
+
+	struct ip_tunnel_prl_entry	*prl;		/* potential router list */
+	unsigned int			prl_count;	/* # of entries in PRL */
+};
+
+struct ip_tunnel_prl_entry
+{
+	struct ip_tunnel_prl_entry	*next;
+	__be32				addr;
+	u16				flags;
 };
 
 #define IPTUNNEL_XMIT() do {						\

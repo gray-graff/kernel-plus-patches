@@ -29,7 +29,7 @@
 #include <asm/uaccess.h>
 #include <linux/i2c.h>
 #include <linux/i2c-id.h>
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 
@@ -38,7 +38,6 @@ MODULE_AUTHOR("Scott Alfter, Ulf Eklund, Hans Verkuil");
 MODULE_LICENSE("GPL");
 
 static unsigned short normal_i2c[] = { 0x34 >> 1, I2C_CLIENT_END };
-
 
 I2C_CLIENT_INSMOD;
 
@@ -125,7 +124,8 @@ static int tlv320aic23b_command(struct i2c_client *client,
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int tlv320aic23b_probe(struct i2c_client *client)
+static int tlv320aic23b_probe(struct i2c_client *client,
+			      const struct i2c_device_id *id)
 {
 	struct tlv320aic23b_state *state;
 
@@ -167,6 +167,11 @@ static int tlv320aic23b_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+static const struct i2c_device_id tlv320aic23b_id[] = {
+	{ "tlv320aic23b", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, tlv320aic23b_id);
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "tlv320aic23b",
@@ -174,4 +179,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = tlv320aic23b_command,
 	.probe = tlv320aic23b_probe,
 	.remove = tlv320aic23b_remove,
+	.id_table = tlv320aic23b_id,
 };

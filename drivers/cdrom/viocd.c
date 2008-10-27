@@ -6,7 +6,7 @@
  *  Authors: Dave Boutcher <boutcher@us.ibm.com>
  *           Ryan Arnold <ryanarn@us.ibm.com>
  *           Colin Devilbiss <devilbis@us.ibm.com>
- *           Stephen Rothwell <sfr@au1.ibm.com>
+ *           Stephen Rothwell
  *
  * (C) Copyright 2000-2004 IBM Corporation
  *
@@ -144,6 +144,7 @@ static int proc_viocd_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations proc_viocd_operations = {
+	.owner		= THIS_MODULE,
 	.open		= proc_viocd_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -549,12 +550,19 @@ return_complete:
 	}
 }
 
+static int viocd_audio_ioctl(struct cdrom_device_info *cdi, unsigned int cmd,
+			     void *arg)
+{
+	return -EINVAL;
+}
+
 static struct cdrom_device_ops viocd_dops = {
 	.open = viocd_open,
 	.release = viocd_release,
 	.media_changed = viocd_media_changed,
 	.lock_door = viocd_lock_door,
 	.generic_packet = viocd_packet,
+	.audio_ioctl = viocd_audio_ioctl,
 	.capability = CDC_CLOSE_TRAY | CDC_OPEN_TRAY | CDC_LOCK | CDC_SELECT_SPEED | CDC_SELECT_DISC | CDC_MULTI_SESSION | CDC_MCN | CDC_MEDIA_CHANGED | CDC_PLAY_AUDIO | CDC_RESET | CDC_DRIVE_STATUS | CDC_GENERIC_PACKET | CDC_CD_R | CDC_CD_RW | CDC_DVD | CDC_DVD_R | CDC_DVD_RAM | CDC_RAM
 };
 
@@ -650,10 +658,7 @@ static int viocd_remove(struct vio_dev *vdev)
 {
 	struct disk_info *d = &viocd_diskinfo[vdev->unit_address];
 
-	if (unregister_cdrom(&d->viocd_info) != 0)
-		printk(VIOCD_KERN_WARNING
-				"Cannot unregister viocd CD-ROM %s!\n",
-				d->viocd_info.name);
+	unregister_cdrom(&d->viocd_info);
 	del_gendisk(d->viocd_disk);
 	blk_cleanup_queue(d->viocd_disk->queue);
 	put_disk(d->viocd_disk);
@@ -682,7 +687,6 @@ static struct vio_driver viocd_driver = {
 
 static int __init viocd_init(void)
 {
-	struct proc_dir_entry *e;
 	int ret = 0;
 
 	if (!firmware_has_feature(FW_FEATURE_ISERIES))
@@ -722,12 +726,8 @@ static int __init viocd_init(void)
 	if (ret)
 		goto out_free_info;
 
-	e = create_proc_entry("iSeries/viocd", S_IFREG|S_IRUGO, NULL);
-	if (e) {
-		e->owner = THIS_MODULE;
-		e->proc_fops = &proc_viocd_operations;
-	}
-
+	proc_create("iSeries/viocd", S_IFREG|S_IRUGO, NULL,
+		    &proc_viocd_operations);
 	return 0;
 
 out_free_info:

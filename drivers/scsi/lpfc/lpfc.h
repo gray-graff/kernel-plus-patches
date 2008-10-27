@@ -23,7 +23,7 @@
 
 struct lpfc_sli2_slim;
 
-#define LPFC_MAX_TARGET		256	/* max number of targets supported */
+#define LPFC_MAX_TARGET		4096	/* max number of targets supported */
 #define LPFC_MAX_DISC_THREADS	64	/* max outstanding discovery els
 					   requests */
 #define LPFC_MAX_NS_RETRY	3	/* Number of retry attempts to contact
@@ -33,6 +33,7 @@ struct lpfc_sli2_slim;
 #define LPFC_MAX_SG_SEG_CNT	256	/* sg element count per scsi cmnd */
 #define LPFC_IOCB_LIST_CNT	2250	/* list of IOCBs for fast-path usage. */
 #define LPFC_Q_RAMP_UP_INTERVAL 120     /* lun q_depth ramp up interval */
+#define LPFC_VNAME_LEN		100	/* vport symbolic name length */
 
 /*
  * Following time intervals are used of adjusting SCSI device
@@ -58,6 +59,9 @@ struct lpfc_sli2_slim;
 #define FC_MAX_ADPTMSG		64
 
 #define MAX_HBAEVT	32
+
+/* lpfc wait event data ready flag */
+#define LPFC_DATA_READY		(1<<0)
 
 enum lpfc_polling_flags {
 	ENABLE_FCP_RING_POLLING = 0x1,
@@ -268,7 +272,6 @@ struct lpfc_vport {
 #define FC_NLP_MORE             0x40	 /* More node to process in node tbl */
 #define FC_OFFLINE_MODE         0x80	 /* Interface is offline for diag */
 #define FC_FABRIC               0x100	 /* We are fabric attached */
-#define FC_ESTABLISH_LINK       0x200	 /* Reestablish Link */
 #define FC_RSCN_DISCOVERY       0x400	 /* Auth all devices after RSCN */
 #define FC_SCSI_SCAN_TMO        0x4000	 /* scsi scan timer running */
 #define FC_ABORT_DISCOVERY      0x8000	 /* we want to abort discovery */
@@ -426,15 +429,10 @@ struct lpfc_hba {
 
 	uint16_t pci_cfg_value;
 
-	uint8_t work_found;
-#define LPFC_MAX_WORKER_ITERATION  4
-
 	uint8_t fc_linkspeed;	/* Link speed after last READ_LA */
 
 	uint32_t fc_eventTag;	/* event tag for link attention */
 
-
-	struct timer_list fc_estabtmo;	/* link establishment timer */
 	/* These fields used to be binfo */
 	uint32_t fc_pref_DID;	/* preferred D_ID */
 	uint8_t  fc_pref_ALPA;	/* preferred AL_PA */
@@ -492,8 +490,9 @@ struct lpfc_hba {
 	uint32_t              work_hs;      /* HS stored in case of ERRAT */
 	uint32_t              work_status[2]; /* Extra status from SLIM */
 
-	wait_queue_head_t    *work_wait;
+	wait_queue_head_t    work_waitq;
 	struct task_struct   *worker_thread;
+	long data_flags;
 
 	uint32_t hbq_in_use;		/* HBQs in use flag */
 	struct list_head hbqbuf_in_list;  /* in-fly hbq buffer list */
@@ -638,6 +637,17 @@ lpfc_is_link_up(struct lpfc_hba *phba)
 	return  phba->link_state == LPFC_LINK_UP ||
 		phba->link_state == LPFC_CLEAR_LA ||
 		phba->link_state == LPFC_HBA_READY;
+}
+
+static inline void
+lpfc_worker_wake_up(struct lpfc_hba *phba)
+{
+	/* Set the lpfc data pending flag */
+	set_bit(LPFC_DATA_READY, &phba->data_flags);
+
+	/* Wake up worker thread */
+	wake_up(&phba->work_waitq);
+	return;
 }
 
 #define FC_REG_DUMP_EVENT		0x10	/* Register for Dump events */

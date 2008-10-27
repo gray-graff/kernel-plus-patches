@@ -10,7 +10,6 @@
 extern struct kmem_cache *blk_requestq_cachep;
 extern struct kobj_type blk_queue_ktype;
 
-void rq_init(struct request_queue *q, struct request *rq);
 void init_request_from_bio(struct request *req, struct bio *bio);
 void blk_rq_bio_prep(struct request_queue *q, struct request *rq,
 			struct bio *bio);
@@ -51,5 +50,13 @@ static inline int queue_congestion_off_threshold(struct request_queue *q)
 {
 	return q->nr_congestion_off;
 }
+
+#if defined(CONFIG_BLK_DEV_INTEGRITY)
+
+#define rq_for_each_integrity_segment(bvl, _rq, _iter)		\
+	__rq_for_each_bio(_iter.bio, _rq)			\
+		bip_for_each_vec(bvl, _iter.bio->bi_integrity, _iter.i)
+
+#endif /* BLK_DEV_INTEGRITY */
 
 #endif

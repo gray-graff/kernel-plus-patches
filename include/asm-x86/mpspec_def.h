@@ -11,20 +11,20 @@
  * information is.
  */
 
-#define SMP_MAGIC_IDENT	(('_'<<24)|('P'<<16)|('M'<<8)|'_')
+#define SMP_MAGIC_IDENT	(('_'<<24) | ('P'<<16) | ('M'<<8) | '_')
 
 #ifdef CONFIG_X86_32
 # define MAX_MPC_ENTRY 1024
 # define MAX_APICS      256
 #else
-/*
- * A maximum of 255 APICs with the current APIC ID architecture.
- */
-# define MAX_APICS 255
+# if NR_CPUS <= 255
+#  define MAX_APICS     255
+# else
+#  define MAX_APICS   32768
+# endif
 #endif
 
-struct intel_mp_floating
-{
+struct intel_mp_floating {
 	char mpf_signature[4];		/* "_MP_"			*/
 	unsigned int mpf_physptr;	/* Configuration table address	*/
 	unsigned char mpf_length;	/* Our length (paragraphs)	*/
@@ -39,14 +39,13 @@ struct intel_mp_floating
 
 #define MPC_SIGNATURE "PCMP"
 
-struct mp_config_table
-{
+struct mp_config_table {
 	char mpc_signature[4];
 	unsigned short mpc_length;	/* Size of table */
-	char  mpc_spec;			/* 0x01 */
-	char  mpc_checksum;
-	char  mpc_oem[8];
-	char  mpc_productid[12];
+	char mpc_spec;			/* 0x01 */
+	char mpc_checksum;
+	char mpc_oem[8];
+	char mpc_productid[12];
 	unsigned int mpc_oemptr;	/* 0 if not present */
 	unsigned short mpc_oemsize;	/* 0 if not present */
 	unsigned short mpc_oemcount;
@@ -71,8 +70,7 @@ struct mp_config_table
 #define CPU_MODEL_MASK		0x00F0
 #define CPU_FAMILY_MASK		0x0F00
 
-struct mpc_config_processor
-{
+struct mpc_config_processor {
 	unsigned char mpc_type;
 	unsigned char mpc_apicid;	/* Local APIC number */
 	unsigned char mpc_apicver;	/* Its versions */
@@ -82,8 +80,7 @@ struct mpc_config_processor
 	unsigned int mpc_reserved[2];
 };
 
-struct mpc_config_bus
-{
+struct mpc_config_bus {
 	unsigned char mpc_type;
 	unsigned char mpc_busid;
 	unsigned char mpc_bustype[6];
@@ -111,8 +108,7 @@ struct mpc_config_bus
 
 #define MPC_APIC_USABLE		0x01
 
-struct mpc_config_ioapic
-{
+struct mpc_config_ioapic {
 	unsigned char mpc_type;
 	unsigned char mpc_apicid;
 	unsigned char mpc_apicver;
@@ -120,8 +116,7 @@ struct mpc_config_ioapic
 	unsigned int mpc_apicaddr;
 };
 
-struct mpc_config_intsrc
-{
+struct mpc_config_intsrc {
 	unsigned char mpc_type;
 	unsigned char mpc_irqtype;
 	unsigned short mpc_irqflag;
@@ -144,8 +139,7 @@ enum mp_irq_source_types {
 
 #define MP_APIC_ALL	0xFF
 
-struct mpc_config_lintsrc
-{
+struct mpc_config_lintsrc {
 	unsigned char mpc_type;
 	unsigned char mpc_irqtype;
 	unsigned short mpc_irqflag;
@@ -157,24 +151,12 @@ struct mpc_config_lintsrc
 
 #define MPC_OEM_SIGNATURE "_OEM"
 
-struct mp_config_oemtable
-{
+struct mp_config_oemtable {
 	char oem_signature[4];
 	unsigned short oem_length;	/* Size of table */
 	char  oem_rev;			/* 0x01 */
 	char  oem_checksum;
 	char  mpc_oem[8];
-};
-
-struct mpc_config_translation
-{
-	unsigned char mpc_type;
-	unsigned char trans_len;
-	unsigned char trans_type;
-	unsigned char trans_quad;
-	unsigned char trans_global;
-	unsigned char trans_local;
-	unsigned short trans_reserved;
 };
 
 /*
@@ -196,4 +178,3 @@ enum mp_bustype {
 	MP_BUS_MCA,
 };
 #endif
-

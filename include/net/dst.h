@@ -128,6 +128,18 @@ static inline u32 dst_mtu(const struct dst_entry *dst)
 	return mtu;
 }
 
+/* RTT metrics are stored in milliseconds for user ABI, but used as jiffies */
+static inline unsigned long dst_metric_rtt(const struct dst_entry *dst, int metric)
+{
+	return msecs_to_jiffies(dst_metric(dst, metric));
+}
+
+static inline void set_dst_metric_rtt(struct dst_entry *dst, int metric,
+				      unsigned long rtt)
+{
+	dst->metrics[metric-1] = jiffies_to_msecs(rtt);
+}
+
 static inline u32
 dst_allfrag(const struct dst_entry *dst)
 {
@@ -163,15 +175,7 @@ struct dst_entry * dst_clone(struct dst_entry * dst)
 	return dst;
 }
 
-static inline
-void dst_release(struct dst_entry * dst)
-{
-	if (dst) {
-		WARN_ON(atomic_read(&dst->__refcnt) < 1);
-		smp_mb__before_atomic_dec();
-		atomic_dec(&dst->__refcnt);
-	}
-}
+extern void dst_release(struct dst_entry *dst);
 
 /* Children define the path of the packet through the
  * Linux networking.  Thus, destinations are stackable.
@@ -248,17 +252,7 @@ static inline int dst_output(struct sk_buff *skb)
 /* Input packet from network to transport.  */
 static inline int dst_input(struct sk_buff *skb)
 {
-	int err;
-
-	for (;;) {
-		err = skb->dst->input(skb);
-
-		if (likely(err == 0))
-			return err;
-		/* Oh, Jamal... Seems, I will not forgive you this mess. :-) */
-		if (unlikely(err != NET_XMIT_BYPASS))
-			return err;
-	}
+	return skb->dst->input(skb);
 }
 
 static inline struct dst_entry *dst_check(struct dst_entry *dst, u32 cookie)

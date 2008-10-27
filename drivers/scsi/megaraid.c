@@ -46,6 +46,7 @@
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
+#include <linux/smp_lock.h>
 #include <scsi/scsicam.h>
 
 #include "scsi.h"
@@ -3272,12 +3273,12 @@ mega_init_scb(adapter_t *adapter)
  * @filep - unused
  *
  * Routines for the character/ioctl interface to the driver. Find out if this
- * is a valid open. If yes, increment the module use count so that it cannot
- * be unloaded.
+ * is a valid open. 
  */
 static int
 megadev_open (struct inode *inode, struct file *filep)
 {
+	cycle_kernel_lock();
 	/*
 	 * Only allow superuser to access private ioctl interface
 	 */
@@ -4996,7 +4997,7 @@ static int __init megaraid_init(void)
 		max_mbox_busy_wait = MBOX_BUSY_WAIT;
 
 #ifdef CONFIG_PROC_FS
-	mega_proc_dir_entry = proc_mkdir("megaraid", &proc_root);
+	mega_proc_dir_entry = proc_mkdir("megaraid", NULL);
 	if (!mega_proc_dir_entry) {
 		printk(KERN_WARNING
 				"megaraid: failed to create megaraid root\n");
@@ -5005,7 +5006,7 @@ static int __init megaraid_init(void)
 	error = pci_register_driver(&megaraid_pci_driver);
 	if (error) {
 #ifdef CONFIG_PROC_FS
-		remove_proc_entry("megaraid", &proc_root);
+		remove_proc_entry("megaraid", NULL);
 #endif
 		return error;
 	}
@@ -5035,7 +5036,7 @@ static void __exit megaraid_exit(void)
 	pci_unregister_driver(&megaraid_pci_driver);
 
 #ifdef CONFIG_PROC_FS
-	remove_proc_entry("megaraid", &proc_root);
+	remove_proc_entry("megaraid", NULL);
 #endif
 }
 

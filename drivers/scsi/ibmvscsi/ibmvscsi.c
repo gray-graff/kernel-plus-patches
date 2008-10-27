@@ -72,6 +72,7 @@
 #include <linux/delay.h>
 #include <asm/firmware.h>
 #include <asm/vio.h>
+#include <asm/firmware.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>
@@ -426,8 +427,10 @@ static int map_sg_data(struct scsi_cmnd *cmd,
 					   SG_ALL * sizeof(struct srp_direct_buf),
 					   &evt_struct->ext_list_token, 0);
 		if (!evt_struct->ext_list) {
-			sdev_printk(KERN_ERR, cmd->device,
-				    "Can't allocate memory for indirect table\n");
+			if (!firmware_has_feature(FW_FEATURE_CMO))
+				sdev_printk(KERN_ERR, cmd->device,
+				            "Can't allocate memory "
+				            "for indirect table\n");
 			return 0;
 		}
 	}
@@ -686,7 +689,7 @@ static void handle_cmd_rsp(struct srp_event_struct *evt_struct)
 	}
 	
 	if (cmnd) {
-		cmnd->result = rsp->status;
+		cmnd->result |= rsp->status;
 		if (((cmnd->result >> 1) & 0x1f) == CHECK_CONDITION)
 			memcpy(cmnd->sense_buffer,
 			       rsp->data,
@@ -730,6 +733,7 @@ static int ibmvscsi_queuecommand(struct scsi_cmnd *cmnd,
 	u16 lun = lun_from_dev(cmnd->device);
 	u8 out_fmt, in_fmt;
 
+	cmnd->result = (DID_OK << 16);
 	evt_struct = get_event_struct(&hostdata->pool);
 	if (!evt_struct)
 		return SCSI_MLQUEUE_HOST_BUSY;
@@ -738,11 +742,13 @@ static int ibmvscsi_queuecommand(struct scsi_cmnd *cmnd,
 	srp_cmd = &evt_struct->iu.srp.cmd;
 	memset(srp_cmd, 0x00, SRP_MAX_IU_LEN);
 	srp_cmd->opcode = SRP_CMD;
-	memcpy(srp_cmd->cdb, cmnd->cmnd, sizeof(cmnd->cmnd));
+	memcpy(srp_cmd->cdb, cmnd->cmnd, sizeof(srp_cmd->cdb));
 	srp_cmd->lun = ((u64) lun) << 48;
 
 	if (!map_data_for_srp_cmd(cmnd, evt_struct, srp_cmd, hostdata->dev)) {
-		sdev_printk(KERN_ERR, cmnd->device, "couldn't convert cmd to srp_cmd\n");
+		if (!firmware_has_feature(FW_FEATURE_CMO))
+			sdev_printk(KERN_ERR, cmnd->device,
+			            "couldn't convert cmd to srp_cmd\n");
 		free_event_struct(&hostdata->pool, evt_struct);
 		return SCSI_MLQUEUE_HOST_BUSY;
 	}
@@ -853,8 +859,11 @@ static void send_mad_adapter_info(struct ibmvscsi_host_data *hostdata)
 					    sizeof(hostdata->madapter_info),
 					    DMA_BIDIRECTIONAL);
 
-	if (dma_mapping_error(req->buffer)) {
-		dev_err(hostdata->dev, "Unable to map request_buffer for adapter_info!\n");
+	if (dma_mapping_error(hostdata->dev, req->buffer)) {
+		if (!firmware_has_feature(FW_FEATURE_CMO))
+			dev_err(hostdata->dev,
+			        "Unable to map request_buffer for "
+			        "adapter_info!\n");
 		free_event_struct(&hostdata->pool, evt_struct);
 		return;
 	}
@@ -1347,6 +1356,8 @@ void ibmvscsi_handle_crq(struct viosrp_crq *crq,
 
 	del_timer(&evt_struct->timer);
 
+	if ((crq->status != VIOSRP_OK && crq->status != VIOSRP_OK2) && evt_struct->cmnd)
+		evt_struct->cmnd->result = DID_ERROR << 16;
 	if (evt_struct->done)
 		evt_struct->done(evt_struct);
 	else
@@ -1396,8 +1407,10 @@ static int ibmvscsi_do_host_config(struct ibmvscsi_host_data *hostdata,
 						    length,
 						    DMA_BIDIRECTIONAL);
 
-	if (dma_mapping_error(host_config->buffer)) {
-		dev_err(hostdata->dev, "dma_mapping error getting host config\n");
+	if (dma_mapping_error(hostdata->dev, host_config->buffer)) {
+		if (!firmware_has_feature(FW_FEATURE_CMO))
+			dev_err(hostdata->dev,
+			        "dma_mapping error getting host config\n");
 		free_event_struct(&hostdata->pool, evt_struct);
 		return -1;
 	}
@@ -1456,9 +1469,10 @@ static int ibmvscsi_change_queue_depth(struct scsi_device *sdev, int qdepth)
 /* ------------------------------------------------------------
  * sysfs attributes
  */
-static ssize_t show_host_srp_version(struct class_device *class_dev, char *buf)
+static ssize_t show_host_srp_version(struct device *dev,
+				     struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
@@ -1467,7 +1481,7 @@ static ssize_t show_host_srp_version(struct class_device *class_dev, char *buf)
 	return len;
 }
 
-static struct class_device_attribute ibmvscsi_host_srp_version = {
+static struct device_attribute ibmvscsi_host_srp_version = {
 	.attr = {
 		 .name = "srp_version",
 		 .mode = S_IRUGO,
@@ -1475,10 +1489,11 @@ static struct class_device_attribute ibmvscsi_host_srp_version = {
 	.show = show_host_srp_version,
 };
 
-static ssize_t show_host_partition_name(struct class_device *class_dev,
+static ssize_t show_host_partition_name(struct device *dev,
+					struct device_attribute *attr,
 					char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
@@ -1487,7 +1502,7 @@ static ssize_t show_host_partition_name(struct class_device *class_dev,
 	return len;
 }
 
-static struct class_device_attribute ibmvscsi_host_partition_name = {
+static struct device_attribute ibmvscsi_host_partition_name = {
 	.attr = {
 		 .name = "partition_name",
 		 .mode = S_IRUGO,
@@ -1495,10 +1510,11 @@ static struct class_device_attribute ibmvscsi_host_partition_name = {
 	.show = show_host_partition_name,
 };
 
-static ssize_t show_host_partition_number(struct class_device *class_dev,
+static ssize_t show_host_partition_number(struct device *dev,
+					  struct device_attribute *attr,
 					  char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
@@ -1507,7 +1523,7 @@ static ssize_t show_host_partition_number(struct class_device *class_dev,
 	return len;
 }
 
-static struct class_device_attribute ibmvscsi_host_partition_number = {
+static struct device_attribute ibmvscsi_host_partition_number = {
 	.attr = {
 		 .name = "partition_number",
 		 .mode = S_IRUGO,
@@ -1515,9 +1531,10 @@ static struct class_device_attribute ibmvscsi_host_partition_number = {
 	.show = show_host_partition_number,
 };
 
-static ssize_t show_host_mad_version(struct class_device *class_dev, char *buf)
+static ssize_t show_host_mad_version(struct device *dev,
+				     struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
@@ -1526,7 +1543,7 @@ static ssize_t show_host_mad_version(struct class_device *class_dev, char *buf)
 	return len;
 }
 
-static struct class_device_attribute ibmvscsi_host_mad_version = {
+static struct device_attribute ibmvscsi_host_mad_version = {
 	.attr = {
 		 .name = "mad_version",
 		 .mode = S_IRUGO,
@@ -1534,9 +1551,10 @@ static struct class_device_attribute ibmvscsi_host_mad_version = {
 	.show = show_host_mad_version,
 };
 
-static ssize_t show_host_os_type(struct class_device *class_dev, char *buf)
+static ssize_t show_host_os_type(struct device *dev,
+				 struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
@@ -1544,7 +1562,7 @@ static ssize_t show_host_os_type(struct class_device *class_dev, char *buf)
 	return len;
 }
 
-static struct class_device_attribute ibmvscsi_host_os_type = {
+static struct device_attribute ibmvscsi_host_os_type = {
 	.attr = {
 		 .name = "os_type",
 		 .mode = S_IRUGO,
@@ -1552,9 +1570,10 @@ static struct class_device_attribute ibmvscsi_host_os_type = {
 	.show = show_host_os_type,
 };
 
-static ssize_t show_host_config(struct class_device *class_dev, char *buf)
+static ssize_t show_host_config(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
-	struct Scsi_Host *shost = class_to_shost(class_dev);
+	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 
 	/* returns null-terminated host config data */
@@ -1564,7 +1583,7 @@ static ssize_t show_host_config(struct class_device *class_dev, char *buf)
 		return 0;
 }
 
-static struct class_device_attribute ibmvscsi_host_config = {
+static struct device_attribute ibmvscsi_host_config = {
 	.attr = {
 		 .name = "config",
 		 .mode = S_IRUGO,
@@ -1572,7 +1591,7 @@ static struct class_device_attribute ibmvscsi_host_config = {
 	.show = show_host_config,
 };
 
-static struct class_device_attribute *ibmvscsi_attrs[] = {
+static struct device_attribute *ibmvscsi_attrs[] = {
 	&ibmvscsi_host_srp_version,
 	&ibmvscsi_host_partition_name,
 	&ibmvscsi_host_partition_number,
@@ -1595,13 +1614,33 @@ static struct scsi_host_template driver_template = {
 	.eh_host_reset_handler = ibmvscsi_eh_host_reset_handler,
 	.slave_configure = ibmvscsi_slave_configure,
 	.change_queue_depth = ibmvscsi_change_queue_depth,
-	.cmd_per_lun = 16,
+	.cmd_per_lun = IBMVSCSI_CMDS_PER_LUN_DEFAULT,
 	.can_queue = IBMVSCSI_MAX_REQUESTS_DEFAULT,
 	.this_id = -1,
 	.sg_tablesize = SG_ALL,
 	.use_clustering = ENABLE_CLUSTERING,
 	.shost_attrs = ibmvscsi_attrs,
 };
+
+/**
+ * ibmvscsi_get_desired_dma - Calculate IO memory desired by the driver
+ *
+ * @vdev: struct vio_dev for the device whose desired IO mem is to be returned
+ *
+ * Return value:
+ *	Number of bytes of IO data the driver will need to perform well.
+ */
+static unsigned long ibmvscsi_get_desired_dma(struct vio_dev *vdev)
+{
+	/* iu_storage data allocated in initialize_event_pool */
+	unsigned long desired_io = max_requests * sizeof(union viosrp_iu);
+
+	/* add io space for sg data */
+	desired_io += (IBMVSCSI_MAX_SECTORS_DEFAULT * 512 *
+	                     IBMVSCSI_CMDS_PER_LUN_DEFAULT);
+
+	return desired_io;
+}
 
 /**
  * Called by bus code for each adapter
@@ -1632,7 +1671,7 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	hostdata->host = host;
 	hostdata->dev = dev;
 	atomic_set(&hostdata->request_limit, -1);
-	hostdata->host->max_sectors = 32 * 8; /* default max I/O 32 pages */
+	hostdata->host->max_sectors = IBMVSCSI_MAX_SECTORS_DEFAULT;
 
 	rc = ibmvscsi_ops->init_crq_queue(&hostdata->queue, hostdata, max_requests);
 	if (rc != 0 && rc != H_RESOURCE) {
@@ -1726,6 +1765,7 @@ static struct vio_driver ibmvscsi_driver = {
 	.id_table = ibmvscsi_device_table,
 	.probe = ibmvscsi_probe,
 	.remove = ibmvscsi_remove,
+	.get_desired_dma = ibmvscsi_get_desired_dma,
 	.driver = {
 		.name = "ibmvscsi",
 		.owner = THIS_MODULE,

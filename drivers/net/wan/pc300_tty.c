@@ -178,6 +178,20 @@ static void cpc_tty_signal_on(pc300dev_t *pc300dev, unsigned char signal)
 	CPC_TTY_UNLOCK(card,flags); 
 }
 
+
+static const struct tty_operations pc300_ops = {
+	.open = cpc_tty_open,
+	.close = cpc_tty_close,
+	.write = cpc_tty_write,
+	.write_room = cpc_tty_write_room,
+	.chars_in_buffer = cpc_tty_chars_in_buffer,
+	.tiocmset = pc300_tiocmset,
+	.tiocmget = pc300_tiocmget,
+	.flush_buffer = cpc_tty_flush_buffer,
+	.hangup = cpc_tty_hangup,
+};
+
+
 /*
  * PC300 TTY initialization routine
  *
@@ -225,15 +239,7 @@ void cpc_tty_init(pc300dev_t *pc300dev)
 		serial_drv.flags = TTY_DRIVER_REAL_RAW;
 
 		/* interface routines from the upper tty layer to the tty driver */
-		serial_drv.open = cpc_tty_open;
-		serial_drv.close = cpc_tty_close;
-		serial_drv.write = cpc_tty_write; 
-		serial_drv.write_room = cpc_tty_write_room; 
-		serial_drv.chars_in_buffer = cpc_tty_chars_in_buffer; 
-		serial_drv.tiocmset = pc300_tiocmset;
-		serial_drv.tiocmget = pc300_tiocmget;
-		serial_drv.flush_buffer = cpc_tty_flush_buffer; 
-		serial_drv.hangup = cpc_tty_hangup;
+		tty_set_operations(&serial_drv, &pc300_ops);
 
 		/* register the TTY driver */
 		if (tty_register_driver(&serial_drv)) { 
@@ -452,7 +458,7 @@ static int cpc_tty_write(struct tty_struct *tty, const unsigned char *buf, int c
 	CPC_TTY_DBG("%s: cpc_tty_write data len=%i\n",cpc_tty->name,count);
 	
 	pc300chan = (pc300ch_t *)((pc300dev_t*)cpc_tty->pc300dev)->chan; 
-	stats = hdlc_stats(((pc300dev_t*)cpc_tty->pc300dev)->dev);
+	stats = &cpc_tty->pc300dev->dev->stats;
 	card = (pc300_t *) pc300chan->card;
 	ch = pc300chan->channel; 
 
@@ -682,9 +688,9 @@ static void cpc_tty_rx_work(struct work_struct *work)
 				if (cpc_tty->tty) {
 					ld = tty_ldisc_ref(cpc_tty->tty);
 					if (ld) {
-						if (ld->receive_buf) {
+						if (ld->ops->receive_buf) {
 							CPC_TTY_DBG("%s: call line disc. receive_buf\n",cpc_tty->name);
-							ld->receive_buf(cpc_tty->tty, (char *)(buf->data), &flags, buf->size);
+							ld->ops->receive_buf(cpc_tty->tty, (char *)(buf->data), &flags, buf->size);
 						}
 						tty_ldisc_deref(ld);
 					}
@@ -737,7 +743,7 @@ void cpc_tty_receive(pc300dev_t *pc300dev)
 	pc300_t *card = (pc300_t *)pc300chan->card; 
 	int ch = pc300chan->channel; 
 	volatile pcsca_bd_t  __iomem * ptdescr; 
-	struct net_device_stats *stats = hdlc_stats(pc300dev->dev);
+	struct net_device_stats *stats = &pc300dev->dev->stats;
 	int rx_len, rx_aux; 
 	volatile unsigned char status; 
 	unsigned short first_bd = pc300chan->rx_first_bd;
@@ -911,7 +917,7 @@ static int cpc_tty_send_to_card(pc300dev_t *dev,void* buf, int len)
 	pc300ch_t *chan = (pc300ch_t *)dev->chan; 
 	pc300_t *card = (pc300_t *)chan->card; 
 	int ch = chan->channel; 
-	struct net_device_stats *stats = hdlc_stats(dev->dev);
+	struct net_device_stats *stats = &dev->dev->stats;
 	unsigned long flags; 
 	volatile pcsca_bd_t __iomem *ptdescr; 
 	int i, nchar;

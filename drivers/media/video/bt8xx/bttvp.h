@@ -39,10 +39,8 @@
 #include <linux/scatterlist.h>
 #include <asm/io.h>
 #include <media/v4l2-common.h>
-
 #include <linux/device.h>
 #include <media/videobuf-dma-sg.h>
-#include <media/tuner.h>
 #include <media/tveeprom.h>
 #include <media/ir-common.h>
 
@@ -81,8 +79,6 @@
 #define MAX_HDELAY (0x3FF & -2)
 /* Limits scaled width, which must be a multiple of 4. */
 #define MAX_HACTIVE (0x3FF & -4)
-
-#define clamp(x, low, high) min (max (low, x), high)
 
 #define BTTV_NORMS    (\
 		V4L2_STD_PAL    | V4L2_STD_PAL_N | \
@@ -257,20 +253,23 @@ int bttv_overlay_risc(struct bttv *btv, struct bttv_overlay *ov,
 /* ---------------------------------------------------------- */
 /* bttv-vbi.c                                                 */
 
-int bttv_try_fmt_vbi(struct file *file, void *fh, struct v4l2_format *f);
-int bttv_g_fmt_vbi(struct file *file, void *fh, struct v4l2_format *f);
-int bttv_s_fmt_vbi(struct file *file, void *fh, struct v4l2_format *f);
+int bttv_try_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
+int bttv_g_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
+int bttv_s_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
 
 extern struct videobuf_queue_ops bttv_vbi_qops;
 
 /* ---------------------------------------------------------- */
 /* bttv-gpio.c */
 
-
 extern struct bus_type bttv_sub_bus_type;
 int bttv_sub_add_device(struct bttv_core *core, char *name);
 int bttv_sub_del_devices(struct bttv_core *core);
 
+/* ---------------------------------------------------------- */
+/* bttv-cards.c                                               */
+
+extern int no_overlay;
 
 /* ---------------------------------------------------------- */
 /* bttv-driver.c                                              */

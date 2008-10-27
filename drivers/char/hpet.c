@@ -14,6 +14,7 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/miscdevice.h>
 #include <linux/major.h>
@@ -193,6 +194,7 @@ static int hpet_open(struct inode *inode, struct file *file)
 	if (file->f_mode & FMODE_WRITE)
 		return -EINVAL;
 
+	lock_kernel();
 	spin_lock_irq(&hpet_lock);
 
 	for (devp = NULL, hpetp = hpets; hpetp && !devp; hpetp = hpetp->hp_next)
@@ -207,6 +209,7 @@ static int hpet_open(struct inode *inode, struct file *file)
 
 	if (!devp) {
 		spin_unlock_irq(&hpet_lock);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
@@ -214,6 +217,7 @@ static int hpet_open(struct inode *inode, struct file *file)
 	devp->hd_irqdata = 0;
 	devp->hd_flags |= HPET_OPEN;
 	spin_unlock_irq(&hpet_lock);
+	unlock_kernel();
 
 	return 0;
 }
@@ -308,7 +312,7 @@ static int hpet_mmap(struct file *file, struct vm_area_struct *vma)
 	if (io_remap_pfn_range(vma, vma->vm_start, addr >> PAGE_SHIFT,
 					PAGE_SIZE, vma->vm_page_prot)) {
 		printk(KERN_ERR "%s: io_remap_pfn_range failed\n",
-			__FUNCTION__);
+			__func__);
 		return -EAGAIN;
 	}
 
@@ -619,6 +623,7 @@ static inline int hpet_tpcheck(struct hpet_task *tp)
 	return -ENXIO;
 }
 
+#if 0
 int hpet_unregister(struct hpet_task *tp)
 {
 	struct hpet_dev *devp;
@@ -648,6 +653,7 @@ int hpet_unregister(struct hpet_task *tp)
 
 	return 0;
 }
+#endif  /*  0  */
 
 static ctl_table hpet_table[] = {
 	{
@@ -748,7 +754,7 @@ int hpet_alloc(struct hpet_data *hdp)
 	 */
 	if (hpet_is_known(hdp)) {
 		printk(KERN_DEBUG "%s: duplicate HPET ignored\n",
-			__FUNCTION__);
+			__func__);
 		return 0;
 	}
 
@@ -869,7 +875,7 @@ static acpi_status hpet_resources(struct acpi_resource *res, void *data)
 
 		if (hpet_is_known(hdp)) {
 			printk(KERN_DEBUG "%s: 0x%lx is busy\n",
-				__FUNCTION__, hdp->hd_phys_address);
+				__func__, hdp->hd_phys_address);
 			iounmap(hdp->hd_address);
 			return AE_ALREADY_EXISTS;
 		}
@@ -886,7 +892,7 @@ static acpi_status hpet_resources(struct acpi_resource *res, void *data)
 
 		if (hpet_is_known(hdp)) {
 			printk(KERN_DEBUG "%s: 0x%lx is busy\n",
-				__FUNCTION__, hdp->hd_phys_address);
+				__func__, hdp->hd_phys_address);
 			iounmap(hdp->hd_address);
 			return AE_ALREADY_EXISTS;
 		}
@@ -925,7 +931,7 @@ static int hpet_acpi_add(struct acpi_device *device)
 		return -ENODEV;
 
 	if (!data.hd_address || !data.hd_nirqs) {
-		printk("%s: no address or irqs in _CRS\n", __FUNCTION__);
+		printk("%s: no address or irqs in _CRS\n", __func__);
 		return -ENODEV;
 	}
 

@@ -49,6 +49,7 @@ static int sg_version_num = 30534;	/* 2 digits for each component */
 #include <linux/delay.h>
 #include <linux/scatterlist.h>
 #include <linux/blktrace_api.h>
+#include <linux/smp_lock.h>
 
 #include "scsi.h"
 #include <scsi/scsi_dbg.h>
@@ -101,16 +102,16 @@ static int scatter_elem_sz_prev = SG_SCATTER_SZ;
 #define SG_SECTOR_SZ 512
 #define SG_SECTOR_MSK (SG_SECTOR_SZ - 1)
 
-static int sg_add(struct class_device *, struct class_interface *);
-static void sg_remove(struct class_device *, struct class_interface *);
+static int sg_add(struct device *, struct class_interface *);
+static void sg_remove(struct device *, struct class_interface *);
 
 static DEFINE_IDR(sg_index_idr);
 static DEFINE_RWLOCK(sg_index_lock);	/* Also used to lock
 							   file descriptor list for device */
 
 static struct class_interface sg_interface = {
-	.add		= sg_add,
-	.remove		= sg_remove,
+	.add_dev	= sg_add,
+	.remove_dev	= sg_remove,
 };
 
 typedef struct sg_scatter_hold { /* holding area for scsi scatter gather info */
@@ -182,8 +183,9 @@ static int sg_build_sgat(Sg_scatter_hold * schp, const Sg_fd * sfp,
 			 int tablesize);
 static ssize_t sg_new_read(Sg_fd * sfp, char __user *buf, size_t count,
 			   Sg_request * srp);
-static ssize_t sg_new_write(Sg_fd * sfp, const char __user *buf, size_t count,
-			    int blocking, int read_only, Sg_request ** o_srp);
+static ssize_t sg_new_write(Sg_fd *sfp, struct file *file,
+			const char __user *buf, size_t count, int blocking,
+			int read_only, Sg_request **o_srp);
 static int sg_common_write(Sg_fd * sfp, Sg_request * srp,
 			   unsigned char *cmnd, int timeout, int blocking);
 static int sg_u_iovec(sg_io_hdr_t * hp, int sg_num, int ind,
@@ -204,7 +206,6 @@ static Sg_request *sg_get_rq_mark(Sg_fd * sfp, int pack_id);
 static Sg_request *sg_add_request(Sg_fd * sfp);
 static int sg_remove_request(Sg_fd * sfp, Sg_request * srp);
 static int sg_res_in_use(Sg_fd * sfp);
-static int sg_allow_access(unsigned char opcode, char dev_type);
 static int sg_build_direct(Sg_request * srp, Sg_fd * sfp, int dxfer_len);
 static Sg_device *sg_get_dev(int dev);
 #ifdef CONFIG_SCSI_PROC_FS
@@ -215,6 +216,18 @@ static int sg_last_dev(void);
 #define SZ_SG_IO_HDR sizeof(sg_io_hdr_t)
 #define SZ_SG_IOVEC sizeof(sg_iovec_t)
 #define SZ_SG_REQ_INFO sizeof(sg_req_info_t)
+
+static int sg_allow_access(struct file *filp, unsigned char *cmd)
+{
+	struct sg_fd *sfp = (struct sg_fd *)filp->private_data;
+	struct request_queue *q = sfp->parentdp->device->request_queue;
+
+	if (sfp->parentdp->device->type == TYPE_SCANNER)
+		return 0;
+
+	return blk_verify_command(&q->cmd_filter,
+				  cmd, filp->f_mode & FMODE_WRITE);
+}
 
 static int
 sg_open(struct inode *inode, struct file *filp)
@@ -227,19 +240,26 @@ sg_open(struct inode *inode, struct file *filp)
 	int res;
 	int retval;
 
+	lock_kernel();
 	nonseekable_open(inode, filp);
 	SCSI_LOG_TIMEOUT(3, printk("sg_open: dev=%d, flags=0x%x\n", dev, flags));
 	sdp = sg_get_dev(dev);
-	if ((!sdp) || (!sdp->device))
+	if ((!sdp) || (!sdp->device)) {
+		unlock_kernel();
 		return -ENXIO;
-	if (sdp->detached)
+	}
+	if (sdp->detached) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	/* This driver's module count bumped by fops_get in <linux/fs.h> */
 	/* Prevent the device driver from vanishing while we sleep */
 	retval = scsi_device_get(sdp->device);
-	if (retval)
+	if (retval) {
+		unlock_kernel();
 		return retval;
+	}
 
 	if (!((flags & O_NONBLOCK) ||
 	      scsi_block_when_processing_errors(sdp->device))) {
@@ -295,10 +315,12 @@ sg_open(struct inode *inode, struct file *filp)
 		retval = -ENOMEM;
 		goto error_out;
 	}
+	unlock_kernel();
 	return 0;
 
       error_out:
 	scsi_device_put(sdp->device);
+	unlock_kernel();
 	return retval;
 }
 
@@ -544,7 +566,7 @@ sg_write(struct file *filp, const char __user *buf, size_t count, loff_t * ppos)
 		return -EFAULT;
 	blocking = !(filp->f_flags & O_NONBLOCK);
 	if (old_hdr.reply_len < 0)
-		return sg_new_write(sfp, buf, count, blocking, 0, NULL);
+		return sg_new_write(sfp, filp, buf, count, blocking, 0, NULL);
 	if (count < (SZ_SG_HEADER + 6))
 		return -EIO;	/* The minimum scsi command length is 6 bytes. */
 
@@ -621,8 +643,9 @@ sg_write(struct file *filp, const char __user *buf, size_t count, loff_t * ppos)
 }
 
 static ssize_t
-sg_new_write(Sg_fd * sfp, const char __user *buf, size_t count,
-	     int blocking, int read_only, Sg_request ** o_srp)
+sg_new_write(Sg_fd *sfp, struct file *file, const char __user *buf,
+		 size_t count, int blocking, int read_only,
+		 Sg_request **o_srp)
 {
 	int k;
 	Sg_request *srp;
@@ -678,8 +701,7 @@ sg_new_write(Sg_fd * sfp, const char __user *buf, size_t count,
 		sg_remove_request(sfp, srp);
 		return -EFAULT;
 	}
-	if (read_only &&
-	    (!sg_allow_access(cmnd[0], sfp->parentdp->device->type))) {
+	if (read_only && sg_allow_access(file, cmnd)) {
 		sg_remove_request(sfp, srp);
 		return -EPERM;
 	}
@@ -783,6 +805,7 @@ sg_ioctl(struct inode *inode, struct file *filp,
 
 	if ((!(sfp = (Sg_fd *) filp->private_data)) || (!(sdp = sfp->parentdp)))
 		return -ENXIO;
+
 	SCSI_LOG_TIMEOUT(3, printk("sg_ioctl: %s, cmd=0x%x\n",
 				   sdp->disk->disk_name, (int) cmd_in));
 	read_only = (O_RDWR != (filp->f_flags & O_ACCMODE));
@@ -799,7 +822,7 @@ sg_ioctl(struct inode *inode, struct file *filp,
 			if (!access_ok(VERIFY_WRITE, p, SZ_SG_IO_HDR))
 				return -EFAULT;
 			result =
-			    sg_new_write(sfp, p, SZ_SG_IO_HDR,
+			    sg_new_write(sfp, filp, p, SZ_SG_IO_HDR,
 					 blocking, read_only, &srp);
 			if (result < 0)
 				return result;
@@ -1026,6 +1049,9 @@ sg_ioctl(struct inode *inode, struct file *filp,
 		case SG_SCSI_RESET_DEVICE:
 			val = SCSI_TRY_RESET_DEVICE;
 			break;
+		case SG_SCSI_RESET_TARGET:
+			val = SCSI_TRY_RESET_TARGET;
+			break;
 		case SG_SCSI_RESET_BUS:
 			val = SCSI_TRY_RESET_BUS;
 			break;
@@ -1048,7 +1074,7 @@ sg_ioctl(struct inode *inode, struct file *filp,
 
 			if (copy_from_user(&opcode, siocp->data, 1))
 				return -EFAULT;
-			if (!sg_allow_access(opcode, sdp->device->type))
+			if (sg_allow_access(filp, &opcode))
 				return -EPERM;
 		}
 		return sg_scsi_ioctl(filp, sdp->device->request_queue, NULL, p);
@@ -1401,9 +1427,9 @@ static Sg_device *sg_alloc(struct gendisk *disk, struct scsi_device *scsidp)
 }
 
 static int
-sg_add(struct class_device *cl_dev, struct class_interface *cl_intf)
+sg_add(struct device *cl_dev, struct class_interface *cl_intf)
 {
-	struct scsi_device *scsidp = to_scsi_device(cl_dev->dev);
+	struct scsi_device *scsidp = to_scsi_device(cl_dev->parent);
 	struct gendisk *disk;
 	Sg_device *sdp = NULL;
 	struct cdev * cdev = NULL;
@@ -1439,19 +1465,20 @@ sg_add(struct class_device *cl_dev, struct class_interface *cl_intf)
 
 	sdp->cdev = cdev;
 	if (sg_sysfs_valid) {
-		struct class_device * sg_class_member;
+		struct device *sg_class_member;
 
-		sg_class_member = class_device_create(sg_sysfs_class, NULL,
-				MKDEV(SCSI_GENERIC_MAJOR, sdp->index),
-				cl_dev->dev, "%s",
-				disk->disk_name);
+		sg_class_member = device_create_drvdata(sg_sysfs_class,
+							cl_dev->parent,
+							MKDEV(SCSI_GENERIC_MAJOR,
+							      sdp->index),
+							sdp,
+							"%s", disk->disk_name);
 		if (IS_ERR(sg_class_member)) {
 			printk(KERN_ERR "sg_add: "
-			       "class_device_create failed\n");
+			       "device_create failed\n");
 			error = PTR_ERR(sg_class_member);
 			goto cdev_add_err;
 		}
-		class_set_devdata(sg_class_member, sdp);
 		error = sysfs_create_link(&scsidp->sdev_gendev.kobj,
 					  &sg_class_member->kobj, "generic");
 		if (error)
@@ -1464,7 +1491,7 @@ sg_add(struct class_device *cl_dev, struct class_interface *cl_intf)
 		    "Attached scsi generic sg%d type %d\n", sdp->index,
 		    scsidp->type);
 
-	class_set_devdata(cl_dev, sdp);
+	dev_set_drvdata(cl_dev, sdp);
 
 	return 0;
 
@@ -1482,10 +1509,10 @@ out:
 }
 
 static void
-sg_remove(struct class_device *cl_dev, struct class_interface *cl_intf)
+sg_remove(struct device *cl_dev, struct class_interface *cl_intf)
 {
-	struct scsi_device *scsidp = to_scsi_device(cl_dev->dev);
-	Sg_device *sdp = class_get_devdata(cl_dev);
+	struct scsi_device *scsidp = to_scsi_device(cl_dev->parent);
+	Sg_device *sdp = dev_get_drvdata(cl_dev);
 	unsigned long iflags;
 	Sg_fd *sfp;
 	Sg_fd *tsfp;
@@ -1528,7 +1555,7 @@ sg_remove(struct class_device *cl_dev, struct class_interface *cl_intf)
 	write_unlock_irqrestore(&sg_index_lock, iflags);
 
 	sysfs_remove_link(&scsidp->sdev_gendev.kobj, "generic");
-	class_device_destroy(sg_sysfs_class, MKDEV(SCSI_GENERIC_MAJOR, sdp->index));
+	device_destroy(sg_sysfs_class, MKDEV(SCSI_GENERIC_MAJOR, sdp->index));
 	cdev_del(sdp->cdev);
 	sdp->cdev = NULL;
 	put_disk(sdp->disk);
@@ -1733,7 +1760,7 @@ st_map_user_pages(struct scatterlist *sgl, const unsigned int max_pages,
                  */
 		flush_dcache_page(pages[i]);
 		/* ?? Is locking needed? I don't think so */
-		/* if (TestSetPageLocked(pages[i]))
+		/* if (!trylock_page(pages[i]))
 		   goto out_unlock; */
         }
 
@@ -2501,30 +2528,6 @@ sg_page_free(struct page *page, int size)
 	__free_pages(page, order);
 }
 
-#ifndef MAINTENANCE_IN_CMD
-#define MAINTENANCE_IN_CMD 0xa3
-#endif
-
-static unsigned char allow_ops[] = { TEST_UNIT_READY, REQUEST_SENSE,
-	INQUIRY, READ_CAPACITY, READ_BUFFER, READ_6, READ_10, READ_12,
-	READ_16, MODE_SENSE, MODE_SENSE_10, LOG_SENSE, REPORT_LUNS,
-	SERVICE_ACTION_IN, RECEIVE_DIAGNOSTIC, READ_LONG, MAINTENANCE_IN_CMD
-};
-
-static int
-sg_allow_access(unsigned char opcode, char dev_type)
-{
-	int k;
-
-	if (TYPE_SCANNER == dev_type)	/* TYPE_ROM maybe burner */
-		return 1;
-	for (k = 0; k < sizeof (allow_ops); ++k) {
-		if (opcode == allow_ops[k])
-			return 1;
-	}
-	return 0;
-}
-
 #ifdef CONFIG_SCSI_PROC_FS
 static int
 sg_idr_max_id(int id, void *p, void *data)
@@ -2667,7 +2670,6 @@ sg_proc_init(void)
 {
 	int k, mask;
 	int num_leaves = ARRAY_SIZE(sg_proc_leaf_arr);
-	struct proc_dir_entry *pdep;
 	struct sg_proc_leaf * leaf;
 
 	sg_proc_sgp = proc_mkdir(sg_proc_sg_dirname, NULL);
@@ -2676,13 +2678,10 @@ sg_proc_init(void)
 	for (k = 0; k < num_leaves; ++k) {
 		leaf = &sg_proc_leaf_arr[k];
 		mask = leaf->fops->write ? S_IRUGO | S_IWUSR : S_IRUGO;
-		pdep = create_proc_entry(leaf->name, mask, sg_proc_sgp);
-		if (pdep) {
-			leaf->fops->owner = THIS_MODULE,
-			leaf->fops->read = seq_read,
-			leaf->fops->llseek = seq_lseek,
-			pdep->proc_fops = leaf->fops;
-		}
+		leaf->fops->owner = THIS_MODULE;
+		leaf->fops->read = seq_read;
+		leaf->fops->llseek = seq_lseek;
+		proc_create(leaf->name, mask, sg_proc_sgp, leaf->fops);
 	}
 	return 0;
 }

@@ -22,6 +22,7 @@
 #define ISCSI_PROTO_H
 
 #include <linux/types.h>
+#include <scsi/scsi.h>
 
 #define ISCSI_DRAFT20_VERSION	0x00
 
@@ -112,6 +113,7 @@ struct iscsi_ahs_hdr {
 
 #define ISCSI_AHSTYPE_CDB		1
 #define ISCSI_AHSTYPE_RLENGTH		2
+#define ISCSI_CDB_SIZE			16
 
 /* iSCSI PDU Header */
 struct iscsi_cmd {
@@ -125,7 +127,7 @@ struct iscsi_cmd {
 	__be32 data_length;
 	__be32 cmdsn;
 	__be32 exp_statsn;
-	uint8_t cdb[16];	/* SCSI Command Block */
+	uint8_t cdb[ISCSI_CDB_SIZE];	/* SCSI Command Block */
 	/* Additional Data (Command Dependent) */
 };
 
@@ -154,7 +156,8 @@ struct iscsi_ecdb_ahdr {
 	__be16 ahslength;	/* CDB length - 15, including reserved byte */
 	uint8_t ahstype;
 	uint8_t reserved;
-	uint8_t ecdb[260 - 16];	/* 4-byte aligned extended CDB spillover */
+	/* 4-byte aligned extended CDB spillover */
+	uint8_t ecdb[SCSI_MAX_VARLEN_CDB_SIZE - ISCSI_CDB_SIZE];
 };
 
 /* SCSI Response Header */

@@ -101,8 +101,10 @@ static void hybla_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 	if (!tcp_is_cwnd_limited(sk, in_flight))
 		return;
 
-	if (!ca->hybla_en)
-		return tcp_reno_cong_avoid(sk, ack, in_flight);
+	if (!ca->hybla_en) {
+		tcp_reno_cong_avoid(sk, ack, in_flight);
+		return;
+	}
 
 	if (ca->rho == 0)
 		hybla_recalc_param(sk);
@@ -148,7 +150,11 @@ static void hybla_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 		ca->snd_cwnd_cents -= 128;
 		tp->snd_cwnd_cnt = 0;
 	}
-
+	/* check when cwnd has not been incremented for a while */
+	if (increment == 0 && odd == 0 && tp->snd_cwnd_cnt >= tp->snd_cwnd) {
+		tp->snd_cwnd++;
+		tp->snd_cwnd_cnt = 0;
+	}
 	/* clamp down slowstart cwnd to ssthresh value. */
 	if (is_slowstart)
 		tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_ssthresh);

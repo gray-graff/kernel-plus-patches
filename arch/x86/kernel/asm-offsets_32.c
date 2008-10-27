@@ -9,8 +9,9 @@
 #include <linux/signal.h>
 #include <linux/personality.h>
 #include <linux/suspend.h>
+#include <linux/kbuild.h>
 #include <asm/ucontext.h>
-#include "sigframe_32.h"
+#include "sigframe.h"
 #include <asm/pgtable.h>
 #include <asm/fixmap.h>
 #include <asm/processor.h>
@@ -22,14 +23,6 @@
 
 #include <linux/lguest.h>
 #include "../../../drivers/lguest/lg.h"
-
-#define DEFINE(sym, val) \
-        asm volatile("\n->" #sym " %0 " #val : : "i" (val))
-
-#define BLANK() asm volatile("\n->" : : )
-
-#define OFFSET(sym, str, mem) \
-	DEFINE(sym, offsetof(struct str, mem));
 
 /* workaround for a warning with -Wmissing-prototypes */
 void foo(void);
@@ -118,7 +111,7 @@ void foo(void)
 	OFFSET(PV_IRQ_irq_disable, pv_irq_ops, irq_disable);
 	OFFSET(PV_IRQ_irq_enable, pv_irq_ops, irq_enable);
 	OFFSET(PV_CPU_iret, pv_cpu_ops, iret);
-	OFFSET(PV_CPU_irq_enable_syscall_ret, pv_cpu_ops, irq_enable_syscall_ret);
+	OFFSET(PV_CPU_irq_enable_sysexit, pv_cpu_ops, irq_enable_sysexit);
 	OFFSET(PV_CPU_read_cr0, pv_cpu_ops, read_cr0);
 #endif
 

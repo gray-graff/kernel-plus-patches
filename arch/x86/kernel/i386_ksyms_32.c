@@ -1,13 +1,15 @@
 #include <linux/module.h>
-#include <asm/semaphore.h>
-#include <asm/checksum.h>
-#include <asm/desc.h>
-#include <asm/pgtable.h>
 
-EXPORT_SYMBOL(__down_failed);
-EXPORT_SYMBOL(__down_failed_interruptible);
-EXPORT_SYMBOL(__down_failed_trylock);
-EXPORT_SYMBOL(__up_wakeup);
+#include <asm/checksum.h>
+#include <asm/pgtable.h>
+#include <asm/desc.h>
+#include <asm/ftrace.h>
+
+#ifdef CONFIG_FTRACE
+/* mcount is defined in assembly */
+EXPORT_SYMBOL(mcount);
+#endif
+
 /* Networking helper routines. */
 EXPORT_SYMBOL(csum_partial_copy_generic);
 

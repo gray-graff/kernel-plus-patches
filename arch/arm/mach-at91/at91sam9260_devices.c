@@ -16,11 +16,12 @@
 #include <linux/platform_device.h>
 #include <linux/i2c-gpio.h>
 
-#include <asm/arch/board.h>
-#include <asm/arch/gpio.h>
-#include <asm/arch/at91sam9260.h>
-#include <asm/arch/at91sam926x_mc.h>
-#include <asm/arch/at91sam9260_matrix.h>
+#include <mach/board.h>
+#include <mach/gpio.h>
+#include <mach/cpu.h>
+#include <mach/at91sam9260.h>
+#include <mach/at91sam9260_matrix.h>
+#include <mach/at91sam9_smc.h>
 
 #include "generic.h"
 
@@ -282,21 +283,26 @@ void __init at91_add_device_mmc(short mmc_id, struct at91_mmc_data *data) {}
  *  NAND / SmartMedia
  * -------------------------------------------------------------------- */
 
-#if defined(CONFIG_MTD_NAND_AT91) || defined(CONFIG_MTD_NAND_AT91_MODULE)
-static struct at91_nand_data nand_data;
+#if defined(CONFIG_MTD_NAND_ATMEL) || defined(CONFIG_MTD_NAND_ATMEL_MODULE)
+static struct atmel_nand_data nand_data;
 
 #define NAND_BASE	AT91_CHIPSELECT_3
 
 static struct resource nand_resources[] = {
-	{
+	[0] = {
 		.start	= NAND_BASE,
 		.end	= NAND_BASE + SZ_256M - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91_BASE_SYS + AT91_ECC,
+		.end	= AT91_BASE_SYS + AT91_ECC + SZ_512 - 1,
 		.flags	= IORESOURCE_MEM,
 	}
 };
 
 static struct platform_device at91sam9260_nand_device = {
-	.name		= "at91_nand",
+	.name		= "atmel_nand",
 	.id		= -1,
 	.dev		= {
 				.platform_data	= &nand_data,
@@ -305,7 +311,7 @@ static struct platform_device at91sam9260_nand_device = {
 	.num_resources	= ARRAY_SIZE(nand_resources),
 };
 
-void __init at91_add_device_nand(struct at91_nand_data *data)
+void __init at91_add_device_nand(struct atmel_nand_data *data)
 {
 	unsigned long csa, mode;
 
@@ -315,20 +321,41 @@ void __init at91_add_device_nand(struct at91_nand_data *data)
 	csa = at91_sys_read(AT91_MATRIX_EBICSA);
 	at91_sys_write(AT91_MATRIX_EBICSA, csa | AT91_MATRIX_CS3A_SMC_SMARTMEDIA);
 
-	/* set the bus interface characteristics */
-	at91_sys_write(AT91_SMC_SETUP(3), AT91_SMC_NWESETUP_(0) | AT91_SMC_NCS_WRSETUP_(0)
-			| AT91_SMC_NRDSETUP_(0) | AT91_SMC_NCS_RDSETUP_(0));
+	if (cpu_is_at91sam9260()) {
+		/* Timing for sam9260 */
+		/* set the bus interface characteristics */
+		at91_sys_write(AT91_SMC_SETUP(3), AT91_SMC_NWESETUP_(1) | AT91_SMC_NCS_WRSETUP_(0)
+				| AT91_SMC_NRDSETUP_(1) | AT91_SMC_NCS_RDSETUP_(0));
 
-	at91_sys_write(AT91_SMC_PULSE(3), AT91_SMC_NWEPULSE_(3) | AT91_SMC_NCS_WRPULSE_(3)
-			| AT91_SMC_NRDPULSE_(3) | AT91_SMC_NCS_RDPULSE_(3));
+		at91_sys_write(AT91_SMC_PULSE(3), AT91_SMC_NWEPULSE_(3) | AT91_SMC_NCS_WRPULSE_(3)
+				| AT91_SMC_NRDPULSE_(3) | AT91_SMC_NCS_RDPULSE_(3));
 
-	at91_sys_write(AT91_SMC_CYCLE(3), AT91_SMC_NWECYCLE_(5) | AT91_SMC_NRDCYCLE_(5));
+		at91_sys_write(AT91_SMC_CYCLE(3), AT91_SMC_NWECYCLE_(5) | AT91_SMC_NRDCYCLE_(5));
 
-	if (data->bus_width_16)
-		mode = AT91_SMC_DBW_16;
-	else
-		mode = AT91_SMC_DBW_8;
-	at91_sys_write(AT91_SMC_MODE(3), mode | AT91_SMC_READMODE | AT91_SMC_WRITEMODE | AT91_SMC_EXNWMODE_DISABLE | AT91_SMC_TDF_(2));
+		if (data->bus_width_16)
+			mode = AT91_SMC_DBW_16;
+		else
+			mode = AT91_SMC_DBW_8;
+		at91_sys_write(AT91_SMC_MODE(3), mode | AT91_SMC_READMODE | AT91_SMC_WRITEMODE | AT91_SMC_EXNWMODE_DISABLE | AT91_SMC_TDF_(2));
+	}
+
+	if (cpu_is_at91sam9g20()) {
+		/* Timing for sam9g20 */
+		/* set the bus interface characteristics */
+		at91_sys_write(AT91_SMC_SETUP(3), AT91_SMC_NWESETUP_(2) | AT91_SMC_NCS_WRSETUP_(0)
+				| AT91_SMC_NRDSETUP_(2) | AT91_SMC_NCS_RDSETUP_(0));
+
+		at91_sys_write(AT91_SMC_PULSE(3), AT91_SMC_NWEPULSE_(4) | AT91_SMC_NCS_WRPULSE_(4)
+				| AT91_SMC_NRDPULSE_(4) | AT91_SMC_NCS_RDPULSE_(4));
+
+		at91_sys_write(AT91_SMC_CYCLE(3), AT91_SMC_NWECYCLE_(7) | AT91_SMC_NRDCYCLE_(7));
+
+		if (data->bus_width_16)
+			mode = AT91_SMC_DBW_16;
+		else
+			mode = AT91_SMC_DBW_8;
+		at91_sys_write(AT91_SMC_MODE(3), mode | AT91_SMC_READMODE | AT91_SMC_WRITEMODE | AT91_SMC_EXNWMODE_DISABLE | AT91_SMC_TDF_(3));
+	}
 
 	/* enable pin */
 	if (data->enable_pin)
@@ -346,7 +373,7 @@ void __init at91_add_device_nand(struct at91_nand_data *data)
 	platform_device_register(&at91sam9260_nand_device);
 }
 #else
-void __init at91_add_device_nand(struct at91_nand_data *data) {}
+void __init at91_add_device_nand(struct atmel_nand_data *data) {}
 #endif
 
 
@@ -540,6 +567,90 @@ void __init at91_add_device_spi(struct spi_board_info *devices, int nr_devices) 
 
 
 /* --------------------------------------------------------------------
+ *  Timer/Counter blocks
+ * -------------------------------------------------------------------- */
+
+#ifdef CONFIG_ATMEL_TCLIB
+
+static struct resource tcb0_resources[] = {
+	[0] = {
+		.start	= AT91SAM9260_BASE_TCB0,
+		.end	= AT91SAM9260_BASE_TCB0 + SZ_16K - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91SAM9260_ID_TC0,
+		.end	= AT91SAM9260_ID_TC0,
+		.flags	= IORESOURCE_IRQ,
+	},
+	[2] = {
+		.start	= AT91SAM9260_ID_TC1,
+		.end	= AT91SAM9260_ID_TC1,
+		.flags	= IORESOURCE_IRQ,
+	},
+	[3] = {
+		.start	= AT91SAM9260_ID_TC2,
+		.end	= AT91SAM9260_ID_TC2,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device at91sam9260_tcb0_device = {
+	.name		= "atmel_tcb",
+	.id		= 0,
+	.resource	= tcb0_resources,
+	.num_resources	= ARRAY_SIZE(tcb0_resources),
+};
+
+static struct resource tcb1_resources[] = {
+	[0] = {
+		.start	= AT91SAM9260_BASE_TCB1,
+		.end	= AT91SAM9260_BASE_TCB1 + SZ_16K - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= AT91SAM9260_ID_TC3,
+		.end	= AT91SAM9260_ID_TC3,
+		.flags	= IORESOURCE_IRQ,
+	},
+	[2] = {
+		.start	= AT91SAM9260_ID_TC4,
+		.end	= AT91SAM9260_ID_TC4,
+		.flags	= IORESOURCE_IRQ,
+	},
+	[3] = {
+		.start	= AT91SAM9260_ID_TC5,
+		.end	= AT91SAM9260_ID_TC5,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device at91sam9260_tcb1_device = {
+	.name		= "atmel_tcb",
+	.id		= 1,
+	.resource	= tcb1_resources,
+	.num_resources	= ARRAY_SIZE(tcb1_resources),
+};
+
+static void __init at91_add_device_tc(void)
+{
+	/* this chip has a separate clock and irq for each TC channel */
+	at91_clock_associate("tc0_clk", &at91sam9260_tcb0_device.dev, "t0_clk");
+	at91_clock_associate("tc1_clk", &at91sam9260_tcb0_device.dev, "t1_clk");
+	at91_clock_associate("tc2_clk", &at91sam9260_tcb0_device.dev, "t2_clk");
+	platform_device_register(&at91sam9260_tcb0_device);
+
+	at91_clock_associate("tc3_clk", &at91sam9260_tcb1_device.dev, "t0_clk");
+	at91_clock_associate("tc4_clk", &at91sam9260_tcb1_device.dev, "t1_clk");
+	at91_clock_associate("tc5_clk", &at91sam9260_tcb1_device.dev, "t2_clk");
+	platform_device_register(&at91sam9260_tcb1_device);
+}
+#else
+static void __init at91_add_device_tc(void) { }
+#endif
+
+
+/* --------------------------------------------------------------------
  *  RTT
  * -------------------------------------------------------------------- */
 
@@ -553,7 +664,7 @@ static struct resource rtt_resources[] = {
 
 static struct platform_device at91sam9260_rtt_device = {
 	.name		= "at91_rtt",
-	.id		= -1,
+	.id		= 0,
 	.resource	= rtt_resources,
 	.num_resources	= ARRAY_SIZE(rtt_resources),
 };
@@ -962,63 +1073,8 @@ static inline void configure_usart5_pins(void)
 	at91_set_A_periph(AT91_PIN_PB13, 0);		/* RXD5 */
 }
 
-static struct platform_device *at91_uarts[ATMEL_MAX_UART];	/* the UARTs to use */
+static struct platform_device *__initdata at91_uarts[ATMEL_MAX_UART];	/* the UARTs to use */
 struct platform_device *atmel_default_console_device;	/* the serial console device */
-
-void __init __deprecated at91_init_serial(struct at91_uart_config *config)
-{
-	int i;
-
-	/* Fill in list of supported UARTs */
-	for (i = 0; i < config->nr_tty; i++) {
-		switch (config->tty_map[i]) {
-			case 0:
-				configure_usart0_pins(ATMEL_UART_CTS | ATMEL_UART_RTS | ATMEL_UART_DSR | ATMEL_UART_DTR | ATMEL_UART_DCD | ATMEL_UART_RI);
-				at91_uarts[i] = &at91sam9260_uart0_device;
-				at91_clock_associate("usart0_clk", &at91sam9260_uart0_device.dev, "usart");
-				break;
-			case 1:
-				configure_usart1_pins(ATMEL_UART_CTS | ATMEL_UART_RTS);
-				at91_uarts[i] = &at91sam9260_uart1_device;
-				at91_clock_associate("usart1_clk", &at91sam9260_uart1_device.dev, "usart");
-				break;
-			case 2:
-				configure_usart2_pins(0);
-				at91_uarts[i] = &at91sam9260_uart2_device;
-				at91_clock_associate("usart2_clk", &at91sam9260_uart2_device.dev, "usart");
-				break;
-			case 3:
-				configure_usart3_pins(0);
-				at91_uarts[i] = &at91sam9260_uart3_device;
-				at91_clock_associate("usart3_clk", &at91sam9260_uart3_device.dev, "usart");
-				break;
-			case 4:
-				configure_usart4_pins();
-				at91_uarts[i] = &at91sam9260_uart4_device;
-				at91_clock_associate("usart4_clk", &at91sam9260_uart4_device.dev, "usart");
-				break;
-			case 5:
-				configure_usart5_pins();
-				at91_uarts[i] = &at91sam9260_uart5_device;
-				at91_clock_associate("usart5_clk", &at91sam9260_uart5_device.dev, "usart");
-				break;
-			case 6:
-				configure_dbgu_pins();
-				at91_uarts[i] = &at91sam9260_dbgu_device;
-				at91_clock_associate("mck", &at91sam9260_dbgu_device.dev, "usart");
-				break;
-			default:
-				continue;
-		}
-		at91_uarts[i]->id = i;		/* update ID number to mapped ID */
-	}
-
-	/* Set serial console device */
-	if (config->console_tty < ATMEL_MAX_UART)
-		atmel_default_console_device = at91_uarts[config->console_tty];
-	if (!atmel_default_console_device)
-		printk(KERN_INFO "AT91: No default serial console defined.\n");
-}
 
 void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins)
 {
@@ -1073,8 +1129,6 @@ void __init at91_set_serial_console(unsigned portnr)
 {
 	if (portnr < ATMEL_MAX_UART)
 		atmel_default_console_device = at91_uarts[portnr];
-	if (!atmel_default_console_device)
-		printk(KERN_INFO "AT91: No default serial console defined.\n");
 }
 
 void __init at91_add_device_serial(void)
@@ -1085,9 +1139,11 @@ void __init at91_add_device_serial(void)
 		if (at91_uarts[i])
 			platform_device_register(at91_uarts[i]);
 	}
+
+	if (!atmel_default_console_device)
+		printk(KERN_INFO "AT91: No default serial console defined.\n");
 }
 #else
-void __init __deprecated at91_init_serial(struct at91_uart_config *config) {}
 void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins) {}
 void __init at91_set_serial_console(unsigned portnr) {}
 void __init at91_add_device_serial(void) {}
@@ -1103,6 +1159,7 @@ static int __init at91_add_standard_devices(void)
 {
 	at91_add_device_rtt();
 	at91_add_device_watchdog();
+	at91_add_device_tc();
 	return 0;
 }
 

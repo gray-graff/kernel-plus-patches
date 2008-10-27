@@ -168,7 +168,7 @@
 #include <asm/div64.h>		/* do_div */
 #include <asm/timex.h>
 
-#define VERSION  "pktgen v2.69: Packet Generator for packet performance testing.\n"
+#define VERSION  "pktgen v2.70: Packet Generator for packet performance testing.\n"
 
 #define IP_NAME_SZ 32
 #define MAX_MPLS_LABELS 16 /* This is the max label stack depth */
@@ -189,6 +189,7 @@
 #define F_FLOW_SEQ    (1<<11)	/* Sequential flows */
 #define F_IPSEC_ON    (1<<12)	/* ipsec on for flows */
 #define F_QUEUE_MAP_RND (1<<13)	/* queue map Random */
+#define F_QUEUE_MAP_CPU (1<<14)	/* queue map mirrors smp_processor_id() */
 
 /* Thread control flag bits */
 #define T_TERMINATE   (1<<0)
@@ -390,6 +391,7 @@ struct pktgen_thread {
 	int cpu;
 
 	wait_queue_head_t queue;
+	struct completion start_done;
 };
 
 #define REMOVE 1
@@ -619,6 +621,9 @@ static int pktgen_if_show(struct seq_file *seq, void *v)
 
 	if (pkt_dev->flags & F_QUEUE_MAP_RND)
 		seq_printf(seq,  "QUEUE_MAP_RND  ");
+
+	if (pkt_dev->flags & F_QUEUE_MAP_CPU)
+		seq_printf(seq,  "QUEUE_MAP_CPU  ");
 
 	if (pkt_dev->cflows) {
 		if (pkt_dev->flags & F_FLOW_SEQ)
@@ -1133,6 +1138,12 @@ static ssize_t pktgen_if_write(struct file *file,
 
 		else if (strcmp(f, "!QUEUE_MAP_RND") == 0)
 			pkt_dev->flags &= ~F_QUEUE_MAP_RND;
+
+		else if (strcmp(f, "QUEUE_MAP_CPU") == 0)
+			pkt_dev->flags |= F_QUEUE_MAP_CPU;
+
+		else if (strcmp(f, "!QUEUE_MAP_CPU") == 0)
+			pkt_dev->flags &= ~F_QUEUE_MAP_CPU;
 #ifdef CONFIG_XFRM
 		else if (strcmp(f, "IPSEC") == 0)
 			pkt_dev->flags |= F_IPSEC_ON;
@@ -1874,7 +1885,7 @@ static int pktgen_device_event(struct notifier_block *unused,
 {
 	struct net_device *dev = ptr;
 
-	if (dev->nd_net != &init_net)
+	if (!net_eq(dev_net(dev), &init_net))
 		return NOTIFY_DONE;
 
 	/* It is OK that we do not hold the group lock right now,
@@ -1894,6 +1905,23 @@ static int pktgen_device_event(struct notifier_block *unused,
 	return NOTIFY_DONE;
 }
 
+static struct net_device *pktgen_dev_get_by_name(struct pktgen_dev *pkt_dev, const char *ifname)
+{
+	char b[IFNAMSIZ+5];
+	int i = 0;
+
+	for(i=0; ifname[i] != '@'; i++) {
+		if(i == IFNAMSIZ)
+			break;
+
+		b[i] = ifname[i];
+	}
+	b[i] = 0;
+
+	return dev_get_by_name(&init_net, b);
+}
+
+
 /* Associate pktgen_dev with a device. */
 
 static int pktgen_setup_dev(struct pktgen_dev *pkt_dev, const char *ifname)
@@ -1907,7 +1935,7 @@ static int pktgen_setup_dev(struct pktgen_dev *pkt_dev, const char *ifname)
 		pkt_dev->odev = NULL;
 	}
 
-	odev = dev_get_by_name(&init_net, ifname);
+	odev = pktgen_dev_get_by_name(pkt_dev, ifname);
 	if (!odev) {
 		printk(KERN_ERR "pktgen: no such netdevice: \"%s\"\n", ifname);
 		return -ENODEV;
@@ -1933,12 +1961,41 @@ static int pktgen_setup_dev(struct pktgen_dev *pkt_dev, const char *ifname)
  */
 static void pktgen_setup_inject(struct pktgen_dev *pkt_dev)
 {
+	int ntxq;
+
 	if (!pkt_dev->odev) {
 		printk(KERN_ERR "pktgen: ERROR: pkt_dev->odev == NULL in "
 		       "setup_inject.\n");
 		sprintf(pkt_dev->result,
 			"ERROR: pkt_dev->odev == NULL in setup_inject.\n");
 		return;
+	}
+
+	/* make sure that we don't pick a non-existing transmit queue */
+	ntxq = pkt_dev->odev->real_num_tx_queues;
+	if (ntxq <= num_online_cpus() && (pkt_dev->flags & F_QUEUE_MAP_CPU)) {
+		printk(KERN_WARNING "pktgen: WARNING: QUEUE_MAP_CPU "
+		       "disabled because CPU count (%d) exceeds number ",
+		       num_online_cpus());
+		printk(KERN_WARNING "pktgen: WARNING: of tx queues "
+		       "(%d) on %s \n", ntxq, pkt_dev->odev->name);
+		pkt_dev->flags &= ~F_QUEUE_MAP_CPU;
+	}
+	if (ntxq <= pkt_dev->queue_map_min) {
+		printk(KERN_WARNING "pktgen: WARNING: Requested "
+		       "queue_map_min (%d) exceeds number of tx\n",
+		       pkt_dev->queue_map_min);
+		printk(KERN_WARNING "pktgen: WARNING: queues (%d) on "
+		       "%s, resetting\n", ntxq, pkt_dev->odev->name);
+		pkt_dev->queue_map_min = ntxq - 1;
+	}
+	if (ntxq <= pkt_dev->queue_map_max) {
+		printk(KERN_WARNING "pktgen: WARNING: Requested "
+		       "queue_map_max (%d) exceeds number of tx\n",
+		       pkt_dev->queue_map_max);
+		printk(KERN_WARNING "pktgen: WARNING: queues (%d) on "
+		       "%s, resetting\n", ntxq, pkt_dev->odev->name);
+		pkt_dev->queue_map_max = ntxq - 1;
 	}
 
 	/* Default to the interface's mac if not explicitly set. */
@@ -2084,15 +2141,19 @@ static inline int f_pick(struct pktgen_dev *pkt_dev)
 		if (pkt_dev->flows[flow].count >= pkt_dev->lflow) {
 			/* reset time */
 			pkt_dev->flows[flow].count = 0;
+			pkt_dev->flows[flow].flags = 0;
 			pkt_dev->curfl += 1;
 			if (pkt_dev->curfl >= pkt_dev->cflows)
 				pkt_dev->curfl = 0; /*reset */
 		}
 	} else {
 		flow = random32() % pkt_dev->cflows;
+		pkt_dev->curfl = flow;
 
-		if (pkt_dev->flows[flow].count > pkt_dev->lflow)
+		if (pkt_dev->flows[flow].count > pkt_dev->lflow) {
 			pkt_dev->flows[flow].count = 0;
+			pkt_dev->flows[flow].flags = 0;
+		}
 	}
 
 	return pkt_dev->curfl;
@@ -2122,6 +2183,28 @@ static void get_ipsec_sa(struct pktgen_dev *pkt_dev, int flow)
 	}
 }
 #endif
+static void set_cur_queue_map(struct pktgen_dev *pkt_dev)
+{
+
+	if (pkt_dev->flags & F_QUEUE_MAP_CPU)
+		pkt_dev->cur_queue_map = smp_processor_id();
+
+	else if (pkt_dev->queue_map_min < pkt_dev->queue_map_max) {
+		__u16 t;
+		if (pkt_dev->flags & F_QUEUE_MAP_RND) {
+			t = random32() %
+				(pkt_dev->queue_map_max -
+				 pkt_dev->queue_map_min + 1)
+				+ pkt_dev->queue_map_min;
+		} else {
+			t = pkt_dev->cur_queue_map + 1;
+			if (t > pkt_dev->queue_map_max)
+				t = pkt_dev->queue_map_min;
+		}
+		pkt_dev->cur_queue_map = t;
+	}
+}
+
 /* Increment/randomize headers according to flags and current values
  * for IP src/dest, UDP src/dst port, MAC-Addr src/dst
  */
@@ -2143,7 +2226,7 @@ static void mod_cur_headers(struct pktgen_dev *pkt_dev)
 			mc = random32() % pkt_dev->src_mac_count;
 		else {
 			mc = pkt_dev->cur_src_mac_offset++;
-			if (pkt_dev->cur_src_mac_offset >
+			if (pkt_dev->cur_src_mac_offset >=
 			    pkt_dev->src_mac_count)
 				pkt_dev->cur_src_mac_offset = 0;
 		}
@@ -2170,7 +2253,7 @@ static void mod_cur_headers(struct pktgen_dev *pkt_dev)
 
 		else {
 			mc = pkt_dev->cur_dst_mac_offset++;
-			if (pkt_dev->cur_dst_mac_offset >
+			if (pkt_dev->cur_dst_mac_offset >=
 			    pkt_dev->dst_mac_count) {
 				pkt_dev->cur_dst_mac_offset = 0;
 			}
@@ -2324,19 +2407,7 @@ static void mod_cur_headers(struct pktgen_dev *pkt_dev)
 		pkt_dev->cur_pkt_size = t;
 	}
 
-	if (pkt_dev->queue_map_min < pkt_dev->queue_map_max) {
-		__u16 t;
-		if (pkt_dev->flags & F_QUEUE_MAP_RND) {
-			t = random32() %
-				(pkt_dev->queue_map_max - pkt_dev->queue_map_min + 1)
-				+ pkt_dev->queue_map_min;
-		} else {
-			t = pkt_dev->cur_queue_map + 1;
-			if (t > pkt_dev->queue_map_max)
-				t = pkt_dev->queue_map_min;
-		}
-		pkt_dev->cur_queue_map = t;
-	}
+	set_cur_queue_map(pkt_dev);
 
 	pkt_dev->flows[flow].count++;
 }
@@ -2457,7 +2528,7 @@ static struct sk_buff *fill_packet_ipv4(struct net_device *odev,
 	__be16 *vlan_encapsulated_proto = NULL;  /* packet type ID field (or len) for VLAN tag */
 	__be16 *svlan_tci = NULL;                /* Encapsulates priority and SVLAN ID */
 	__be16 *svlan_encapsulated_proto = NULL; /* packet type ID field (or len) for SVLAN tag */
-
+	u16 queue_map;
 
 	if (pkt_dev->nr_labels)
 		protocol = htons(ETH_P_MPLS_UC);
@@ -2468,6 +2539,7 @@ static struct sk_buff *fill_packet_ipv4(struct net_device *odev,
 	/* Update any of the values, used when we're incrementing various
 	 * fields.
 	 */
+	queue_map = pkt_dev->cur_queue_map;
 	mod_cur_headers(pkt_dev);
 
 	datalen = (odev->hard_header_len + 16) & ~0xf;
@@ -2506,7 +2578,7 @@ static struct sk_buff *fill_packet_ipv4(struct net_device *odev,
 	skb->network_header = skb->tail;
 	skb->transport_header = skb->network_header + sizeof(struct iphdr);
 	skb_put(skb, sizeof(struct iphdr) + sizeof(struct udphdr));
-	skb_set_queue_mapping(skb, pkt_dev->cur_queue_map);
+	skb_set_queue_mapping(skb, queue_map);
 	iph = ip_hdr(skb);
 	udph = udp_hdr(skb);
 
@@ -2796,6 +2868,7 @@ static struct sk_buff *fill_packet_ipv6(struct net_device *odev,
 	__be16 *vlan_encapsulated_proto = NULL;  /* packet type ID field (or len) for VLAN tag */
 	__be16 *svlan_tci = NULL;                /* Encapsulates priority and SVLAN ID */
 	__be16 *svlan_encapsulated_proto = NULL; /* packet type ID field (or len) for SVLAN tag */
+	u16 queue_map;
 
 	if (pkt_dev->nr_labels)
 		protocol = htons(ETH_P_MPLS_UC);
@@ -2806,6 +2879,7 @@ static struct sk_buff *fill_packet_ipv6(struct net_device *odev,
 	/* Update any of the values, used when we're incrementing various
 	 * fields.
 	 */
+	queue_map = pkt_dev->cur_queue_map;
 	mod_cur_headers(pkt_dev);
 
 	skb = alloc_skb(pkt_dev->cur_pkt_size + 64 + 16 +
@@ -2843,7 +2917,7 @@ static struct sk_buff *fill_packet_ipv6(struct net_device *odev,
 	skb->network_header = skb->tail;
 	skb->transport_header = skb->network_header + sizeof(struct ipv6hdr);
 	skb_put(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr));
-	skb_set_queue_mapping(skb, pkt_dev->cur_queue_map);
+	skb_set_queue_mapping(skb, queue_map);
 	iph = ipv6_hdr(skb);
 	udph = udp_hdr(skb);
 
@@ -3262,7 +3336,9 @@ static void pktgen_rem_thread(struct pktgen_thread *t)
 static __inline__ void pktgen_xmit(struct pktgen_dev *pkt_dev)
 {
 	struct net_device *odev = NULL;
+	struct netdev_queue *txq;
 	__u64 idle_start = 0;
+	u16 queue_map;
 	int ret;
 
 	odev = pkt_dev->odev;
@@ -3284,9 +3360,16 @@ static __inline__ void pktgen_xmit(struct pktgen_dev *pkt_dev)
 		}
 	}
 
-	if ((netif_queue_stopped(odev) ||
-	     (pkt_dev->skb &&
-	      netif_subqueue_stopped(odev, pkt_dev->skb))) ||
+	if (!pkt_dev->skb) {
+		set_cur_queue_map(pkt_dev);
+		queue_map = pkt_dev->cur_queue_map;
+	} else {
+		queue_map = skb_get_queue_mapping(pkt_dev->skb);
+	}
+
+	txq = netdev_get_tx_queue(odev, queue_map);
+	if (netif_tx_queue_stopped(txq) ||
+	    netif_tx_queue_frozen(txq) ||
 	    need_resched()) {
 		idle_start = getCurUs();
 
@@ -3302,8 +3385,8 @@ static __inline__ void pktgen_xmit(struct pktgen_dev *pkt_dev)
 
 		pkt_dev->idle_acc += getCurUs() - idle_start;
 
-		if (netif_queue_stopped(odev) ||
-		    netif_subqueue_stopped(odev, pkt_dev->skb)) {
+		if (netif_tx_queue_stopped(txq) ||
+		    netif_tx_queue_frozen(txq)) {
 			pkt_dev->next_tx_us = getCurUs();	/* TODO */
 			pkt_dev->next_tx_ns = 0;
 			goto out;	/* Try the next interface */
@@ -3330,9 +3413,13 @@ static __inline__ void pktgen_xmit(struct pktgen_dev *pkt_dev)
 		}
 	}
 
-	netif_tx_lock_bh(odev);
-	if (!netif_queue_stopped(odev) &&
-	    !netif_subqueue_stopped(odev, pkt_dev->skb)) {
+	/* fill_packet() might have changed the queue */
+	queue_map = skb_get_queue_mapping(pkt_dev->skb);
+	txq = netdev_get_tx_queue(odev, queue_map);
+
+	__netif_tx_lock_bh(txq);
+	if (!netif_tx_queue_stopped(txq) &&
+	    !netif_tx_queue_frozen(txq)) {
 
 		atomic_inc(&(pkt_dev->skb->users));
 	      retry_now:
@@ -3376,7 +3463,7 @@ static __inline__ void pktgen_xmit(struct pktgen_dev *pkt_dev)
 		pkt_dev->next_tx_ns = 0;
 	}
 
-	netif_tx_unlock_bh(odev);
+	__netif_tx_unlock_bh(txq);
 
 	/* If pkt_dev->count is zero, then run forever */
 	if ((pkt_dev->count != 0) && (pkt_dev->sofar >= pkt_dev->count)) {
@@ -3414,6 +3501,7 @@ static int pktgen_thread_worker(void *arg)
 	BUG_ON(smp_processor_id() != cpu);
 
 	init_waitqueue_head(&t->queue);
+	complete(&t->start_done);
 
 	pr_debug("pktgen: starting pktgen/%d:  pid=%d\n", cpu, task_pid_nr(current));
 
@@ -3570,15 +3658,14 @@ static int pktgen_add_device(struct pktgen_thread *t, const char *ifname)
 	if (err)
 		goto out1;
 
-	pkt_dev->entry = proc_create(ifname, 0600,
-				     pg_proc_dir, &pktgen_if_fops);
+	pkt_dev->entry = proc_create_data(ifname, 0600, pg_proc_dir,
+					  &pktgen_if_fops, pkt_dev);
 	if (!pkt_dev->entry) {
 		printk(KERN_ERR "pktgen: cannot create %s/%s procfs entry.\n",
 		       PG_PROC_DIR, ifname);
 		err = -EINVAL;
 		goto out2;
 	}
-	pkt_dev->entry->data = pkt_dev;
 #ifdef CONFIG_XFRM
 	pkt_dev->ipsmode = XFRM_MODE_TRANSPORT;
 	pkt_dev->ipsproto = IPPROTO_ESP;
@@ -3616,6 +3703,7 @@ static int __init pktgen_create_thread(int cpu)
 	INIT_LIST_HEAD(&t->if_list);
 
 	list_add_tail(&t->th_list, &pktgen_threads);
+	init_completion(&t->start_done);
 
 	p = kthread_create(pktgen_thread_worker, t, "kpktgend_%d", cpu);
 	if (IS_ERR(p)) {
@@ -3628,7 +3716,8 @@ static int __init pktgen_create_thread(int cpu)
 	kthread_bind(p, cpu);
 	t->tsk = p;
 
-	pe = proc_create(t->tsk->comm, 0600, pg_proc_dir, &pktgen_thread_fops);
+	pe = proc_create_data(t->tsk->comm, 0600, pg_proc_dir,
+			      &pktgen_thread_fops, t);
 	if (!pe) {
 		printk(KERN_ERR "pktgen: cannot create %s/%s procfs entry.\n",
 		       PG_PROC_DIR, t->tsk->comm);
@@ -3638,9 +3727,8 @@ static int __init pktgen_create_thread(int cpu)
 		return -EINVAL;
 	}
 
-	pe->data = t;
-
 	wake_up_process(p);
+	wait_for_completion(&t->start_done);
 
 	return 0;
 }
@@ -3715,8 +3803,6 @@ static int __init pg_init(void)
 		proc_net_remove(&init_net, PG_PROC_DIR);
 		return -EINVAL;
 	}
-
-	pe->data = NULL;
 
 	/* Register us to receive netdevice events */
 	register_netdevice_notifier(&pktgen_notifier_block);

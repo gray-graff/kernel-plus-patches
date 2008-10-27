@@ -69,7 +69,7 @@ static int elv_iosched_allow_merge(struct request *rq, struct bio *bio)
 /*
  * can we safely merge with this request?
  */
-inline int elv_rq_merge_ok(struct request *rq, struct bio *bio)
+int elv_rq_merge_ok(struct request *rq, struct bio *bio)
 {
 	if (!rq_mergeable(rq))
 		return 0;
@@ -84,6 +84,12 @@ inline int elv_rq_merge_ok(struct request *rq, struct bio *bio)
 	 * must be same device and not a special request
 	 */
 	if (rq->rq_disk != bio->bi_bdev->bd_disk || rq->special)
+		return 0;
+
+	/*
+	 * only merge integrity protected bio into ditto rq
+	 */
+	if (bio_integrity(bio) != blk_integrity_rq(rq))
 		return 0;
 
 	if (!elv_iosched_allow_merge(rq, bio))
@@ -144,7 +150,7 @@ static struct elevator_type *elevator_get(const char *name)
 		else
 			sprintf(elv, "%s-iosched", name);
 
-		request_module(elv);
+		request_module("%s", elv);
 		spin_lock(&elv_list_lock);
 		e = elevator_find(name);
 	}
@@ -488,6 +494,9 @@ int elv_merge(struct request_queue *q, struct request **req, struct bio *bio)
 		}
 	}
 
+	if (blk_queue_nomerges(q))
+		return ELEVATOR_NO_MERGE;
+
 	/*
 	 * See if our hash lookup can find a potential backmerge.
 	 */
@@ -647,7 +656,7 @@ void elv_insert(struct request_queue *q, struct request *rq, int where)
 
 	default:
 		printk(KERN_ERR "%s: bad insertion point %d\n",
-		       __FUNCTION__, where);
+		       __func__, where);
 		BUG();
 	}
 
@@ -805,8 +814,7 @@ struct request *elv_next_request(struct request_queue *q)
 			rq->cmd_flags |= REQ_QUIET;
 			end_queued_request(rq, 0);
 		} else {
-			printk(KERN_ERR "%s: bad return=%d\n", __FUNCTION__,
-								ret);
+			printk(KERN_ERR "%s: bad return=%d\n", __func__, ret);
 			break;
 		}
 	}
@@ -1070,7 +1078,7 @@ static int elevator_switch(struct request_queue *q, struct elevator_type *new_e)
 	 */
 	spin_lock_irq(q->queue_lock);
 
-	set_bit(QUEUE_FLAG_ELVSWITCH, &q->queue_flags);
+	queue_flag_set(QUEUE_FLAG_ELVSWITCH, q);
 
 	elv_drain_elevator(q);
 
@@ -1104,7 +1112,12 @@ static int elevator_switch(struct request_queue *q, struct elevator_type *new_e)
 	 * finally exit old elevator and turn off BYPASS.
 	 */
 	elevator_exit(old_elevator);
-	clear_bit(QUEUE_FLAG_ELVSWITCH, &q->queue_flags);
+	spin_lock_irq(q->queue_lock);
+	queue_flag_clear(QUEUE_FLAG_ELVSWITCH, q);
+	spin_unlock_irq(q->queue_lock);
+
+	blk_add_trace_msg(q, "elv switch: %s", e->elevator_type->elevator_name);
+
 	return 1;
 
 fail_register:
@@ -1115,7 +1128,11 @@ fail_register:
 	elevator_exit(e);
 	q->elevator = old_elevator;
 	elv_register_queue(q);
-	clear_bit(QUEUE_FLAG_ELVSWITCH, &q->queue_flags);
+
+	spin_lock_irq(q->queue_lock);
+	queue_flag_clear(QUEUE_FLAG_ELVSWITCH, q);
+	spin_unlock_irq(q->queue_lock);
+
 	return 0;
 }
 

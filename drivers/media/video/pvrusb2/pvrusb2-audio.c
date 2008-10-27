@@ -1,6 +1,5 @@
 /*
  *
- *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
@@ -75,7 +74,7 @@ static void set_stereo(struct pvr2_msp3400_handler *ctxt)
 	pvr2_trace(PVR2_TRACE_CHIPS,"i2c msp3400 v4l2 set_stereo");
 
 	if ((sid < ARRAY_SIZE(routing_schemes)) &&
-	    ((sp = routing_schemes + sid) != 0) &&
+	    ((sp = routing_schemes + sid) != NULL) &&
 	    (hdw->input_val >= 0) &&
 	    (hdw->input_val < sp->cnt)) {
 		route.input = sp->def[hdw->input_val];

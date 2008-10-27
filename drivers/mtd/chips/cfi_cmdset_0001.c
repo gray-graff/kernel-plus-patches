@@ -4,8 +4,6 @@
  *
  * (C) 2000 Red Hat. GPL'd
  *
- * $Id: cfi_cmdset_0001.c,v 1.186 2005/11/23 22:07:52 nico Exp $
- *
  *
  * 10/10/2000	Nicolas Pitre <nico@cam.org>
  * 	- completely revamped method functions so they are aware and
@@ -50,6 +48,8 @@
 #define I82802AC	0x00ac
 #define MANUFACTURER_ST         0x0020
 #define M50LPW080       0x002F
+#define M50FLW080A	0x0080
+#define M50FLW080B	0x0081
 #define AT49BV640D	0x02de
 
 static int cfi_intelext_read (struct mtd_info *, loff_t, size_t, size_t *, u_char *);
@@ -82,9 +82,8 @@ static struct mtd_info *cfi_intelext_setup (struct mtd_info *);
 static int cfi_intelext_partition_fixup(struct mtd_info *, struct cfi_private **);
 
 static int cfi_intelext_point (struct mtd_info *mtd, loff_t from, size_t len,
-		     size_t *retlen, u_char **mtdbuf);
-static void cfi_intelext_unpoint (struct mtd_info *mtd, u_char *addr, loff_t from,
-			size_t len);
+		     size_t *retlen, void **virt, resource_size_t *phys);
+static void cfi_intelext_unpoint(struct mtd_info *mtd, loff_t from, size_t len);
 
 static int chip_ready (struct map_info *map, struct flchip *chip, unsigned long adr, int mode);
 static int get_chip(struct map_info *map, struct flchip *chip, unsigned long adr, int mode);
@@ -205,7 +204,7 @@ static void fixup_intel_strataflash(struct mtd_info *mtd, void* param)
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
-	struct cfi_pri_amdstd *extp = cfi->cmdset_priv;
+	struct cfi_pri_intelext *extp = cfi->cmdset_priv;
 
 	printk(KERN_WARNING "cfi_cmdset_0001: Suspend "
 	                    "erase on write disabled.\n");
@@ -302,6 +301,8 @@ static struct cfi_fixup jedec_fixup_table[] = {
 	{ MANUFACTURER_INTEL, I82802AB,   fixup_use_fwh_lock, NULL, },
 	{ MANUFACTURER_INTEL, I82802AC,   fixup_use_fwh_lock, NULL, },
 	{ MANUFACTURER_ST,    M50LPW080,  fixup_use_fwh_lock, NULL, },
+	{ MANUFACTURER_ST,    M50FLW080A, fixup_use_fwh_lock, NULL, },
+	{ MANUFACTURER_ST,    M50FLW080B, fixup_use_fwh_lock, NULL, },
 	{ 0, 0, NULL, NULL }
 };
 static struct cfi_fixup fixup_table[] = {
@@ -384,7 +385,7 @@ read_pri_intelext(struct map_info *map, __u16 adr)
 			if (extp_size > 4096) {
 				printk(KERN_ERR
 					"%s: cfi_pri_intelext is too fat\n",
-					__FUNCTION__);
+					__func__);
 				return NULL;
 			}
 			goto again;
@@ -619,6 +620,9 @@ static int cfi_intelext_partition_fixup(struct mtd_info *mtd,
 				  sizeof(struct cfi_intelext_blockinfo);
 		}
 
+		if (!numparts)
+			numparts = 1;
+
 		/* Programming Region info */
 		if (extp->MinorVersion >= '4') {
 			struct cfi_intelext_programming_regioninfo *prinfo;
@@ -641,7 +645,7 @@ static int cfi_intelext_partition_fixup(struct mtd_info *mtd,
 		if ((1 << partshift) < mtd->erasesize) {
 			printk( KERN_ERR
 				"%s: bad number of hw partitions (%d)\n",
-				__FUNCTION__, numparts);
+				__func__, numparts);
 			return -EINVAL;
 		}
 
@@ -1071,10 +1075,10 @@ static int __xipram xip_wait_for_operation(
 			chip->state = newstate;
 			map_write(map, CMD(0xff), adr);
 			(void) map_read(map, adr);
-			asm volatile (".rep 8; nop; .endr");
+			xip_iprefetch();
 			local_irq_enable();
 			spin_unlock(chip->mutex);
-			asm volatile (".rep 8; nop; .endr");
+			xip_iprefetch();
 			cond_resched();
 
 			/*
@@ -1145,7 +1149,7 @@ static int inval_cache_and_wait_for_operation(
 	struct cfi_private *cfi = map->fldrv_priv;
 	map_word status, status_OK = CMD(0x80);
 	int chip_state = chip->state;
-	unsigned int timeo, sleep_time;
+	unsigned int timeo, sleep_time, reset_timeo;
 
 	spin_unlock(chip->mutex);
 	if (inval_len)
@@ -1156,6 +1160,7 @@ static int inval_cache_and_wait_for_operation(
 	timeo = chip_op_time * 8;
 	if (!timeo)
 		timeo = 500000;
+	reset_timeo = timeo;
 	sleep_time = chip_op_time / 2;
 
 	for (;;) {
@@ -1197,6 +1202,12 @@ static int inval_cache_and_wait_for_operation(
 			remove_wait_queue(&chip->wq, &wait);
 			spin_lock(chip->mutex);
 		}
+		if (chip->erase_suspended || chip->write_suspended)  {
+			/* Suspend has occured while sleep: reset timeout */
+			timeo = reset_timeo;
+			chip->erase_suspended = 0;
+			chip->write_suspended = 0;
+		}
 	}
 
 	/* Done and happy. */
@@ -1237,7 +1248,8 @@ static int do_point_onechip (struct map_info *map, struct flchip *chip, loff_t a
 	return ret;
 }
 
-static int cfi_intelext_point (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char **mtdbuf)
+static int cfi_intelext_point(struct mtd_info *mtd, loff_t from, size_t len,
+		size_t *retlen, void **virt, resource_size_t *phys)
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
@@ -1254,8 +1266,10 @@ static int cfi_intelext_point (struct mtd_info *mtd, loff_t from, size_t len, si
 	chipnum = (from >> cfi->chipshift);
 	ofs = from - (chipnum << cfi->chipshift);
 
-	*mtdbuf = (void *)map->virt + cfi->chips[chipnum].start + ofs;
+	*virt = map->virt + cfi->chips[chipnum].start + ofs;
 	*retlen = 0;
+	if (phys)
+		*phys = map->phys + cfi->chips[chipnum].start + ofs;
 
 	while (len) {
 		unsigned long thislen;
@@ -1288,7 +1302,7 @@ static int cfi_intelext_point (struct mtd_info *mtd, loff_t from, size_t len, si
 	return 0;
 }
 
-static void cfi_intelext_unpoint (struct mtd_info *mtd, u_char *addr, loff_t from, size_t len)
+static void cfi_intelext_unpoint(struct mtd_info *mtd, loff_t from, size_t len)
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
@@ -2013,7 +2027,7 @@ static int cfi_intelext_lock(struct mtd_info *mtd, loff_t ofs, size_t len)
 
 #ifdef DEBUG_LOCK_BITS
 	printk(KERN_DEBUG "%s: lock status before, ofs=0x%08llx, len=0x%08X\n",
-	       __FUNCTION__, ofs, len);
+	       __func__, ofs, len);
 	cfi_varsize_frob(mtd, do_printlockstatus_oneblock,
 		ofs, len, NULL);
 #endif
@@ -2023,7 +2037,7 @@ static int cfi_intelext_lock(struct mtd_info *mtd, loff_t ofs, size_t len)
 
 #ifdef DEBUG_LOCK_BITS
 	printk(KERN_DEBUG "%s: lock status after, ret=%d\n",
-	       __FUNCTION__, ret);
+	       __func__, ret);
 	cfi_varsize_frob(mtd, do_printlockstatus_oneblock,
 		ofs, len, NULL);
 #endif
@@ -2037,7 +2051,7 @@ static int cfi_intelext_unlock(struct mtd_info *mtd, loff_t ofs, size_t len)
 
 #ifdef DEBUG_LOCK_BITS
 	printk(KERN_DEBUG "%s: lock status before, ofs=0x%08llx, len=0x%08X\n",
-	       __FUNCTION__, ofs, len);
+	       __func__, ofs, len);
 	cfi_varsize_frob(mtd, do_printlockstatus_oneblock,
 		ofs, len, NULL);
 #endif
@@ -2047,7 +2061,7 @@ static int cfi_intelext_unlock(struct mtd_info *mtd, loff_t ofs, size_t len)
 
 #ifdef DEBUG_LOCK_BITS
 	printk(KERN_DEBUG "%s: lock status after, ret=%d\n",
-	       __FUNCTION__, ret);
+	       __func__, ret);
 	cfi_varsize_frob(mtd, do_printlockstatus_oneblock,
 		ofs, len, NULL);
 #endif

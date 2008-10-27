@@ -17,6 +17,15 @@ config EBONY
 	help
 	  This option enables support for the IBM PPC440GP evaluation board.
 
+config SAM440EP
+        bool "Sam440ep"
+	depends on 44x
+        default n
+        select 440EP
+        select PCI
+        help
+          This option enables support for the ACube Sam440ep board.
+
 config SEQUOIA
 	bool "Sequoia"
 	depends on 44x
@@ -67,6 +76,25 @@ config WARP
 	  See http://www.pikatechnologies.com/ and follow the "PIKA for Computer
 	  Telephony Developers" link for more information.
 
+config CANYONLANDS
+	bool "Canyonlands"
+	depends on 44x
+	default n
+	select 460EX
+	select PCI
+	select PPC4xx_PCI_EXPRESS
+	help
+	  This option enables support for the AMCC PPC460EX evaluation board.
+
+config YOSEMITE
+	bool "Yosemite"
+	depends on 44x
+	default n
+	select 440EP
+	select PCI
+	help
+	  This option enables support for the AMCC PPC440EP evaluation board.
+
 #config LUAN
 #	bool "Luan"
 #	depends on 44x
@@ -82,6 +110,22 @@ config WARP
 #	select 440GX
 #	help
 #	  This option enables support for the IBM PPC440GX evaluation board.
+
+config XILINX_VIRTEX440_GENERIC_BOARD
+	bool "Generic Xilinx Virtex 440 board"
+	depends on 44x
+	default n
+	select XILINX_VIRTEX_5_FXT
+	help
+	  This option enables generic support for Xilinx Virtex based boards
+	  that use a 440 based processor in the Virtex 5 FXT FPGA architecture.
+
+	  The generic virtex board support matches any device tree which
+	  specifies 'xlnx,virtex440' in its compatible field.  This includes
+	  the Xilinx ML5xx reference designs using the powerpc core.
+
+	  Most Virtex 5 designs should use this unless it needs to do some
+	  special configuration at board probe time.
 
 # 44x specific CPU modules, selected based on the board above.
 config 440EP
@@ -122,6 +166,24 @@ config 440SPe
 	bool
 	select IBM_NEW_EMAC_EMAC4
 
+config 460EX
+	bool
+	select PPC_FPU
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
+	select IBM_NEW_EMAC_TAH
+
 # 44x errata/workaround config symbols, selected by the CPU models above
 config IBM440EP_ERR42
 	bool
+
+# Xilinx specific config options.
+config XILINX_VIRTEX
+	bool
+
+# Xilinx Virtex 5 FXT FPGA architecture, selected by a Xilinx board above
+config XILINX_VIRTEX_5_FXT
+	bool
+	select XILINX_VIRTEX
+

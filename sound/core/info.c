@@ -21,6 +21,7 @@
 
 #include <linux/init.h>
 #include <linux/time.h>
+#include <linux/mm.h>
 #include <linux/smp_lock.h>
 #include <linux/string.h>
 #include <sound/core.h>
@@ -544,7 +545,7 @@ int __init snd_info_init(void)
 {
 	struct proc_dir_entry *p;
 
-	p = snd_create_proc_entry("asound", S_IFDIR | S_IRUGO | S_IXUGO, &proc_root);
+	p = snd_create_proc_entry("asound", S_IFDIR | S_IRUGO | S_IXUGO, NULL);
 	if (p == NULL)
 		return -ENOMEM;
 	snd_proc_root = p;
@@ -594,7 +595,7 @@ int __exit snd_info_done(void)
 #ifdef CONFIG_SND_OSSEMUL
 		snd_info_free_entry(snd_oss_root);
 #endif
-		snd_remove_proc_entry(&proc_root, snd_proc_root);
+		snd_remove_proc_entry(NULL, snd_proc_root);
 	}
 	return 0;
 }

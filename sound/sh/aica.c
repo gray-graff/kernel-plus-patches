@@ -42,7 +42,7 @@
 #include <sound/info.h>
 #include <asm/io.h>
 #include <asm/dma.h>
-#include <asm/dreamcast/sysasic.h>
+#include <mach/sysasic.h>
 #include "aica.h"
 
 MODULE_AUTHOR("Adrian McMenamin <adrian@mcmen.demon.co.uk>");
@@ -663,7 +663,7 @@ static int __init aica_init(void)
 		return err;
 	pd = platform_device_register_simple(SND_AICA_DRIVER, -1,
 					     aica_memory_space, 2);
-	if (unlikely(IS_ERR(pd))) {
+	if (IS_ERR(pd)) {
 		platform_driver_unregister(&snd_aica_driver);
 		return PTR_ERR(pd);
 	}

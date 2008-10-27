@@ -25,13 +25,13 @@
 #include <linux/hrtimer.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/math64.h>
 #include <asm/processor.h>
 #include <asm/msr.h>
 #include <asm/page.h>
 #include <asm/current.h>
 #include <asm/apicdef.h>
 #include <asm/atomic.h>
-#include <asm/div64.h>
 #include "irq.h"
 
 #define PRId64 "d"
@@ -338,10 +338,10 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 		} else
 			apic_clear_vector(vector, apic->regs + APIC_TMR);
 
-		if (vcpu->arch.mp_state == VCPU_MP_STATE_RUNNABLE)
+		if (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE)
 			kvm_vcpu_kick(vcpu);
-		else if (vcpu->arch.mp_state == VCPU_MP_STATE_HALTED) {
-			vcpu->arch.mp_state = VCPU_MP_STATE_RUNNABLE;
+		else if (vcpu->arch.mp_state == KVM_MP_STATE_HALTED) {
+			vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
 			if (waitqueue_active(&vcpu->wq))
 				wake_up_interruptible(&vcpu->wq);
 		}
@@ -356,17 +356,18 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 	case APIC_DM_SMI:
 		printk(KERN_DEBUG "Ignoring guest SMI\n");
 		break;
+
 	case APIC_DM_NMI:
-		printk(KERN_DEBUG "Ignoring guest NMI\n");
+		kvm_inject_nmi(vcpu);
 		break;
 
 	case APIC_DM_INIT:
 		if (level) {
-			if (vcpu->arch.mp_state == VCPU_MP_STATE_RUNNABLE)
+			if (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE)
 				printk(KERN_DEBUG
 				       "INIT on a runnable vcpu %d\n",
 				       vcpu->vcpu_id);
-			vcpu->arch.mp_state = VCPU_MP_STATE_INIT_RECEIVED;
+			vcpu->arch.mp_state = KVM_MP_STATE_INIT_RECEIVED;
 			kvm_vcpu_kick(vcpu);
 		} else {
 			printk(KERN_DEBUG
@@ -379,9 +380,9 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 	case APIC_DM_STARTUP:
 		printk(KERN_DEBUG "SIPI to vcpu %d vector 0x%02x\n",
 		       vcpu->vcpu_id, vector);
-		if (vcpu->arch.mp_state == VCPU_MP_STATE_INIT_RECEIVED) {
+		if (vcpu->arch.mp_state == KVM_MP_STATE_INIT_RECEIVED) {
 			vcpu->arch.sipi_vector = vector;
-			vcpu->arch.mp_state = VCPU_MP_STATE_SIPI_RECEIVED;
+			vcpu->arch.mp_state = KVM_MP_STATE_SIPI_RECEIVED;
 			if (waitqueue_active(&vcpu->wq))
 				wake_up_interruptible(&vcpu->wq);
 		}
@@ -526,8 +527,8 @@ static u32 apic_get_tmcct(struct kvm_lapic *apic)
 	} else
 		passed = ktime_sub(now, apic->timer.last_update);
 
-	counter_passed = div64_64(ktime_to_ns(passed),
-				  (APIC_BUS_CYCLE_NS * apic->timer.divide_count));
+	counter_passed = div64_u64(ktime_to_ns(passed),
+				   (APIC_BUS_CYCLE_NS * apic->timer.divide_count));
 
 	if (counter_passed > tmcct) {
 		if (unlikely(!apic_lvtt_period(apic))) {
@@ -571,6 +572,8 @@ static inline void report_tpr_access(struct kvm_lapic *apic, bool write)
 static u32 __apic_read(struct kvm_lapic *apic, unsigned int offset)
 {
 	u32 val = 0;
+
+	KVMTRACE_1D(APIC_ACCESS, apic->vcpu, (u32)offset, handler);
 
 	if (offset >= LAPIC_MMIO_LENGTH)
 		return 0;
@@ -658,7 +661,7 @@ static void start_apic_timer(struct kvm_lapic *apic)
 	apic_debug("%s: bus cycle is %" PRId64 "ns, now 0x%016"
 			   PRIx64 ", "
 			   "timer initial count 0x%x, period %lldns, "
-			   "expire @ 0x%016" PRIx64 ".\n", __FUNCTION__,
+			   "expire @ 0x%016" PRIx64 ".\n", __func__,
 			   APIC_BUS_CYCLE_NS, ktime_to_ns(now),
 			   apic_get_reg(apic, APIC_TMICT),
 			   apic->timer.period,
@@ -691,9 +694,11 @@ static void apic_mmio_write(struct kvm_io_device *this,
 	/* too common printing */
 	if (offset != APIC_EOI)
 		apic_debug("%s: offset 0x%x with length 0x%x, and value is "
-			   "0x%x\n", __FUNCTION__, offset, len, val);
+			   "0x%x\n", __func__, offset, len, val);
 
 	offset &= 0xff0;
+
+	KVMTRACE_1D(APIC_ACCESS, apic->vcpu, (u32)offset, handler);
 
 	switch (offset) {
 	case APIC_ID:		/* Local APIC ID */
@@ -780,7 +785,8 @@ static void apic_mmio_write(struct kvm_io_device *this,
 
 }
 
-static int apic_mmio_range(struct kvm_io_device *this, gpa_t addr)
+static int apic_mmio_range(struct kvm_io_device *this, gpa_t addr,
+			   int len, int size)
 {
 	struct kvm_lapic *apic = (struct kvm_lapic *)this->private;
 	int ret = 0;
@@ -822,6 +828,7 @@ void kvm_lapic_set_tpr(struct kvm_vcpu *vcpu, unsigned long cr8)
 	apic_set_tpr(apic, ((cr8 & 0x0f) << 4)
 		     | (apic_get_reg(apic, APIC_TASKPRI) & 4));
 }
+EXPORT_SYMBOL_GPL(kvm_lapic_set_tpr);
 
 u64 kvm_lapic_get_cr8(struct kvm_vcpu *vcpu)
 {
@@ -869,7 +876,7 @@ void kvm_lapic_reset(struct kvm_vcpu *vcpu)
 	struct kvm_lapic *apic;
 	int i;
 
-	apic_debug("%s\n", __FUNCTION__);
+	apic_debug("%s\n", __func__);
 
 	ASSERT(vcpu);
 	apic = vcpu->arch.apic;
@@ -907,7 +914,7 @@ void kvm_lapic_reset(struct kvm_vcpu *vcpu)
 	apic_update_ppr(apic);
 
 	apic_debug(KERN_INFO "%s: vcpu=%p, id=%d, base_msr="
-		   "0x%016" PRIx64 ", base_address=0x%0lx.\n", __FUNCTION__,
+		   "0x%016" PRIx64 ", base_address=0x%0lx.\n", __func__,
 		   vcpu, kvm_apic_id(apic),
 		   vcpu->arch.apic_base, apic->base_address);
 }
@@ -938,9 +945,10 @@ static int __apic_timer_fn(struct kvm_lapic *apic)
 	int result = 0;
 	wait_queue_head_t *q = &apic->vcpu->wq;
 
-	atomic_inc(&apic->timer.pending);
+	if(!atomic_inc_and_test(&apic->timer.pending))
+		set_bit(KVM_REQ_PENDING_TIMER, &apic->vcpu->requests);
 	if (waitqueue_active(q)) {
-		apic->vcpu->arch.mp_state = VCPU_MP_STATE_RUNNABLE;
+		apic->vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
 		wake_up_interruptible(q);
 	}
 	if (apic_lvtt_period(apic)) {
@@ -950,6 +958,16 @@ static int __apic_timer_fn(struct kvm_lapic *apic)
 					apic->timer.period);
 	}
 	return result;
+}
+
+int apic_has_pending_timer(struct kvm_vcpu *vcpu)
+{
+	struct kvm_lapic *lapic = vcpu->arch.apic;
+
+	if (lapic && apic_enabled(lapic) && apic_lvt_enabled(lapic, APIC_LVTT))
+		return atomic_read(&lapic->timer.pending);
+
+	return 0;
 }
 
 static int __inject_apic_timer_irq(struct kvm_lapic *apic)

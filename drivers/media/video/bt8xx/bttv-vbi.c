@@ -29,6 +29,7 @@
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
 #include <linux/kdev_t.h>
+#include <media/v4l2-ioctl.h>
 #include <asm/io.h>
 #include "bttvp.h"
 
@@ -54,7 +55,7 @@
 #define VBI_DEFLINES 16
 
 static unsigned int vbibufs = 4;
-static unsigned int vbi_debug = 0;
+static unsigned int vbi_debug;
 
 module_param(vbibufs,   int, 0444);
 module_param(vbi_debug, int, 0644);
@@ -303,7 +304,7 @@ static int try_fmt(struct v4l2_vbi_format *f, const struct bttv_tvnorm *tvnorm,
 	return 0;
 }
 
-int bttv_try_fmt_vbi(struct file *file, void *f, struct v4l2_format *frt)
+int bttv_try_fmt_vbi_cap(struct file *file, void *f, struct v4l2_format *frt)
 {
 	struct bttv_fh *fh = f;
 	struct bttv *btv = fh->btv;
@@ -321,7 +322,7 @@ int bttv_try_fmt_vbi(struct file *file, void *f, struct v4l2_format *frt)
 }
 
 
-int bttv_s_fmt_vbi(struct file *file, void *f, struct v4l2_format *frt)
+int bttv_s_fmt_vbi_cap(struct file *file, void *f, struct v4l2_format *frt)
 {
 	struct bttv_fh *fh = f;
 	struct bttv *btv = fh->btv;
@@ -369,7 +370,7 @@ int bttv_s_fmt_vbi(struct file *file, void *f, struct v4l2_format *frt)
 }
 
 
-int bttv_g_fmt_vbi(struct file *file, void *f, struct v4l2_format *frt)
+int bttv_g_fmt_vbi_cap(struct file *file, void *f, struct v4l2_format *frt)
 {
 	struct bttv_fh *fh = f;
 	const struct bttv_tvnorm *tvnorm;

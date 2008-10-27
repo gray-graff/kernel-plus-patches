@@ -67,6 +67,12 @@
 #ifndef SET_ENDIAN
 # define SET_ENDIAN(a,b)	(-EINVAL)
 #endif
+#ifndef GET_TSC_CTL
+# define GET_TSC_CTL(a)		(-EINVAL)
+#endif
+#ifndef SET_TSC_CTL
+# define SET_TSC_CTL(a)		(-EINVAL)
+#endif
 
 /*
  * this is where the system-wide overflow UID and GID are defined, for
@@ -163,9 +169,9 @@ asmlinkage long sys_setpriority(int which, int who, int niceval)
 				pgrp = find_vpid(who);
 			else
 				pgrp = task_pgrp(current);
-			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+			do_each_pid_thread(pgrp, PIDTYPE_PGID, p) {
 				error = set_one_prio(p, niceval, error);
-			} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
+			} while_each_pid_thread(pgrp, PIDTYPE_PGID, p);
 			break;
 		case PRIO_USER:
 			user = current->user;
@@ -223,11 +229,11 @@ asmlinkage long sys_getpriority(int which, int who)
 				pgrp = find_vpid(who);
 			else
 				pgrp = task_pgrp(current);
-			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+			do_each_pid_thread(pgrp, PIDTYPE_PGID, p) {
 				niceval = 20 - task_nice(p);
 				if (niceval > retval)
 					retval = niceval;
-			} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
+			} while_each_pid_thread(pgrp, PIDTYPE_PGID, p);
 			break;
 		case PRIO_USER:
 			user = current->user;
@@ -268,7 +274,7 @@ void emergency_restart(void)
 }
 EXPORT_SYMBOL_GPL(emergency_restart);
 
-static void kernel_restart_prepare(char *cmd)
+void kernel_restart_prepare(char *cmd)
 {
 	blocking_notifier_call_chain(&reboot_notifier_list, SYS_RESTART, cmd);
 	system_state = SYSTEM_RESTART;
@@ -294,26 +300,6 @@ void kernel_restart(char *cmd)
 	machine_restart(cmd);
 }
 EXPORT_SYMBOL_GPL(kernel_restart);
-
-/**
- *	kernel_kexec - reboot the system
- *
- *	Move into place and start executing a preloaded standalone
- *	executable.  If nothing was preloaded return an error.
- */
-static void kernel_kexec(void)
-{
-#ifdef CONFIG_KEXEC
-	struct kimage *image;
-	image = xchg(&kexec_image, NULL);
-	if (!image)
-		return;
-	kernel_restart_prepare(NULL);
-	printk(KERN_EMERG "Starting new kernel\n");
-	machine_shutdown();
-	machine_kexec(image);
-#endif
-}
 
 static void kernel_shutdown_prepare(enum system_states state)
 {
@@ -419,10 +405,15 @@ asmlinkage long sys_reboot(int magic1, int magic2, unsigned int cmd, void __user
 		kernel_restart(buffer);
 		break;
 
+#ifdef CONFIG_KEXEC
 	case LINUX_REBOOT_CMD_KEXEC:
-		kernel_kexec();
-		unlock_kernel();
-		return -EINVAL;
+		{
+			int ret;
+			ret = kernel_kexec();
+			unlock_kernel();
+			return ret;
+		}
+#endif
 
 #ifdef CONFIG_HIBERNATION
 	case LINUX_REBOOT_CMD_SW_SUSPEND:
@@ -972,8 +963,7 @@ asmlinkage long sys_setpgid(pid_t pid, pid_t pgid)
 		goto out;
 
 	if (task_pgrp(p) != pgrp) {
-		detach_pid(p, PIDTYPE_PGID);
-		attach_pid(p, PIDTYPE_PGID, pgrp);
+		change_pid(p, PIDTYPE_PGID, pgrp);
 		set_task_pgrp(p, pid_nr(pgrp));
 	}
 
@@ -986,54 +976,67 @@ out:
 
 asmlinkage long sys_getpgid(pid_t pid)
 {
-	if (!pid)
-		return task_pgrp_vnr(current);
-	else {
-		int retval;
-		struct task_struct *p;
+	struct task_struct *p;
+	struct pid *grp;
+	int retval;
 
-		read_lock(&tasklist_lock);
-		p = find_task_by_vpid(pid);
+	rcu_read_lock();
+	if (!pid)
+		grp = task_pgrp(current);
+	else {
 		retval = -ESRCH;
-		if (p) {
-			retval = security_task_getpgid(p);
-			if (!retval)
-				retval = task_pgrp_vnr(p);
-		}
-		read_unlock(&tasklist_lock);
-		return retval;
+		p = find_task_by_vpid(pid);
+		if (!p)
+			goto out;
+		grp = task_pgrp(p);
+		if (!grp)
+			goto out;
+
+		retval = security_task_getpgid(p);
+		if (retval)
+			goto out;
 	}
+	retval = pid_vnr(grp);
+out:
+	rcu_read_unlock();
+	return retval;
 }
 
 #ifdef __ARCH_WANT_SYS_GETPGRP
 
 asmlinkage long sys_getpgrp(void)
 {
-	/* SMP - assuming writes are word atomic this is fine */
-	return task_pgrp_vnr(current);
+	return sys_getpgid(0);
 }
 
 #endif
 
 asmlinkage long sys_getsid(pid_t pid)
 {
-	if (!pid)
-		return task_session_vnr(current);
-	else {
-		int retval;
-		struct task_struct *p;
+	struct task_struct *p;
+	struct pid *sid;
+	int retval;
 
-		rcu_read_lock();
-		p = find_task_by_vpid(pid);
+	rcu_read_lock();
+	if (!pid)
+		sid = task_session(current);
+	else {
 		retval = -ESRCH;
-		if (p) {
-			retval = security_task_getsid(p);
-			if (!retval)
-				retval = task_session_vnr(p);
-		}
-		rcu_read_unlock();
-		return retval;
+		p = find_task_by_vpid(pid);
+		if (!p)
+			goto out;
+		sid = task_session(p);
+		if (!sid)
+			goto out;
+
+		retval = security_task_getsid(p);
+		if (retval)
+			goto out;
 	}
+	retval = pid_vnr(sid);
+out:
+	rcu_read_unlock();
+	return retval;
 }
 
 asmlinkage long sys_setsid(void)
@@ -1325,8 +1328,6 @@ EXPORT_SYMBOL(in_egroup_p);
 
 DECLARE_RWSEM(uts_sem);
 
-EXPORT_SYMBOL(uts_sem);
-
 asmlinkage long sys_newuname(struct new_utsname __user * name)
 {
 	int errno = 0;
@@ -1539,6 +1540,19 @@ out:
  *
  */
 
+static void accumulate_thread_rusage(struct task_struct *t, struct rusage *r,
+				     cputime_t *utimep, cputime_t *stimep)
+{
+	*utimep = cputime_add(*utimep, t->utime);
+	*stimep = cputime_add(*stimep, t->stime);
+	r->ru_nvcsw += t->nvcsw;
+	r->ru_nivcsw += t->nivcsw;
+	r->ru_minflt += t->min_flt;
+	r->ru_majflt += t->maj_flt;
+	r->ru_inblock += task_io_get_inblock(t);
+	r->ru_oublock += task_io_get_oublock(t);
+}
+
 static void k_getrusage(struct task_struct *p, int who, struct rusage *r)
 {
 	struct task_struct *t;
@@ -1548,11 +1562,13 @@ static void k_getrusage(struct task_struct *p, int who, struct rusage *r)
 	memset((char *) r, 0, sizeof *r);
 	utime = stime = cputime_zero;
 
-	rcu_read_lock();
-	if (!lock_task_sighand(p, &flags)) {
-		rcu_read_unlock();
-		return;
+	if (who == RUSAGE_THREAD) {
+		accumulate_thread_rusage(p, r, &utime, &stime);
+		goto out;
 	}
+
+	if (!lock_task_sighand(p, &flags))
+		return;
 
 	switch (who) {
 		case RUSAGE_BOTH:
@@ -1580,14 +1596,7 @@ static void k_getrusage(struct task_struct *p, int who, struct rusage *r)
 			r->ru_oublock += p->signal->oublock;
 			t = p;
 			do {
-				utime = cputime_add(utime, t->utime);
-				stime = cputime_add(stime, t->stime);
-				r->ru_nvcsw += t->nvcsw;
-				r->ru_nivcsw += t->nivcsw;
-				r->ru_minflt += t->min_flt;
-				r->ru_majflt += t->maj_flt;
-				r->ru_inblock += task_io_get_inblock(t);
-				r->ru_oublock += task_io_get_oublock(t);
+				accumulate_thread_rusage(t, r, &utime, &stime);
 				t = next_thread(t);
 			} while (t != p);
 			break;
@@ -1595,10 +1604,9 @@ static void k_getrusage(struct task_struct *p, int who, struct rusage *r)
 		default:
 			BUG();
 	}
-
 	unlock_task_sighand(p, &flags);
-	rcu_read_unlock();
 
+out:
 	cputime_to_timeval(utime, &r->ru_utime);
 	cputime_to_timeval(stime, &r->ru_stime);
 }
@@ -1612,7 +1620,8 @@ int getrusage(struct task_struct *p, int who, struct rusage __user *ru)
 
 asmlinkage long sys_getrusage(int who, struct rusage __user *ru)
 {
-	if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN)
+	if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN &&
+	    who != RUSAGE_THREAD)
 		return -EINVAL;
 	return getrusage(current, who, ru);
 }
@@ -1626,10 +1635,9 @@ asmlinkage long sys_umask(int mask)
 asmlinkage long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 			  unsigned long arg4, unsigned long arg5)
 {
-	long error;
+	long error = 0;
 
-	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
-	if (error)
+	if (security_task_prctl(option, arg2, arg3, arg4, arg5, &error))
 		return error;
 
 	switch (option) {
@@ -1676,23 +1684,10 @@ asmlinkage long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 			error = PR_TIMING_STATISTICAL;
 			break;
 		case PR_SET_TIMING:
-			if (arg2 == PR_TIMING_STATISTICAL)
-				error = 0;
-			else
+			if (arg2 != PR_TIMING_STATISTICAL)
 				error = -EINVAL;
 			break;
 
-		case PR_GET_KEEPCAPS:
-			if (current->keep_capabilities)
-				error = 1;
-			break;
-		case PR_SET_KEEPCAPS:
-			if (arg2 != 0 && arg2 != 1) {
-				error = -EINVAL;
-				break;
-			}
-			current->keep_capabilities = arg2;
-			break;
 		case PR_SET_NAME: {
 			struct task_struct *me = current;
 			unsigned char ncomm[sizeof(me->comm)];
@@ -1726,18 +1721,12 @@ asmlinkage long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 		case PR_SET_SECCOMP:
 			error = prctl_set_seccomp(arg2);
 			break;
-
-		case PR_CAPBSET_READ:
-			if (!cap_valid(arg2))
-				return -EINVAL;
-			return !!cap_raised(current->cap_bset, arg2);
-		case PR_CAPBSET_DROP:
-#ifdef CONFIG_SECURITY_FILE_CAPABILITIES
-			return cap_prctl_drop(arg2);
-#else
-			return -EINVAL;
-#endif
-
+		case PR_GET_TSC:
+			error = GET_TSC_CTL(arg2);
+			break;
+		case PR_SET_TSC:
+			error = SET_TSC_CTL(arg2);
+			break;
 		default:
 			error = -EINVAL;
 			break;
@@ -1789,7 +1778,7 @@ int orderly_poweroff(bool force)
 		goto out;
 	}
 
-	info = call_usermodehelper_setup(argv[0], argv, envp);
+	info = call_usermodehelper_setup(argv[0], argv, envp, GFP_ATOMIC);
 	if (info == NULL) {
 		argv_free(argv);
 		goto out;

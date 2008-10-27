@@ -37,9 +37,10 @@ $(obj)/%.so: OBJCOPYFLAGS := -S
 $(obj)/%.so: $(obj)/%.so.dbg FORCE
 	$(call if_changed,objcopy)
 
-CFL := $(PROFILING) -mcmodel=small -fPIC -g0 -O2 -fasynchronous-unwind-tables -m64
+CFL := $(PROFILING) -mcmodel=small -fPIC -O2 -fasynchronous-unwind-tables -m64 \
+       $(filter -g%,$(KBUILD_CFLAGS))
 
-$(vobjs): KBUILD_CFLAGS = $(CFL)
+$(vobjs): KBUILD_CFLAGS += $(CFL)
 
 targets += vdso-syms.lds
 obj-$(VDSO64-y)			+= vdso-syms.lds
@@ -61,7 +62,7 @@ $(obj)/%-syms.lds: $(obj)/%.so.dbg FORCE
 # Build multiple 32-bit vDSO images to choose from at boot time.
 #
 obj-$(VDSO32-y)			+= vdso32-syms.lds
-vdso32.so-$(CONFIG_X86_32)	+= int80
+vdso32.so-$(VDSO32-y)		+= int80
 vdso32.so-$(CONFIG_COMPAT)	+= syscall
 vdso32.so-$(VDSO32-y)		+= sysenter
 

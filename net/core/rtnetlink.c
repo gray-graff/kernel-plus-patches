@@ -73,13 +73,18 @@ void __rtnl_unlock(void)
 
 void rtnl_unlock(void)
 {
-	mutex_unlock(&rtnl_mutex);
+	/* This fellow will unlock it for us. */
 	netdev_run_todo();
 }
 
 int rtnl_trylock(void)
 {
 	return mutex_trylock(&rtnl_mutex);
+}
+
+int rtnl_is_locked(void)
+{
+	return mutex_is_locked(&rtnl_mutex);
 }
 
 static struct rtnl_link *rtnl_msg_handlers[NPROTO];
@@ -269,6 +274,26 @@ int rtnl_link_register(struct rtnl_link_ops *ops)
 
 EXPORT_SYMBOL_GPL(rtnl_link_register);
 
+static void __rtnl_kill_links(struct net *net, struct rtnl_link_ops *ops)
+{
+	struct net_device *dev;
+restart:
+	for_each_netdev(net, dev) {
+		if (dev->rtnl_link_ops == ops) {
+			ops->dellink(dev);
+			goto restart;
+		}
+	}
+}
+
+void rtnl_kill_links(struct net *net, struct rtnl_link_ops *ops)
+{
+	rtnl_lock();
+	__rtnl_kill_links(net, ops);
+	rtnl_unlock();
+}
+EXPORT_SYMBOL_GPL(rtnl_kill_links);
+
 /**
  * __rtnl_link_unregister - Unregister rtnl_link_ops from rtnetlink.
  * @ops: struct rtnl_link_ops * to unregister
@@ -277,17 +302,10 @@ EXPORT_SYMBOL_GPL(rtnl_link_register);
  */
 void __rtnl_link_unregister(struct rtnl_link_ops *ops)
 {
-	struct net_device *dev, *n;
 	struct net *net;
 
 	for_each_net(net) {
-restart:
-		for_each_netdev_safe(net, dev, n) {
-			if (dev->rtnl_link_ops == ops) {
-				ops->dellink(dev);
-				goto restart;
-			}
-		}
+		__rtnl_kill_links(net, ops);
 	}
 	list_del(&ops->list);
 }
@@ -480,7 +498,8 @@ int rtnetlink_put_metrics(struct sk_buff *skb, u32 *metrics)
 	return nla_nest_end(skb, mx);
 
 nla_put_failure:
-	return nla_nest_cancel(skb, mx);
+	nla_nest_cancel(skb, mx);
+	return -EMSGSIZE;
 }
 
 int rtnl_put_cacheinfo(struct sk_buff *skb, struct dst_entry *dst, u32 id,
@@ -586,8 +605,11 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
 			    int type, u32 pid, u32 seq, u32 change,
 			    unsigned int flags)
 {
+	struct netdev_queue *txq;
 	struct ifinfomsg *ifm;
 	struct nlmsghdr *nlh;
+	struct net_device_stats *stats;
+	struct nlattr *attr;
 
 	nlh = nlmsg_put(skb, pid, seq, type, sizeof(*ifm), flags);
 	if (nlh == NULL)
@@ -614,8 +636,9 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
 	if (dev->master)
 		NLA_PUT_U32(skb, IFLA_MASTER, dev->master->ifindex);
 
-	if (dev->qdisc_sleeping)
-		NLA_PUT_STRING(skb, IFLA_QDISC, dev->qdisc_sleeping->ops->id);
+	txq = netdev_get_tx_queue(dev, 0);
+	if (txq->qdisc_sleeping)
+		NLA_PUT_STRING(skb, IFLA_QDISC, txq->qdisc_sleeping->ops->id);
 
 	if (1) {
 		struct rtnl_link_ifmap map = {
@@ -634,19 +657,13 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
 		NLA_PUT(skb, IFLA_BROADCAST, dev->addr_len, dev->broadcast);
 	}
 
-	if (dev->get_stats) {
-		struct net_device_stats *stats = dev->get_stats(dev);
-		if (stats) {
-			struct nlattr *attr;
+	attr = nla_reserve(skb, IFLA_STATS,
+			sizeof(struct rtnl_link_stats));
+	if (attr == NULL)
+		goto nla_put_failure;
 
-			attr = nla_reserve(skb, IFLA_STATS,
-					   sizeof(struct rtnl_link_stats));
-			if (attr == NULL)
-				goto nla_put_failure;
-
-			copy_rtnl_link_stats(nla_data(attr), stats);
-		}
-	}
+	stats = dev->get_stats(dev);
+	copy_rtnl_link_stats(nla_data(attr), stats);
 
 	if (dev->rtnl_link_ops) {
 		if (rtnl_link_fill(skb, dev) < 0)
@@ -662,7 +679,7 @@ nla_put_failure:
 
 static int rtnl_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	int idx;
 	int s_idx = cb->args[0];
 	struct net_device *dev;
@@ -879,7 +896,7 @@ errout:
 
 static int rtnl_setlink(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	struct ifinfomsg *ifm;
 	struct net_device *dev;
 	int err;
@@ -921,7 +938,7 @@ errout:
 
 static int rtnl_dellink(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	const struct rtnl_link_ops *ops;
 	struct net_device *dev;
 	struct ifinfomsg *ifm;
@@ -972,7 +989,7 @@ struct net_device *rtnl_create_link(struct net *net, char *ifname,
 			goto err_free;
 	}
 
-	dev->nd_net = net;
+	dev_net_set(dev, net);
 	dev->rtnl_link_ops = ops;
 
 	if (tb[IFLA_MTU])
@@ -1000,7 +1017,7 @@ err:
 
 static int rtnl_newlink(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	const struct rtnl_link_ops *ops;
 	struct net_device *dev;
 	struct ifinfomsg *ifm;
@@ -1132,7 +1149,7 @@ replay:
 
 static int rtnl_getlink(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	struct ifinfomsg *ifm;
 	struct nlattr *tb[IFLA_MAX+1];
 	struct net_device *dev = NULL;
@@ -1198,7 +1215,7 @@ static int rtnl_dump_all(struct sk_buff *skb, struct netlink_callback *cb)
 
 void rtmsg_ifinfo(int type, struct net_device *dev, unsigned change)
 {
-	struct net *net = dev->nd_net;
+	struct net *net = dev_net(dev);
 	struct sk_buff *skb;
 	int err = -ENOBUFS;
 
@@ -1227,7 +1244,7 @@ static int rtattr_max;
 
 static int rtnetlink_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
-	struct net *net = skb->sk->sk_net;
+	struct net *net = sock_net(skb->sk);
 	rtnl_doit_func doit;
 	int sz_idx, kind;
 	int min_len;
@@ -1389,6 +1406,7 @@ EXPORT_SYMBOL(rtnetlink_put_metrics);
 EXPORT_SYMBOL(rtnl_lock);
 EXPORT_SYMBOL(rtnl_trylock);
 EXPORT_SYMBOL(rtnl_unlock);
+EXPORT_SYMBOL(rtnl_is_locked);
 EXPORT_SYMBOL(rtnl_unicast);
 EXPORT_SYMBOL(rtnl_notify);
 EXPORT_SYMBOL(rtnl_set_sk_err);
