@@ -23,10 +23,10 @@
 #include <linux/mtd/partitions.h>
 #include <linux/errno.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/setup.h>
-#include <asm/arch/irqs.h>
+#include <mach/irqs.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
@@ -34,7 +34,7 @@
 #include <asm/hardware/sa1111.h>
 #include <asm/mach/serial_sa1100.h>
 
-#include <asm/arch/badge4.h>
+#include <mach/badge4.h>
 
 #include "generic.h"
 
@@ -206,7 +206,7 @@ static int __init badge4_init(void)
 	if (ret < 0)
 		printk(KERN_ERR
 		       "%s: SA-1111 initialization failed (%d)\n",
-		       __FUNCTION__, ret);
+		       __func__, ret);
 
 
 	/* maybe turn on 5v0 from the start */
@@ -240,11 +240,11 @@ void badge4_set_5V(unsigned subsystem, int on)
 	/* detect on->off and off->on transitions */
 	if ((!old_5V_bitmap) && (badge4_5V_bitmap)) {
 		/* was off, now on */
-		printk(KERN_INFO "%s: enabling 5V supply rail\n", __FUNCTION__);
+		printk(KERN_INFO "%s: enabling 5V supply rail\n", __func__);
 		GPSR = BADGE4_GPIO_PCMEN5V;
 	} else if ((old_5V_bitmap) && (!badge4_5V_bitmap)) {
 		/* was on, now off */
-		printk(KERN_INFO "%s: disabling 5V supply rail\n", __FUNCTION__);
+		printk(KERN_INFO "%s: disabling 5V supply rail\n", __func__);
 		GPCR = BADGE4_GPIO_PCMEN5V;
 	}
 

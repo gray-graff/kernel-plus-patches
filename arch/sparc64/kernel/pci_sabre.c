@@ -11,6 +11,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/of_device.h>
 
 #include <asm/apb.h>
 #include <asm/iommu.h>
@@ -18,7 +19,6 @@
 #include <asm/smp.h>
 #include <asm/oplib.h>
 #include <asm/prom.h>
-#include <asm/of_device.h>
 
 #include "pci_impl.h"
 #include "iommu_common.h"
@@ -704,7 +704,7 @@ static int sabre_iommu_init(struct pci_pbm_info *pbm,
 	 * in pci_iommu.c
 	 */
 	err = iommu_table_init(iommu, tsbsize * 1024 * 8,
-			       dvma_offset, dma_mask);
+			       dvma_offset, dma_mask, pbm->numa_node);
 	if (err)
 		return err;
 
@@ -736,6 +736,8 @@ static void __init sabre_pbm_init(struct pci_controller_info *p,
 {
 	pbm->name = dp->full_name;
 	printk("%s: SABRE PCI Bus Module\n", pbm->name);
+
+	pbm->numa_node = -1;
 
 	pbm->scan_bus = sabre_scan_bus;
 	pbm->pci_ops = &sun4u_pci_ops;

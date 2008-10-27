@@ -36,8 +36,7 @@
 #include <asm/firmware.h>
 #include <asm/page_64.h>
 #include <asm/exception.h>
-
-#define DO_SOFT_DISABLE
+#include <asm/irqflags.h>
 
 /*
  * We layout physical memory as follows:
@@ -240,6 +239,10 @@ instruction_access_slb_pSeries:
 	.globl	system_call_pSeries
 system_call_pSeries:
 	HMT_MEDIUM
+BEGIN_FTR_SECTION
+	cmpdi	r0,0x1ebe
+	beq-	1f
+END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)
 	mr	r9,r13
 	mfmsr	r10
 	mfspr	r13,SPRN_SPRG3
@@ -254,6 +257,13 @@ system_call_pSeries:
 	rfid
 	b	.	/* prevent speculative execution */
 
+/* Fast LE/BE switch system call */
+1:	mfspr	r12,SPRN_SRR1
+	xori	r12,r12,MSR_LE
+	mtspr	SPRN_SRR1,r12
+	rfid		/* return to userspace */
+	b	.
+
 	STD_EXCEPTION_PSERIES(0xd00, single_step)
 	STD_EXCEPTION_PSERIES(0xe00, trap_0e)
 
@@ -265,7 +275,11 @@ system_call_pSeries:
 	. = 0xf00
 	b	performance_monitor_pSeries
 
-	STD_EXCEPTION_PSERIES(0xf20, altivec_unavailable)
+	. = 0xf20
+	b	altivec_unavailable_pSeries
+
+	. = 0xf40
+	b	vsx_unavailable_pSeries
 
 #ifdef CONFIG_CBE_RAS
 	HSTD_EXCEPTION_PSERIES(0x1200, cbe_system_error)
@@ -285,6 +299,8 @@ system_call_pSeries:
 
 	/* moved from 0xf00 */
 	STD_EXCEPTION_PSERIES(., performance_monitor)
+	STD_EXCEPTION_PSERIES(., altivec_unavailable)
+	STD_EXCEPTION_PSERIES(., vsx_unavailable)
 
 /*
  * An interrupt came in while soft-disabled; clear EE in SRR1,
@@ -450,8 +466,8 @@ bad_stack:
  */
 fast_exc_return_irq:			/* restores irq state too */
 	ld	r3,SOFTE(r1)
+	TRACE_AND_RESTORE_IRQ(r3);
 	ld	r12,_MSR(r1)
-	stb	r3,PACASOFTIRQEN(r13)	/* restore paca->soft_enabled */
 	rldicl	r4,r12,49,63		/* get MSR_EE to LSB */
 	stb	r4,PACAHARDIRQEN(r13)	/* restore paca->hard_enabled */
 	b	1f
@@ -621,7 +637,7 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	mtlr	r10
 
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
-	beq-	unrecov_slb
+	beq-	2f
 
 .machine	push
 .machine	"power4"
@@ -642,6 +658,22 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 	ld	r13,PACA_EXSLB+EX_R13(r13)
 	rfid
 	b	.	/* prevent speculative execution */
+
+2:
+#ifdef CONFIG_PPC_ISERIES
+BEGIN_FW_FTR_SECTION
+	b	unrecov_slb
+END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
+#endif /* CONFIG_PPC_ISERIES */
+	mfspr	r11,SPRN_SRR0
+	clrrdi	r10,r13,32
+	LOAD_HANDLER(r10,unrecov_slb)
+	mtspr	SPRN_SRR0,r10
+	mfmsr	r10
+	ori	r10,r10,MSR_IR|MSR_DR|MSR_RI
+	mtspr	SPRN_SRR1,r10
+	rfid
+	b	.
 
 unrecov_slb:
 	EXCEPTION_PROLOG_COMMON(0x4100, PACA_EXSLB)
@@ -713,7 +745,8 @@ fp_unavailable_common:
 	ENABLE_INTS
 	bl	.kernel_fp_unavailable_exception
 	BUG_OPCODE
-1:	b	.load_up_fpu
+1:	bl	.load_up_fpu
+	b	fast_exception_return
 
 	.align	7
 	.globl altivec_unavailable_common
@@ -721,7 +754,10 @@ altivec_unavailable_common:
 	EXCEPTION_PROLOG_COMMON(0xf20, PACA_EXGEN)
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
-	bne	.load_up_altivec	/* if from user, just load it up */
+	beq	1f
+	bl	.load_up_altivec
+	b	fast_exception_return
+1:
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif
 	bl	.save_nvgprs
@@ -801,14 +837,75 @@ _STATIC(load_up_altivec)
 	std	r4,0(r3)
 #endif /* CONFIG_SMP */
 	/* restore registers and return */
-	b	fast_exception_return
+	blr
 #endif /* CONFIG_ALTIVEC */
+
+	.align	7
+	.globl vsx_unavailable_common
+vsx_unavailable_common:
+	EXCEPTION_PROLOG_COMMON(0xf40, PACA_EXGEN)
+#ifdef CONFIG_VSX
+BEGIN_FTR_SECTION
+	bne	.load_up_vsx
+1:
+END_FTR_SECTION_IFSET(CPU_FTR_VSX)
+#endif
+	bl	.save_nvgprs
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	ENABLE_INTS
+	bl	.vsx_unavailable_exception
+	b	.ret_from_except
+
+#ifdef CONFIG_VSX
+/*
+ * load_up_vsx(unused, unused, tsk)
+ * Disable VSX for the task which had it previously,
+ * and save its vector registers in its thread_struct.
+ * Reuse the fp and vsx saves, but first check to see if they have
+ * been saved already.
+ * On entry: r13 == 'current' && last_task_used_vsx != 'current'
+ */
+_STATIC(load_up_vsx)
+/* Load FP and VSX registers if they haven't been done yet */
+	andi.	r5,r12,MSR_FP
+	beql+	load_up_fpu		/* skip if already loaded */
+	andis.	r5,r12,MSR_VEC@h
+	beql+	load_up_altivec		/* skip if already loaded */
+
+#ifndef CONFIG_SMP
+	ld	r3,last_task_used_vsx@got(r2)
+	ld	r4,0(r3)
+	cmpdi	0,r4,0
+	beq	1f
+	/* Disable VSX for last_task_used_vsx */
+	addi	r4,r4,THREAD
+	ld	r5,PT_REGS(r4)
+	ld	r4,_MSR-STACK_FRAME_OVERHEAD(r5)
+	lis	r6,MSR_VSX@h
+	andc	r6,r4,r6
+	std	r6,_MSR-STACK_FRAME_OVERHEAD(r5)
+1:
+#endif /* CONFIG_SMP */
+	ld	r4,PACACURRENT(r13)
+	addi	r4,r4,THREAD		/* Get THREAD */
+	li	r6,1
+	stw	r6,THREAD_USED_VSR(r4) /* ... also set thread used vsr */
+	/* enable use of VSX after return */
+	oris	r12,r12,MSR_VSX@h
+	std	r12,_MSR(r1)
+#ifndef CONFIG_SMP
+	/* Update last_task_used_math to 'current' */
+	ld	r4,PACACURRENT(r13)
+	std	r4,0(r3)
+#endif /* CONFIG_SMP */
+	b	fast_exception_return
+#endif /* CONFIG_VSX */
 
 /*
  * Hash table stuff
  */
 	.align	7
-_GLOBAL(do_hash_page)
+_STATIC(do_hash_page)
 	std	r3,_DAR(r1)
 	std	r4,_DSISR(r1)
 
@@ -819,6 +916,27 @@ BEGIN_FTR_SECTION
 	bne-	do_ste_alloc		/* If so handle it */
 END_FTR_SECTION_IFCLR(CPU_FTR_SLB)
 
+	/*
+	 * On iSeries, we soft-disable interrupts here, then
+	 * hard-enable interrupts so that the hash_page code can spin on
+	 * the hash_table_lock without problems on a shared processor.
+	 */
+	DISABLE_INTS
+
+	/*
+	 * Currently, trace_hardirqs_off() will be called by DISABLE_INTS
+	 * and will clobber volatile registers when irq tracing is enabled
+	 * so we need to reload them. It may be possible to be smarter here
+	 * and move the irq tracing elsewhere but let's keep it simple for
+	 * now
+	 */
+#ifdef CONFIG_TRACE_IRQFLAGS
+	ld	r3,_DAR(r1)
+	ld	r4,_DSISR(r1)
+	ld	r5,_TRAP(r1)
+	ld	r12,_MSR(r1)
+	clrrdi	r5,r5,4
+#endif /* CONFIG_TRACE_IRQFLAGS */
 	/*
 	 * We need to set the _PAGE_USER bit if MSR_PR is set or if we are
 	 * accessing a userspace segment (even from the kernel). We assume
@@ -832,13 +950,6 @@ END_FTR_SECTION_IFCLR(CPU_FTR_SLB)
 	rlwimi	r4,r5,22+2,31-2,31-2	/* Set _PAGE_EXEC if trap is 0x400 */
 
 	/*
-	 * On iSeries, we soft-disable interrupts here, then
-	 * hard-enable interrupts so that the hash_page code can spin on
-	 * the hash_table_lock without problems on a shared processor.
-	 */
-	DISABLE_INTS
-
-	/*
 	 * r3 contains the faulting address
 	 * r4 contains the required access permissions
 	 * r5 contains the trap number
@@ -848,7 +959,6 @@ END_FTR_SECTION_IFCLR(CPU_FTR_SLB)
 	bl	.hash_page		/* build HPTE if possible */
 	cmpdi	r3,0			/* see if hash_page succeeded */
 
-#ifdef DO_SOFT_DISABLE
 BEGIN_FW_FTR_SECTION
 	/*
 	 * If we had interrupts soft-enabled at the point where the
@@ -860,7 +970,7 @@ BEGIN_FW_FTR_SECTION
 	 */
 	beq	13f
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
-#endif
+
 BEGIN_FW_FTR_SECTION
 	/*
 	 * Here we have interrupts hard-disabled, so it is sufficient
@@ -874,11 +984,12 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_ISERIES)
 
 	/*
 	 * hash_page couldn't handle it, set soft interrupt enable back
-	 * to what it was before the trap.  Note that .local_irq_restore
+	 * to what it was before the trap.  Note that .raw_local_irq_restore
 	 * handles any interrupts pending at this point.
 	 */
 	ld	r3,SOFTE(r1)
-	bl	.local_irq_restore
+	TRACE_AND_RESTORE_IRQ_PARTIAL(r3, 11f)
+	bl	.raw_local_irq_restore
 	b	11f
 
 /* Here we have a page fault that hash_page can't handle. */
@@ -903,6 +1014,7 @@ handle_page_fault:
  * the PTE insertion
  */
 12:	bl	.save_nvgprs
+	mr	r5,r3
 	addi	r3,r1,STACK_FRAME_OVERHEAD
 	ld	r4,_DAR(r1)
 	bl	.low_hash_fault
@@ -1086,13 +1198,14 @@ _GLOBAL(generic_secondary_smp_init)
 3:	HMT_LOW
 	lbz	r23,PACAPROCSTART(r13)	/* Test if this processor should */
 					/* start.			 */
-	sync
 
 #ifndef CONFIG_SMP
 	b	3b			/* Never go on non-SMP		 */
 #else
 	cmpwi	0,r23,0
 	beq	3b			/* Loop until told to go	 */
+
+	sync				/* order paca.run and cur_cpu_spec */
 
 	/* See if we need to call a cpu state restore handler */
 	LOAD_REG_IMMEDIATE(r23, cur_cpu_spec)
@@ -1386,12 +1499,14 @@ __secondary_start:
 #ifdef CONFIG_PPC_ISERIES
 BEGIN_FW_FTR_SECTION
 	ori	r4,r4,MSR_EE
+	li	r8,1
+	stb	r8,PACAHARDIRQEN(r13)
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 #endif
 BEGIN_FW_FTR_SECTION
-	stb	r7,PACASOFTIRQEN(r13)
 	stb	r7,PACAHARDIRQEN(r13)
 END_FW_FTR_SECTION_IFCLR(FW_FEATURE_ISERIES)
+	stb	r7,PACASOFTIRQEN(r13)
 
 	mtspr	SPRN_SRR0,r3
 	mtspr	SPRN_SRR1,r4
@@ -1502,10 +1617,6 @@ _INIT_GLOBAL(start_here_common)
 	li	r0,0
 	stdu	r0,-STACK_FRAME_OVERHEAD(r1)
 
-	/* ptr to current */
-	LOAD_REG_IMMEDIATE(r4, init_task)
-	std	r4,PACACURRENT(r13)
-
 	/* Load the TOC */
 	ld	r2,PACATOC(r13)
 	std	r1,PACAKSAVE(r13)
@@ -1519,15 +1630,14 @@ _INIT_GLOBAL(start_here_common)
 #ifdef CONFIG_PPC_ISERIES
 BEGIN_FW_FTR_SECTION
 	mfmsr	r5
-	ori	r5,r5,MSR_EE		/* Hard Enabled */
+	ori	r5,r5,MSR_EE		/* Hard Enabled on iSeries*/
 	mtmsrd	r5
+	li	r5,1
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
 #endif
-BEGIN_FW_FTR_SECTION
-	stb	r5,PACAHARDIRQEN(r13)
-END_FW_FTR_SECTION_IFCLR(FW_FEATURE_ISERIES)
+	stb	r5,PACAHARDIRQEN(r13)	/* Hard Disabled on others */
 
-	bl .start_kernel
+	bl	.start_kernel
 
 	/* Not reached */
 	BUG_OPCODE

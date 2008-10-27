@@ -5,8 +5,6 @@
  *              high-performance and highly available server based on a
  *              cluster of servers.
  *
- * Version:     $Id: ip_vs_ctl.c,v 1.36 2003/06/08 09:31:19 wensong Exp $
- *
  * Authors:     Wensong Zhang <wensong@linuxvirtualserver.org>
  *              Peter Kese <peter.kese@ijs.si>
  *              Julian Anastasov <ja@ssi.bg>
@@ -685,9 +683,22 @@ static void
 ip_vs_zero_stats(struct ip_vs_stats *stats)
 {
 	spin_lock_bh(&stats->lock);
-	memset(stats, 0, (char *)&stats->lock - (char *)stats);
-	spin_unlock_bh(&stats->lock);
+
+	stats->conns = 0;
+	stats->inpkts = 0;
+	stats->outpkts = 0;
+	stats->inbytes = 0;
+	stats->outbytes = 0;
+
+	stats->cps = 0;
+	stats->inpps = 0;
+	stats->outpps = 0;
+	stats->inbps = 0;
+	stats->outbps = 0;
+
 	ip_vs_zero_estimator(stats);
+
+	spin_unlock_bh(&stats->lock);
 }
 
 /*
@@ -704,7 +715,7 @@ __ip_vs_update_dest(struct ip_vs_service *svc,
 	conn_flags = udest->conn_flags | IP_VS_CONN_F_INACTIVE;
 
 	/* check if local node and update the flags */
-	if (inet_addr_type(udest->addr) == RTN_LOCAL) {
+	if (inet_addr_type(&init_net, udest->addr) == RTN_LOCAL) {
 		conn_flags = (conn_flags & ~IP_VS_CONN_F_FWD_MASK)
 			| IP_VS_CONN_F_LOCALNODE;
 	}
@@ -756,7 +767,7 @@ ip_vs_new_dest(struct ip_vs_service *svc, struct ip_vs_dest_user *udest,
 
 	EnterFunction(2);
 
-	atype = inet_addr_type(udest->addr);
+	atype = inet_addr_type(&init_net, udest->addr);
 	if (atype != RTN_LOCAL && atype != RTN_UNICAST)
 		return -EINVAL;
 
@@ -1591,34 +1602,13 @@ static struct ctl_table vs_vars[] = {
 	{ .ctl_name = 0 }
 };
 
-static ctl_table vs_table[] = {
-	{
-		.procname	= "vs",
-		.mode		= 0555,
-		.child		= vs_vars
-	},
-	{ .ctl_name = 0 }
+const struct ctl_path net_vs_ctl_path[] = {
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "ipv4", .ctl_name = NET_IPV4, },
+	{ .procname = "vs", },
+	{ }
 };
-
-static ctl_table ipvs_ipv4_table[] = {
-	{
-		.ctl_name	= NET_IPV4,
-		.procname	= "ipv4",
-		.mode		= 0555,
-		.child		= vs_table,
-	},
-	{ .ctl_name = 0 }
-};
-
-static ctl_table vs_root_table[] = {
-	{
-		.ctl_name	= CTL_NET,
-		.procname	= "net",
-		.mode		= 0555,
-		.child		= ipvs_ipv4_table,
-	},
-	{ .ctl_name = 0 }
-};
+EXPORT_SYMBOL_GPL(net_vs_ctl_path);
 
 static struct ctl_table_header * sysctl_header;
 
@@ -1807,7 +1797,9 @@ static const struct file_operations ip_vs_info_fops = {
 
 #endif
 
-struct ip_vs_stats ip_vs_stats;
+struct ip_vs_stats ip_vs_stats = {
+	.lock = __SPIN_LOCK_UNLOCKED(ip_vs_stats.lock),
+};
 
 #ifdef CONFIG_PROC_FS
 static int ip_vs_stats_show(struct seq_file *seq, void *v)
@@ -2329,7 +2321,7 @@ static struct nf_sockopt_ops ip_vs_sockopts = {
 };
 
 
-int ip_vs_control_init(void)
+int __init ip_vs_control_init(void)
 {
 	int ret;
 	int idx;
@@ -2345,7 +2337,7 @@ int ip_vs_control_init(void)
 	proc_net_fops_create(&init_net, "ip_vs", 0, &ip_vs_info_fops);
 	proc_net_fops_create(&init_net, "ip_vs_stats",0, &ip_vs_stats_fops);
 
-	sysctl_header = register_sysctl_table(vs_root_table);
+	sysctl_header = register_sysctl_paths(net_vs_ctl_path, vs_vars);
 
 	/* Initialize ip_vs_svc_table, ip_vs_svc_fwm_table, ip_vs_rtable */
 	for(idx = 0; idx < IP_VS_SVC_TAB_SIZE; idx++)  {
@@ -2356,8 +2348,6 @@ int ip_vs_control_init(void)
 		INIT_LIST_HEAD(&ip_vs_rtable[idx]);
 	}
 
-	memset(&ip_vs_stats, 0, sizeof(ip_vs_stats));
-	spin_lock_init(&ip_vs_stats.lock);
 	ip_vs_new_estimator(&ip_vs_stats);
 
 	/* Hook the defense timer */

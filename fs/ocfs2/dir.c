@@ -390,9 +390,8 @@ static int __ocfs2_delete_entry(handle_t *handle, struct inode *dir,
 				goto bail;
 			}
 			if (pde)
-				pde->rec_len =
-					cpu_to_le16(le16_to_cpu(pde->rec_len) +
-						    le16_to_cpu(de->rec_len));
+				le16_add_cpu(&pde->rec_len,
+						le16_to_cpu(de->rec_len));
 			else
 				de->inode = 0;
 			dir->i_version++;
@@ -846,14 +845,14 @@ int ocfs2_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	mlog_entry("dirino=%llu\n",
 		   (unsigned long long)OCFS2_I(inode)->ip_blkno);
 
-	error = ocfs2_meta_lock_atime(inode, filp->f_vfsmnt, &lock_level);
+	error = ocfs2_inode_lock_atime(inode, filp->f_vfsmnt, &lock_level);
 	if (lock_level && error >= 0) {
 		/* We release EX lock which used to update atime
 		 * and get PR lock again to reduce contention
 		 * on commonly accessed directories. */
-		ocfs2_meta_unlock(inode, 1);
+		ocfs2_inode_unlock(inode, 1);
 		lock_level = 0;
-		error = ocfs2_meta_lock(inode, NULL, 0);
+		error = ocfs2_inode_lock(inode, NULL, 0);
 	}
 	if (error < 0) {
 		if (error != -ENOENT)
@@ -865,7 +864,7 @@ int ocfs2_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	error = ocfs2_dir_foreach_blk(inode, &filp->f_version, &filp->f_pos,
 				      dirent, filldir, NULL);
 
-	ocfs2_meta_unlock(inode, lock_level);
+	ocfs2_inode_unlock(inode, lock_level);
 
 bail_nolock:
 	mlog_exit(error);
@@ -1215,7 +1214,7 @@ static int ocfs2_expand_inline_dir(struct inode *dir, struct buffer_head *di_bh,
 	down_write(&oi->ip_alloc_sem);
 
 	/*
-	 * Prepare for worst case allocation scenario of two seperate
+	 * Prepare for worst case allocation scenario of two separate
 	 * extents.
 	 */
 	if (alloc == 2)
@@ -1301,7 +1300,6 @@ static int ocfs2_expand_inline_dir(struct inode *dir, struct buffer_head *di_bh,
 	di->i_size = cpu_to_le64(sb->s_blocksize);
 	di->i_ctime = di->i_mtime = cpu_to_le64(dir->i_ctime.tv_sec);
 	di->i_ctime_nsec = di->i_mtime_nsec = cpu_to_le32(dir->i_ctime.tv_nsec);
-	dir->i_blocks = ocfs2_inode_sector_count(dir);
 
 	/*
 	 * This should never fail as our extent list is empty and all
@@ -1311,8 +1309,14 @@ static int ocfs2_expand_inline_dir(struct inode *dir, struct buffer_head *di_bh,
 				  NULL);
 	if (ret) {
 		mlog_errno(ret);
-		goto out;
+		goto out_commit;
 	}
+
+	/*
+	 * Set i_blocks after the extent insert for the most up to
+	 * date ip_clusters value.
+	 */
+	dir->i_blocks = ocfs2_inode_sector_count(dir);
 
 	ret = ocfs2_journal_dirty(handle, di_bh);
 	if (ret) {
@@ -1337,7 +1341,7 @@ static int ocfs2_expand_inline_dir(struct inode *dir, struct buffer_head *di_bh,
 					  len, 0, NULL);
 		if (ret) {
 			mlog_errno(ret);
-			goto out;
+			goto out_commit;
 		}
 	}
 

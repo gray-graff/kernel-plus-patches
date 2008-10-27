@@ -19,7 +19,7 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
-#include <asm/arch/akita.h>
+#include <mach/akita.h>
 
 /* MAX7310 Regiser Map */
 #define MAX7310_INPUT    0x00
@@ -29,7 +29,7 @@
 #define MAX7310_TIMEOUT  0x04
 
 /* Addresses to scan */
-static unsigned short normal_i2c[] = { 0x18, I2C_CLIENT_END };
+static const unsigned short normal_i2c[] = { 0x18, I2C_CLIENT_END };
 
 /* I2C Magic */
 I2C_CLIENT_INSMOD;

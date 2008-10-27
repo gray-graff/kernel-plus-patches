@@ -169,7 +169,8 @@ static void copy_vbi_data(struct ivtv *itv, int lines, u32 pts_stamp)
 			linemask[0] |= (1 << l);
 		else
 			linemask[1] |= (1 << (l - 32));
-		dst[sd + 12 + line * 43] = service2vbi(itv->vbi.sliced_data[i].id);
+		dst[sd + 12 + line * 43] =
+			ivtv_service2vbi(itv->vbi.sliced_data[i].id);
 		memcpy(dst + sd + 12 + line * 43 + 1, itv->vbi.sliced_data[i].data, 42);
 		line++;
 	}
@@ -292,6 +293,7 @@ static u32 compress_sliced_buf(struct ivtv *itv, u32 line, u8 *buf, u32 size, u8
 	u32 line_size = itv->vbi.sliced_decoder_line_size;
 	struct v4l2_decode_vbi_line vbi;
 	int i;
+	unsigned lines = 0;
 
 	/* find the first valid line */
 	for (i = 0; i < size; i++, buf++) {
@@ -312,7 +314,8 @@ static u32 compress_sliced_buf(struct ivtv *itv, u32 line, u8 *buf, u32 size, u8
 		}
 		vbi.p = p + 4;
 		itv->video_dec_func(itv, VIDIOC_INT_DECODE_VBI_LINE, &vbi);
-		if (vbi.type) {
+		if (vbi.type && !(lines & (1 << vbi.line))) {
+			lines |= 1 << vbi.line;
 			itv->vbi.sliced_data[line].id = vbi.type;
 			itv->vbi.sliced_data[line].field = vbi.is_second_field;
 			itv->vbi.sliced_data[line].line = vbi.line;

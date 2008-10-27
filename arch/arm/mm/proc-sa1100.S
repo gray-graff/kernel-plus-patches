@@ -23,7 +23,7 @@
 #include <asm/assembler.h>
 #include <asm/asm-offsets.h>
 #include <asm/elf.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable.h>
 
@@ -231,6 +231,7 @@ sa1100_crval:
 	.type	sa1100_processor_functions, #object
 ENTRY(sa1100_processor_functions)
 	.word	v4_early_abort
+	.word	pabort_noifar
 	.word	cpu_sa1100_proc_init
 	.word	cpu_sa1100_proc_fin
 	.word	cpu_sa1100_reset

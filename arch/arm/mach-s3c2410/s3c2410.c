@@ -24,11 +24,11 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 
-#include <asm/arch/regs-clock.h>
+#include <mach/regs-clock.h>
 #include <asm/plat-s3c/regs-serial.h>
 
 #include <asm/plat-s3c24xx/s3c2410.h>
@@ -100,7 +100,7 @@ void __init s3c2410_init_clocks(int xtal)
 }
 
 struct sysdev_class s3c2410_sysclass = {
-	set_kset_name("s3c2410-core"),
+	.name = "s3c2410-core",
 };
 
 static struct sys_device s3c2410_sysdev = {

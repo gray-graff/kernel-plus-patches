@@ -18,8 +18,8 @@
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 
-#include <asm/arch/hardware.h>
-#include <asm/arch/pxa-regs.h>
+#include <mach/hardware.h>
+#include <mach/pxa-regs.h>
 
 #define GPIO_RED_LED			(93)
 #define GPIO_GREEN_LED			(94)
@@ -101,6 +101,7 @@ static struct platform_driver cmx270led_driver = {
 #endif
 	.driver		= {
 		.name		= "cm-x270-led",
+		.owner		= THIS_MODULE,
 	},
 };
 
@@ -120,3 +121,4 @@ module_exit(cmx270led_exit);
 MODULE_AUTHOR("Mike Rapoport <mike@compulab.co.il>");
 MODULE_DESCRIPTION("CM-x270 LED driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:cm-x270-led");

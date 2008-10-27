@@ -20,7 +20,6 @@
  *
  */      
 
-#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -159,6 +158,10 @@ static int snd_tea575x_ioctl(struct inode *inode, struct file *file,
 			struct video_audio v;
 			if(copy_from_user(&v, arg, sizeof(v))) 
 				return -EFAULT;	
+			if (tea->ops->mute)
+				tea->ops->mute(tea,
+					       (v.flags &
+						VIDEO_AUDIO_MUTE) ? 1 : 0);
 			if(v.audio) 
 				return -EINVAL;
 			return 0;
@@ -186,9 +189,7 @@ void snd_tea575x_init(struct snd_tea575x *tea)
 	}
 
 	memset(&tea->vd, 0, sizeof(tea->vd));
-	tea->vd.owner = tea->card->module;
 	strcpy(tea->vd.name, tea->tea5759 ? "TEA5759 radio" : "TEA5757 radio");
-	tea->vd.type = VID_TYPE_TUNER;
 	tea->vd.release = snd_tea575x_release;
 	video_set_drvdata(&tea->vd, tea);
 	tea->vd.fops = &tea->fops;
@@ -206,6 +207,10 @@ void snd_tea575x_init(struct snd_tea575x *tea)
 	tea->freq = 90500 * 16;		/* 90.5Mhz default */
 
 	snd_tea575x_set_freq(tea);
+
+	/* mute on init */
+	if (tea->ops->mute)
+		tea->ops->mute(tea, 1);
 }
 
 void snd_tea575x_exit(struct snd_tea575x *tea)

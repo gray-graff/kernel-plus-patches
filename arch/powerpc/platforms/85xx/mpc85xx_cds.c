@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/fsl_devices.h>
+#include <linux/of_platform.h>
 
 #include <asm/system.h>
 #include <asm/pgtable.h>
@@ -222,9 +223,6 @@ static int mpc85xx_cds_8259_attach(void)
 	struct device_node *cascade_node = NULL;
 	int cascade_irq;
 
-	if (!machine_is(mpc85xx_cds))
-		return 0;
-
 	/* Initialize the i8259 controller */
 	for_each_node_by_type(np, "interrupt-controller")
 		if (of_device_is_compatible(np, "chrp,iic")) {
@@ -262,8 +260,7 @@ static int mpc85xx_cds_8259_attach(void)
 
 	return 0;
 }
-
-device_initcall(mpc85xx_cds_8259_attach);
+machine_device_initcall(mpc85xx_cds, mpc85xx_cds_8259_attach);
 
 #endif /* CONFIG_PPC_I8259 */
 
@@ -338,6 +335,19 @@ static int __init mpc85xx_cds_probe(void)
 
         return of_flat_dt_is_compatible(root, "MPC85xxCDS");
 }
+
+static struct of_device_id __initdata of_bus_ids[] = {
+	{ .type = "soc", },
+	{ .compatible = "soc", },
+	{ .compatible = "simple-bus", },
+	{},
+};
+
+static int __init declare_of_platform_devices(void)
+{
+	return of_platform_bus_probe(NULL, of_bus_ids, NULL);
+}
+machine_device_initcall(mpc85xx_cds, declare_of_platform_devices);
 
 define_machine(mpc85xx_cds) {
 	.name		= "MPC85xx CDS",

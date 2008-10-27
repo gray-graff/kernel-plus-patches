@@ -74,6 +74,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <linux/sched.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
 
@@ -82,10 +83,15 @@ OTHER DEALINGS IN THE SOFTWARE.
 static unsigned int maxpoll=250;   /* Maximum busy-loop count for qcam I/O */
 static unsigned int yieldlines=4;  /* Yield after this many during capture */
 static int video_nr = -1;
+static unsigned int force_init;		/* Whether to probe aggressively */
 
 module_param(maxpoll, int, 0);
 module_param(yieldlines, int, 0);
 module_param(video_nr, int, 0);
+
+/* Set force_init=1 to avoid detection by polling status register and
+ * immediately attempt to initialize qcam */
+module_param(force_init, int, 0);
 
 static inline int read_lpstatus(struct qcam_device *q)
 {
@@ -331,6 +337,9 @@ static int qc_detect(struct qcam_device *q)
 	int count = 0;
 	int i;
 
+	if (force_init)
+		return 1;
+
 	lastreg = reg = read_lpstatus(q) & 0xf0;
 
 	for (i = 0; i < 500; i++)
@@ -354,12 +363,12 @@ static int qc_detect(struct qcam_device *q)
 
 	/* Be (even more) liberal in what you accept...  */
 
-/*	if (count > 30 && count < 200) */
 	if (count > 20 && count < 400) {
 		return 1;	/* found */
 	} else {
 		printk(KERN_ERR "No Quickcam found on port %s\n",
 			q->pport->name);
+		printk(KERN_DEBUG "Quickcam detection counter: %u\n", count);
 		return 0;	/* not found */
 	}
 }
@@ -515,7 +524,7 @@ static inline int qc_readbytes(struct qcam_device *q, char buffer[])
 	int ret=1;
 	unsigned int hi, lo;
 	unsigned int hi2, lo2;
-	static int state = 0;
+	static int state;
 
 	if (buffer == NULL)
 	{
@@ -890,21 +899,21 @@ static const struct file_operations qcam_fops = {
 	.open           = video_exclusive_open,
 	.release        = video_exclusive_release,
 	.ioctl          = qcam_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.read		= qcam_read,
 	.llseek         = no_llseek,
 };
 static struct video_device qcam_template=
 {
-	.owner		= THIS_MODULE,
 	.name		= "Connectix Quickcam",
-	.type		= VID_TYPE_CAPTURE,
 	.fops           = &qcam_fops,
 };
 
 #define MAX_CAMS 4
 static struct qcam_device *qcams[MAX_CAMS];
-static unsigned int num_cams = 0;
+static unsigned int num_cams;
 
 static int init_bwqcam(struct parport *port)
 {
@@ -937,8 +946,7 @@ static int init_bwqcam(struct parport *port)
 
 	printk(KERN_INFO "Connectix Quickcam on %s\n", qcam->pport->name);
 
-	if(video_register_device(&qcam->vdev, VFL_TYPE_GRABBER, video_nr)==-1)
-	{
+	if (video_register_device(&qcam->vdev, VFL_TYPE_GRABBER, video_nr) < 0) {
 		parport_unregister_device(qcam->pdev);
 		kfree(qcam);
 		return -ENODEV;

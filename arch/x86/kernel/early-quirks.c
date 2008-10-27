@@ -16,15 +16,38 @@
 #include <asm/dma.h>
 #include <asm/io_apic.h>
 #include <asm/apic.h>
+#include <asm/iommu.h>
 
-#ifdef CONFIG_GART_IOMMU
-#include <asm/gart.h>
-#endif
+static void __init fix_hypertransport_config(int num, int slot, int func)
+{
+	u32 htcfg;
+	/*
+	 * we found a hypertransport bus
+	 * make sure that we are broadcasting
+	 * interrupts to all cpus on the ht bus
+	 * if we're using extended apic ids
+	 */
+	htcfg = read_pci_config(num, slot, func, 0x68);
+	if (htcfg & (1 << 18)) {
+		printk(KERN_INFO "Detected use of extended apic ids "
+				 "on hypertransport bus\n");
+		if ((htcfg & (1 << 17)) == 0) {
+			printk(KERN_INFO "Enabling hypertransport extended "
+					 "apic interrupt broadcast\n");
+			printk(KERN_INFO "Note this is a bios bug, "
+					 "please contact your hw vendor\n");
+			htcfg |= (1 << 17);
+			write_pci_config(num, slot, func, 0x68, htcfg);
+		}
+	}
 
-static void __init via_bugs(void)
+
+}
+
+static void __init via_bugs(int  num, int slot, int func)
 {
 #ifdef CONFIG_GART_IOMMU
-	if ((end_pfn > MAX_DMA32_PFN ||  force_iommu) &&
+	if ((max_pfn > MAX_DMA32_PFN ||  force_iommu) &&
 	    !gart_iommu_aperture_allowed) {
 		printk(KERN_INFO
 		       "Looks like a VIA chipset. Disabling IOMMU."
@@ -44,7 +67,7 @@ static int __init nvidia_hpet_check(struct acpi_table_header *header)
 #endif /* CONFIG_X86_IO_APIC */
 #endif /* CONFIG_ACPI */
 
-static void __init nvidia_bugs(void)
+static void __init nvidia_bugs(int num, int slot, int func)
 {
 #ifdef CONFIG_ACPI
 #ifdef CONFIG_X86_IO_APIC
@@ -72,28 +95,77 @@ static void __init nvidia_bugs(void)
 
 }
 
-static void __init ati_bugs(void)
-{
-#ifdef CONFIG_X86_IO_APIC
-	if (timer_over_8254 == 1) {
-		timer_over_8254 = 0;
-		printk(KERN_INFO
-		"ATI board detected. Disabling timer routing over 8254.\n");
-	}
-#endif
-}
-
+#define QFLAG_APPLY_ONCE 	0x1
+#define QFLAG_APPLIED		0x2
+#define QFLAG_DONE		(QFLAG_APPLY_ONCE|QFLAG_APPLIED)
 struct chipset {
-	u16 vendor;
-	void (*f)(void);
+	u32 vendor;
+	u32 device;
+	u32 class;
+	u32 class_mask;
+	u32 flags;
+	void (*f)(int num, int slot, int func);
 };
 
 static struct chipset early_qrk[] __initdata = {
-	{ PCI_VENDOR_ID_NVIDIA, nvidia_bugs },
-	{ PCI_VENDOR_ID_VIA, via_bugs },
-	{ PCI_VENDOR_ID_ATI, ati_bugs },
+	{ PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID,
+	  PCI_CLASS_BRIDGE_PCI, PCI_ANY_ID, QFLAG_APPLY_ONCE, nvidia_bugs },
+	{ PCI_VENDOR_ID_VIA, PCI_ANY_ID,
+	  PCI_CLASS_BRIDGE_PCI, PCI_ANY_ID, QFLAG_APPLY_ONCE, via_bugs },
+	{ PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_K8_NB,
+	  PCI_CLASS_BRIDGE_HOST, PCI_ANY_ID, 0, fix_hypertransport_config },
 	{}
 };
+
+/**
+ * check_dev_quirk - apply early quirks to a given PCI device
+ * @num: bus number
+ * @slot: slot number
+ * @func: PCI function
+ *
+ * Check the vendor & device ID against the early quirks table.
+ *
+ * If the device is single function, let early_quirks() know so we don't
+ * poke at this device again.
+ */
+static int __init check_dev_quirk(int num, int slot, int func)
+{
+	u16 class;
+	u16 vendor;
+	u16 device;
+	u8 type;
+	int i;
+
+	class = read_pci_config_16(num, slot, func, PCI_CLASS_DEVICE);
+
+	if (class == 0xffff)
+		return -1; /* no class, treat as single function */
+
+	vendor = read_pci_config_16(num, slot, func, PCI_VENDOR_ID);
+
+	device = read_pci_config_16(num, slot, func, PCI_DEVICE_ID);
+
+	for (i = 0; early_qrk[i].f != NULL; i++) {
+		if (((early_qrk[i].vendor == PCI_ANY_ID) ||
+			(early_qrk[i].vendor == vendor)) &&
+			((early_qrk[i].device == PCI_ANY_ID) ||
+			(early_qrk[i].device == device)) &&
+			(!((early_qrk[i].class ^ class) &
+			    early_qrk[i].class_mask))) {
+				if ((early_qrk[i].flags &
+				     QFLAG_DONE) != QFLAG_DONE)
+					early_qrk[i].f(num, slot, func);
+				early_qrk[i].flags |= QFLAG_APPLIED;
+			}
+	}
+
+	type = read_pci_config_byte(num, slot, func,
+				    PCI_HEADER_TYPE);
+	if (!(type & 0x80))
+		return -1;
+
+	return 0;
+}
 
 void __init early_quirks(void)
 {
@@ -103,36 +175,11 @@ void __init early_quirks(void)
 		return;
 
 	/* Poor man's PCI discovery */
-	for (num = 0; num < 32; num++) {
-		for (slot = 0; slot < 32; slot++) {
+	for (num = 0; num < 32; num++)
+		for (slot = 0; slot < 32; slot++)
 			for (func = 0; func < 8; func++) {
-				u32 class;
-				u32 vendor;
-				u8 type;
-				int i;
-				class = read_pci_config(num,slot,func,
-							PCI_CLASS_REVISION);
-				if (class == 0xffffffff)
-					break;
-
-				if ((class >> 16) != PCI_CLASS_BRIDGE_PCI)
-					continue;
-
-				vendor = read_pci_config(num, slot, func,
-							 PCI_VENDOR_ID);
-				vendor &= 0xffff;
-
-				for (i = 0; early_qrk[i].f; i++)
-					if (early_qrk[i].vendor == vendor) {
-						early_qrk[i].f();
-						return;
-					}
-
-				type = read_pci_config_byte(num, slot, func,
-							    PCI_HEADER_TYPE);
-				if (!(type & 0x80))
+				/* Only probe function 0 on single fn devices */
+				if (check_dev_quirk(num, slot, func))
 					break;
 			}
-		}
-	}
 }

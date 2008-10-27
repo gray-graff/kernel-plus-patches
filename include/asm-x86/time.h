@@ -1,8 +1,11 @@
-#ifndef _ASMi386_TIME_H
-#define _ASMi386_TIME_H
+#ifndef _ASMX86_TIME_H
+#define _ASMX86_TIME_H
 
+extern void hpet_time_init(void);
+
+#include <asm/mc146818rtc.h>
+#ifdef CONFIG_X86_32
 #include <linux/efi.h>
-#include "mach_time.h"
 
 static inline unsigned long native_get_wallclock(void)
 {
@@ -28,8 +31,20 @@ static inline int native_set_wallclock(unsigned long nowtime)
 	return retval;
 }
 
-extern void (*late_time_init)(void);
-extern void hpet_time_init(void);
+#else
+extern void native_time_init_hook(void);
+
+static inline unsigned long native_get_wallclock(void)
+{
+	return mach_get_cmos_time();
+}
+
+static inline int native_set_wallclock(unsigned long nowtime)
+{
+	return mach_set_rtc_mmss(nowtime);
+}
+
+#endif
 
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
@@ -40,5 +55,7 @@ extern void hpet_time_init(void);
 #define choose_time_init() hpet_time_init
 
 #endif /* CONFIG_PARAVIRT */
+
+extern unsigned long __init calibrate_cpu(void);
 
 #endif

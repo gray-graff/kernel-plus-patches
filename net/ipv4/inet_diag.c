@@ -1,8 +1,6 @@
 /*
  * inet_diag.c	Module for monitoring INET transport protocols sockets.
  *
- * Version:	$Id: inet_diag.c,v 1.3 2002/02/01 22:01:04 davem Exp $
- *
  * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  *
  *	This program is free software; you can redistribute it and/or
@@ -259,20 +257,22 @@ static int inet_diag_get_exact(struct sk_buff *in_skb,
 	const struct inet_diag_handler *handler;
 
 	handler = inet_diag_lock_handler(nlh->nlmsg_type);
-	if (!handler)
-		return -ENOENT;
+	if (IS_ERR(handler)) {
+		err = PTR_ERR(handler);
+		goto unlock;
+	}
 
 	hashinfo = handler->idiag_hashinfo;
 	err = -EINVAL;
 
 	if (req->idiag_family == AF_INET) {
-		sk = inet_lookup(hashinfo, req->id.idiag_dst[0],
+		sk = inet_lookup(&init_net, hashinfo, req->id.idiag_dst[0],
 				 req->id.idiag_dport, req->id.idiag_src[0],
 				 req->id.idiag_sport, req->id.idiag_if);
 	}
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 	else if (req->idiag_family == AF_INET6) {
-		sk = inet6_lookup(hashinfo,
+		sk = inet6_lookup(&init_net, hashinfo,
 				  (struct in6_addr *)req->id.idiag_dst,
 				  req->id.idiag_dport,
 				  (struct in6_addr *)req->id.idiag_src,
@@ -708,8 +708,8 @@ static int inet_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	struct inet_hashinfo *hashinfo;
 
 	handler = inet_diag_lock_handler(cb->nlh->nlmsg_type);
-	if (!handler)
-		goto no_handler;
+	if (IS_ERR(handler))
+		goto unlock;
 
 	hashinfo = handler->idiag_hashinfo;
 
@@ -838,7 +838,6 @@ done:
 	cb->args[2] = num;
 unlock:
 	inet_diag_unlock_handler(handler);
-no_handler:
 	return skb->len;
 }
 
@@ -935,7 +934,7 @@ out_free_table:
 
 static void __exit inet_diag_exit(void)
 {
-	sock_release(idiagnl->sk_socket);
+	netlink_kernel_release(idiagnl);
 	kfree(inet_diag_table);
 }
 

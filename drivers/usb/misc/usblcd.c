@@ -78,7 +78,7 @@ static int lcd_open(struct inode *inode, struct file *file)
 	interface = usb_find_interface(&lcd_driver, subminor);
 	if (!interface) {
 		err ("USBLCD: %s - error, can't find device for minor %d",
-		     __FUNCTION__, subminor);
+		     __func__, subminor);
 		return -ENODEV;
 	}
 
@@ -146,7 +146,7 @@ static ssize_t lcd_read(struct file *file, char __user * buffer, size_t count, l
 	return retval;
 }
 
-static int lcd_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
+static long lcd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct usb_lcd *dev;
 	u16 bcdDevice;
@@ -158,12 +158,14 @@ static int lcd_ioctl(struct inode *inode, struct file *file, unsigned int cmd, u
 	
 	switch (cmd) {
 	case IOCTL_GET_HARD_VERSION:
+		lock_kernel();
 		bcdDevice = le16_to_cpu((dev->udev)->descriptor.bcdDevice);
 		sprintf(buf,"%1d%1d.%1d%1d",
 			(bcdDevice & 0xF000)>>12,
 			(bcdDevice & 0xF00)>>8,
 			(bcdDevice & 0xF0)>>4,
 			(bcdDevice & 0xF));
+		unlock_kernel();
 		if (copy_to_user((void __user *)arg,buf,strlen(buf))!=0)
 			return -EFAULT;
 		break;
@@ -185,7 +187,7 @@ static void lcd_write_bulk_callback(struct urb *urb)
 	struct usb_lcd *dev;
 	int status = urb->status;
 
-	dev = (struct usb_lcd *)urb->context;
+	dev = urb->context;
 
 	/* sync/async unlink faults aren't errors */
 	if (status &&
@@ -193,7 +195,7 @@ static void lcd_write_bulk_callback(struct urb *urb)
 	      status == -ECONNRESET ||
               status == -ESHUTDOWN)) {
 		dbg("USBLCD: %s - nonzero write bulk status received: %d",
-		    __FUNCTION__, status);
+		    __func__, status);
 	}
 
 	/* free up our allocated buffer */
@@ -248,7 +250,7 @@ static ssize_t lcd_write(struct file *file, const char __user * user_buffer, siz
 	/* send the data out the bulk port */
 	retval = usb_submit_urb(urb, GFP_KERNEL);
 	if (retval) {
-		err("USBLCD: %s - failed submitting write urb, error %d", __FUNCTION__, retval);
+		err("USBLCD: %s - failed submitting write urb, error %d", __func__, retval);
 		goto error_unanchor;
 	}
 	
@@ -272,7 +274,7 @@ static const struct file_operations lcd_fops = {
         .read =         lcd_read,
         .write =        lcd_write,
         .open =         lcd_open,
-	.ioctl =        lcd_ioctl,
+	.unlocked_ioctl = lcd_ioctl,
         .release =      lcd_release,
 };
 

@@ -14,7 +14,7 @@
 #include <linux/irq.h>
 #include <linux/time.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/leds.h>
@@ -41,12 +41,8 @@
 static irqreturn_t
 lh7a40x_timer_interrupt(int irq, void *dev_id)
 {
-	write_seqlock(&xtime_lock);
-
 	TIMER_EOI = 0;
 	timer_tick();
-
-	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }

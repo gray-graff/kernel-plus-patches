@@ -11,7 +11,6 @@
 #include <linux/file.h>
 #include <linux/smp_lock.h>
 #include <linux/highuid.h>
-#include <linux/dirent.h>
 #include <linux/resource.h>
 #include <linux/highmem.h>
 #include <linux/time.h>
@@ -129,23 +128,6 @@ out:
 	return error;
 }
 
-
-asmlinkage int sys_truncate64(const char __user *path, unsigned int high,
-			      unsigned int low)
-{
-	if ((int)high < 0)
-		return -EINVAL;
-	return sys_truncate(path, ((long) high << 32) | low);
-}
-
-asmlinkage int sys_ftruncate64(unsigned int fd, unsigned int high,
-			       unsigned int low)
-{
-	if ((int)high < 0)
-		return -EINVAL;
-	return sys_ftruncate(fd, ((long) high << 32) | low);
-}
-
 /*
  * sys_execve() executes a new program.
  */
@@ -174,36 +156,16 @@ struct rlimit32 {
 	int	rlim_max;
 };
 
-#ifdef __MIPSEB__
-asmlinkage long sys32_truncate64(const char __user * path, unsigned long __dummy,
-	int length_hi, int length_lo)
-#endif
-#ifdef __MIPSEL__
-asmlinkage long sys32_truncate64(const char __user * path, unsigned long __dummy,
-	int length_lo, int length_hi)
-#endif
+asmlinkage long sys32_truncate64(const char __user * path,
+	unsigned long __dummy, int a2, int a3)
 {
-	loff_t length;
-
-	length = ((unsigned long) length_hi << 32) | (unsigned int) length_lo;
-
-	return sys_truncate(path, length);
+	return sys_truncate(path, merge_64(a2, a3));
 }
 
-#ifdef __MIPSEB__
 asmlinkage long sys32_ftruncate64(unsigned int fd, unsigned long __dummy,
-	int length_hi, int length_lo)
-#endif
-#ifdef __MIPSEL__
-asmlinkage long sys32_ftruncate64(unsigned int fd, unsigned long __dummy,
-	int length_lo, int length_hi)
-#endif
+	int a2, int a3)
 {
-	loff_t length;
-
-	length = ((unsigned long) length_hi << 32) | (unsigned int) length_lo;
-
-	return sys_ftruncate(fd, length);
+	return sys_ftruncate(fd, merge_64(a2, a3));
 }
 
 static inline long

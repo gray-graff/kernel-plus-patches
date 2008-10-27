@@ -17,60 +17,46 @@
 #include <linux/ide.h>
 #include <linux/ioport.h>
 #include <linux/module.h>
-#include <linux/pata_platform.h>
+#include <linux/ata_platform.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 
-static struct {
-	void __iomem *plat_ide_mapbase;
-	void __iomem *plat_ide_alt_mapbase;
-	ide_hwif_t *hwif;
-	int index;
-} hwif_prop;
-
-static ide_hwif_t *__devinit plat_ide_locate_hwif(void __iomem *base,
-	    void __iomem *ctrl, struct pata_platform_info *pdata, int irq,
-	    int mmio)
+static void __devinit plat_ide_setup_ports(hw_regs_t *hw,
+					   void __iomem *base,
+					   void __iomem *ctrl,
+					   struct pata_platform_info *pdata,
+					   int irq)
 {
 	unsigned long port = (unsigned long)base;
-	ide_hwif_t *hwif = ide_find_port(port);
 	int i;
 
-	if (hwif == NULL)
-		goto out;
-
-	hwif->io_ports[IDE_DATA_OFFSET] = port;
+	hw->io_ports.data_addr = port;
 
 	port += (1 << pdata->ioport_shift);
-	for (i = IDE_ERROR_OFFSET; i <= IDE_STATUS_OFFSET;
+	for (i = 1; i <= 7;
 	     i++, port += (1 << pdata->ioport_shift))
-		hwif->io_ports[i] = port;
+		hw->io_ports_array[i] = port;
 
-	hwif->io_ports[IDE_CONTROL_OFFSET] = (unsigned long)ctrl;
+	hw->io_ports.ctl_addr = (unsigned long)ctrl;
 
-	hwif->irq = irq;
+	hw->irq = irq;
 
-	hwif->chipset = ide_generic;
-
-	if (mmio) {
-		hwif->mmio = 1;
-		default_hwif_mmiops(hwif);
-	}
-
-	hwif_prop.hwif = hwif;
-	hwif_prop.index = hwif->index;
-out:
-	return hwif;
+	hw->chipset = ide_generic;
 }
+
+static const struct ide_port_info platform_ide_port_info = {
+	.host_flags		= IDE_HFLAG_NO_DMA,
+};
 
 static int __devinit plat_ide_probe(struct platform_device *pdev)
 {
 	struct resource *res_base, *res_alt, *res_irq;
-	ide_hwif_t *hwif;
+	void __iomem *base, *alt_base;
 	struct pata_platform_info *pdata;
-	u8 idx[4] = { 0xff, 0xff, 0xff, 0xff };
-	int ret = 0;
-	int mmio = 0;
+	struct ide_host *host;
+	int ret = 0, mmio = 0;
+	hw_regs_t hw, *hws[] = { &hw, NULL, NULL, NULL };
+	struct ide_port_info d = platform_ide_port_info;
 
 	pdata = pdev->dev.platform_data;
 
@@ -95,32 +81,29 @@ static int __devinit plat_ide_probe(struct platform_device *pdev)
 	}
 
 	if (mmio) {
-		hwif_prop.plat_ide_mapbase = devm_ioremap(&pdev->dev,
+		base = devm_ioremap(&pdev->dev,
 			res_base->start, res_base->end - res_base->start + 1);
-		hwif_prop.plat_ide_alt_mapbase = devm_ioremap(&pdev->dev,
+		alt_base = devm_ioremap(&pdev->dev,
 			res_alt->start, res_alt->end - res_alt->start + 1);
 	} else {
-		hwif_prop.plat_ide_mapbase = devm_ioport_map(&pdev->dev,
+		base = devm_ioport_map(&pdev->dev,
 			res_base->start, res_base->end - res_base->start + 1);
-		hwif_prop.plat_ide_alt_mapbase = devm_ioport_map(&pdev->dev,
+		alt_base = devm_ioport_map(&pdev->dev,
 			res_alt->start, res_alt->end - res_alt->start + 1);
 	}
 
-	hwif = plat_ide_locate_hwif(hwif_prop.plat_ide_mapbase,
-	         hwif_prop.plat_ide_alt_mapbase, pdata, res_irq->start, mmio);
+	memset(&hw, 0, sizeof(hw));
+	plat_ide_setup_ports(&hw, base, alt_base, pdata, res_irq->start);
+	hw.dev = &pdev->dev;
 
-	if (!hwif) {
-		ret = -ENODEV;
+	if (mmio)
+		d.host_flags |= IDE_HFLAG_MMIO;
+
+	ret = ide_host_add(&d, hws, &host);
+	if (ret)
 		goto out;
-	}
-	hwif->gendev.parent = &pdev->dev;
-	hwif->noprobe = 0;
 
-	idx[0] = hwif->index;
-
-	ide_device_add(idx);
-
-	platform_set_drvdata(pdev, hwif);
+	platform_set_drvdata(pdev, host);
 
 	return 0;
 
@@ -130,16 +113,9 @@ out:
 
 static int __devexit plat_ide_remove(struct platform_device *pdev)
 {
-	ide_hwif_t *hwif = pdev->dev.driver_data;
+	struct ide_host *host = pdev->dev.driver_data;
 
-	if (hwif != hwif_prop.hwif) {
-		dev_printk(KERN_DEBUG, &pdev->dev, "%s: hwif value error",
-		           pdev->name);
-	} else {
-		ide_unregister(hwif_prop.index);
-		hwif_prop.index = 0;
-		hwif_prop.hwif = NULL;
-	}
+	ide_host_remove(host);
 
 	return 0;
 }
@@ -147,6 +123,7 @@ static int __devexit plat_ide_remove(struct platform_device *pdev)
 static struct platform_driver platform_ide_driver = {
 	.driver = {
 		.name = "pata_platform",
+		.owner = THIS_MODULE,
 	},
 	.probe = plat_ide_probe,
 	.remove = __devexit_p(plat_ide_remove),
@@ -164,6 +141,7 @@ static void __exit platform_ide_exit(void)
 
 MODULE_DESCRIPTION("Platform IDE driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:pata_platform");
 
 module_init(platform_ide_init);
 module_exit(platform_ide_exit);

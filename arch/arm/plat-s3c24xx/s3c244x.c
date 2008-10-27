@@ -25,15 +25,15 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 
-#include <asm/arch/regs-clock.h>
+#include <mach/regs-clock.h>
 #include <asm/plat-s3c/regs-serial.h>
-#include <asm/arch/regs-gpio.h>
-#include <asm/arch/regs-gpioj.h>
-#include <asm/arch/regs-dsc.h>
+#include <mach/regs-gpio.h>
+#include <mach/regs-gpioj.h>
+#include <mach/regs-dsc.h>
 
 #include <asm/plat-s3c24xx/s3c2410.h>
 #include <asm/plat-s3c24xx/s3c2440.h>
@@ -65,6 +65,7 @@ void __init s3c244x_map_io(struct map_desc *mach_desc, int size)
 
 	/* rename any peripherals used differing from the s3c2410 */
 
+	s3c_device_sdi.name  = "s3c2440-sdi";
 	s3c_device_i2c.name  = "s3c2440-i2c";
 	s3c_device_nand.name = "s3c2440-nand";
 	s3c_device_usbgadget.name = "s3c2440-usbgadget";
@@ -151,13 +152,13 @@ static int s3c244x_resume(struct sys_device *dev)
 /* Since the S3C2442 and S3C2440 share  items, put both sysclasses here */
 
 struct sysdev_class s3c2440_sysclass = {
-	set_kset_name("s3c2440-core"),
+	.name		= "s3c2440-core",
 	.suspend	= s3c244x_suspend,
 	.resume		= s3c244x_resume
 };
 
 struct sysdev_class s3c2442_sysclass = {
-	set_kset_name("s3c2442-core"),
+	.name		= "s3c2442-core",
 	.suspend	= s3c244x_suspend,
 	.resume		= s3c244x_resume
 };

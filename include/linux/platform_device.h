@@ -35,7 +35,7 @@ extern struct resource *platform_get_resource_byname(struct platform_device *, u
 extern int platform_get_irq_byname(struct platform_device *, char *);
 extern int platform_add_devices(struct platform_device **, int);
 
-extern struct platform_device *platform_device_register_simple(char *, int id,
+extern struct platform_device *platform_device_register_simple(const char *, int id,
 					struct resource *, unsigned int);
 
 extern struct platform_device *platform_device_alloc(const char *name, int id);
@@ -53,6 +53,7 @@ struct platform_driver {
 	int (*suspend_late)(struct platform_device *, pm_message_t state);
 	int (*resume_early)(struct platform_device *);
 	int (*resume)(struct platform_device *);
+	struct pm_ext_ops *pm;
 	struct device_driver driver;
 };
 

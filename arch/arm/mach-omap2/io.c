@@ -21,8 +21,8 @@
 
 #include <asm/mach/map.h>
 
-#include <asm/arch/mux.h>
-#include <asm/arch/omapfb.h>
+#include <mach/mux.h>
+#include <mach/omapfb.h>
 
 extern void omap_sram_init(void);
 extern int omap2_clk_init(void);
@@ -41,6 +41,12 @@ static struct map_desc omap2_io_desc[] __initdata = {
 		.pfn		= __phys_to_pfn(L3_24XX_PHYS),
 		.length		= L3_24XX_SIZE,
 		.type		= MT_DEVICE
+	},
+	{
+		.virtual        = L4_24XX_VIRT,
+		.pfn            = __phys_to_pfn(L4_24XX_PHYS),
+		.length         = L4_24XX_SIZE,
+		.type           = MT_DEVICE
 	},
 #ifdef CONFIG_ARCH_OMAP2430
 	{

@@ -90,35 +90,56 @@ static struct ixgbe_stats ixgbe_gstrings_stats[] = {
 	{"rx_header_split", IXGBE_STAT(rx_hdr_split)},
 	{"alloc_rx_page_failed", IXGBE_STAT(alloc_rx_page_failed)},
 	{"alloc_rx_buff_failed", IXGBE_STAT(alloc_rx_buff_failed)},
+	{"lro_aggregated", IXGBE_STAT(lro_aggregated)},
+	{"lro_flushed", IXGBE_STAT(lro_flushed)},
 };
 
 #define IXGBE_QUEUE_STATS_LEN \
 		((((struct ixgbe_adapter *)netdev->priv)->num_tx_queues + \
 		 ((struct ixgbe_adapter *)netdev->priv)->num_rx_queues) * \
 		 (sizeof(struct ixgbe_queue_stats) / sizeof(u64)))
-#define IXGBE_GLOBAL_STATS_LEN \
-	sizeof(ixgbe_gstrings_stats) / sizeof(struct ixgbe_stats)
+#define IXGBE_GLOBAL_STATS_LEN	ARRAY_SIZE(ixgbe_gstrings_stats)
 #define IXGBE_STATS_LEN (IXGBE_GLOBAL_STATS_LEN + IXGBE_QUEUE_STATS_LEN)
 
 static int ixgbe_get_settings(struct net_device *netdev,
 			      struct ethtool_cmd *ecmd)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_hw *hw = &adapter->hw;
+	u32 link_speed = 0;
+	bool link_up;
 
-	ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_FIBRE);
-	ecmd->advertising = (ADVERTISED_10000baseT_Full | ADVERTISED_FIBRE);
-	ecmd->port = PORT_FIBRE;
+	ecmd->supported = SUPPORTED_10000baseT_Full;
+	ecmd->autoneg = AUTONEG_ENABLE;
 	ecmd->transceiver = XCVR_EXTERNAL;
+	if (hw->phy.media_type == ixgbe_media_type_copper) {
+		ecmd->supported |= (SUPPORTED_1000baseT_Full |
+				    SUPPORTED_TP | SUPPORTED_Autoneg);
 
-	if (netif_carrier_ok(adapter->netdev)) {
-		ecmd->speed = SPEED_10000;
+		ecmd->advertising = (ADVERTISED_TP | ADVERTISED_Autoneg);
+		if (hw->phy.autoneg_advertised & IXGBE_LINK_SPEED_10GB_FULL)
+			ecmd->advertising |= ADVERTISED_10000baseT_Full;
+		if (hw->phy.autoneg_advertised & IXGBE_LINK_SPEED_1GB_FULL)
+			ecmd->advertising |= ADVERTISED_1000baseT_Full;
+
+		ecmd->port = PORT_TP;
+	} else {
+		ecmd->supported |= SUPPORTED_FIBRE;
+		ecmd->advertising = (ADVERTISED_10000baseT_Full |
+				     ADVERTISED_FIBRE);
+		ecmd->port = PORT_FIBRE;
+	}
+
+	adapter->hw.mac.ops.check_link(hw, &(link_speed), &link_up);
+	if (link_up) {
+		ecmd->speed = (link_speed == IXGBE_LINK_SPEED_10GB_FULL) ?
+				SPEED_10000 : SPEED_1000;
 		ecmd->duplex = DUPLEX_FULL;
 	} else {
 		ecmd->speed = -1;
 		ecmd->duplex = -1;
 	}
 
-	ecmd->autoneg = AUTONEG_DISABLE;
 	return 0;
 }
 
@@ -126,17 +147,17 @@ static int ixgbe_set_settings(struct net_device *netdev,
 			      struct ethtool_cmd *ecmd)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	struct ixgbe_hw *hw = &adapter->hw;
 
-	if (ecmd->autoneg == AUTONEG_ENABLE ||
-	    ecmd->speed + ecmd->duplex != SPEED_10000 + DUPLEX_FULL)
-		return -EINVAL;
-
-	if (netif_running(adapter->netdev)) {
-		ixgbe_down(adapter);
-		ixgbe_reset(adapter);
-		ixgbe_up(adapter);
-	} else {
-		ixgbe_reset(adapter);
+	switch (hw->phy.media_type) {
+	case ixgbe_media_type_fiber:
+		if ((ecmd->autoneg == AUTONEG_ENABLE) ||
+		    (ecmd->speed + ecmd->duplex != SPEED_10000 + DUPLEX_FULL))
+			return -EINVAL;
+		/* in this case we currently only support 10Gb/FULL */
+		break;
+	default:
+		break;
 	}
 
 	return 0;
@@ -148,7 +169,7 @@ static void ixgbe_get_pauseparam(struct net_device *netdev,
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
 
-	pause->autoneg = AUTONEG_DISABLE;
+	pause->autoneg = (hw->fc.type == ixgbe_fc_full ? 1 : 0);
 
 	if (hw->fc.type == ixgbe_fc_rx_pause) {
 		pause->rx_pause = 1;
@@ -166,10 +187,8 @@ static int ixgbe_set_pauseparam(struct net_device *netdev,
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
 
-	if (pause->autoneg == AUTONEG_ENABLE)
-		return -EINVAL;
-
-	if (pause->rx_pause && pause->tx_pause)
+	if ((pause->autoneg == AUTONEG_ENABLE) ||
+	    (pause->rx_pause && pause->tx_pause))
 		hw->fc.type = ixgbe_fc_full;
 	else if (pause->rx_pause && !pause->tx_pause)
 		hw->fc.type = ixgbe_fc_rx_pause;
@@ -177,15 +196,15 @@ static int ixgbe_set_pauseparam(struct net_device *netdev,
 		hw->fc.type = ixgbe_fc_tx_pause;
 	else if (!pause->rx_pause && !pause->tx_pause)
 		hw->fc.type = ixgbe_fc_none;
+	else
+		return -EINVAL;
 
 	hw->fc.original_type = hw->fc.type;
 
-	if (netif_running(adapter->netdev)) {
-		ixgbe_down(adapter);
-		ixgbe_up(adapter);
-	} else {
+	if (netif_running(netdev))
+		ixgbe_reinit_locked(adapter);
+	else
 		ixgbe_reset(adapter);
-	}
 
 	return 0;
 }
@@ -204,12 +223,10 @@ static int ixgbe_set_rx_csum(struct net_device *netdev, u32 data)
 	else
 		adapter->flags &= ~IXGBE_FLAG_RX_CSUM_ENABLED;
 
-	if (netif_running(netdev)) {
-		ixgbe_down(adapter);
-		ixgbe_up(adapter);
-	} else {
+	if (netif_running(netdev))
+		ixgbe_reinit_locked(adapter);
+	else
 		ixgbe_reset(adapter);
-	}
 
 	return 0;
 }
@@ -231,13 +248,14 @@ static int ixgbe_set_tx_csum(struct net_device *netdev, u32 data)
 
 static int ixgbe_set_tso(struct net_device *netdev, u32 data)
 {
-
 	if (data) {
 		netdev->features |= NETIF_F_TSO;
 		netdev->features |= NETIF_F_TSO6;
 	} else {
+		netif_tx_stop_all_queues(netdev);
 		netdev->features &= ~NETIF_F_TSO;
 		netdev->features &= ~NETIF_F_TSO6;
+		netif_tx_start_all_queues(netdev);
 	}
 	return 0;
 }
@@ -663,7 +681,10 @@ static int ixgbe_set_ringparam(struct net_device *netdev,
 		return 0;
 	}
 
-	if (netif_running(adapter->netdev))
+	while (test_and_set_bit(__IXGBE_RESETTING, &adapter->state))
+		msleep(1);
+
+	if (netif_running(netdev))
 		ixgbe_down(adapter);
 
 	/*
@@ -734,6 +755,7 @@ err_setup:
 	if (netif_running(adapter->netdev))
 		ixgbe_up(adapter);
 
+	clear_bit(__IXGBE_RESETTING, &adapter->state);
 	return err;
 }
 
@@ -755,6 +777,7 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 	int stat_count = sizeof(struct ixgbe_queue_stats) / sizeof(u64);
 	int j, k;
 	int i;
+	u64 aggregated = 0, flushed = 0, no_desc = 0;
 
 	ixgbe_update_stats(adapter);
 	for (i = 0; i < IXGBE_GLOBAL_STATS_LEN; i++) {
@@ -769,11 +792,17 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 		i += k;
 	}
 	for (j = 0; j < adapter->num_rx_queues; j++) {
+		aggregated += adapter->rx_ring[j].lro_mgr.stats.aggregated;
+		flushed += adapter->rx_ring[j].lro_mgr.stats.flushed;
+		no_desc += adapter->rx_ring[j].lro_mgr.stats.no_desc;
 		queue_stat = (u64 *)&adapter->rx_ring[j].stats;
 		for (k = 0; k < stat_count; k++)
 			data[i + k] = queue_stat[k];
 		i += k;
 	}
+	adapter->lro_aggregated = aggregated;
+	adapter->lro_flushed = flushed;
+	adapter->lro_no_desc = no_desc;
 }
 
 static void ixgbe_get_strings(struct net_device *netdev, u32 stringset,
@@ -821,11 +850,8 @@ static int ixgbe_nway_reset(struct net_device *netdev)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 
-	if (netif_running(netdev)) {
-		ixgbe_down(adapter);
-		ixgbe_reset(adapter);
-		ixgbe_up(adapter);
-	}
+	if (netif_running(netdev))
+		ixgbe_reinit_locked(adapter);
 
 	return 0;
 }
@@ -857,13 +883,13 @@ static int ixgbe_get_coalesce(struct net_device *netdev,
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 
-	if (adapter->rx_eitr == 0)
-		ec->rx_coalesce_usecs = 0;
+	if (adapter->rx_eitr < IXGBE_MIN_ITR_USECS)
+		ec->rx_coalesce_usecs = adapter->rx_eitr;
 	else
 		ec->rx_coalesce_usecs = 1000000 / adapter->rx_eitr;
 
-	if (adapter->tx_eitr == 0)
-		ec->tx_coalesce_usecs = 0;
+	if (adapter->tx_eitr < IXGBE_MIN_ITR_USECS)
+		ec->tx_coalesce_usecs = adapter->tx_eitr;
 	else
 		ec->tx_coalesce_usecs = 1000000 / adapter->tx_eitr;
 
@@ -877,22 +903,26 @@ static int ixgbe_set_coalesce(struct net_device *netdev,
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 
 	if ((ec->rx_coalesce_usecs > IXGBE_MAX_ITR_USECS) ||
-	    ((ec->rx_coalesce_usecs > 0) &&
+	    ((ec->rx_coalesce_usecs != 0) &&
+	     (ec->rx_coalesce_usecs != 1) &&
+	     (ec->rx_coalesce_usecs != 3) &&
 	     (ec->rx_coalesce_usecs < IXGBE_MIN_ITR_USECS)))
 		return -EINVAL;
 	if ((ec->tx_coalesce_usecs > IXGBE_MAX_ITR_USECS) ||
-	    ((ec->tx_coalesce_usecs > 0) &&
+	    ((ec->tx_coalesce_usecs != 0) &&
+	     (ec->tx_coalesce_usecs != 1) &&
+	     (ec->tx_coalesce_usecs != 3) &&
 	     (ec->tx_coalesce_usecs < IXGBE_MIN_ITR_USECS)))
 		return -EINVAL;
 
 	/* convert to rate of irq's per second */
-	if (ec->rx_coalesce_usecs == 0)
-		adapter->rx_eitr = 0;
+	if (ec->rx_coalesce_usecs < IXGBE_MIN_ITR_USECS)
+		adapter->rx_eitr = ec->rx_coalesce_usecs;
 	else
 		adapter->rx_eitr = (1000000 / ec->rx_coalesce_usecs);
 
-	if (ec->tx_coalesce_usecs == 0)
-		adapter->tx_eitr = 0;
+	if (ec->tx_coalesce_usecs < IXGBE_MIN_ITR_USECS)
+		adapter->tx_eitr = ec->rx_coalesce_usecs;
 	else
 		adapter->tx_eitr = (1000000 / ec->tx_coalesce_usecs);
 
@@ -940,6 +970,8 @@ static struct ethtool_ops ixgbe_ethtool_ops = {
 	.get_ethtool_stats      = ixgbe_get_ethtool_stats,
 	.get_coalesce           = ixgbe_get_coalesce,
 	.set_coalesce           = ixgbe_set_coalesce,
+	.get_flags              = ethtool_op_get_flags,
+	.set_flags              = ethtool_op_set_flags,
 };
 
 void ixgbe_set_ethtool_ops(struct net_device *netdev)

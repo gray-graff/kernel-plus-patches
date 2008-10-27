@@ -24,7 +24,6 @@
 #include <linux/interrupt.h>
 #include <linux/smp.h>
 #include <linux/fs.h>
-#include <linux/kexec.h>
 
 #include <asm/cpu.h>
 #include <asm/elf.h>
@@ -37,8 +36,10 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
+#include <asm/traps.h>
 
 #include "compat.h"
+#include "atags.h"
 
 #ifndef MEM_SIZE
 #define MEM_SIZE	(16*1024*1024)
@@ -62,6 +63,7 @@ extern int root_mountflags;
 extern void _stext, _text, _etext, __data_start, _edata, _end;
 
 unsigned int processor_id;
+EXPORT_SYMBOL(processor_id);
 unsigned int __machine_arch_type;
 EXPORT_SYMBOL(__machine_arch_type);
 
@@ -78,6 +80,8 @@ EXPORT_SYMBOL(system_serial_high);
 
 unsigned int elf_hwcap;
 EXPORT_SYMBOL(elf_hwcap);
+
+unsigned long __initdata vmalloc_reserve = 128 << 20;
 
 
 #ifdef MULTI_CPU
@@ -499,6 +503,17 @@ static void __init early_mem(char **p)
 __early_param("mem=", early_mem);
 
 /*
+ * vmalloc=size forces the vmalloc area to be exactly 'size'
+ * bytes. This can be used to increase (or decrease) the vmalloc
+ * area - the default is 128m.
+ */
+static void __init early_vmalloc(char **arg)
+{
+	vmalloc_reserve = memparse(*arg, arg);
+}
+__early_param("vmalloc=", early_vmalloc);
+
+/*
  * Initial parsing of the command line.
  */
 static void __init parse_cmdline(char **cmdline_p, char *from)
@@ -784,23 +799,6 @@ static int __init customize_machine(void)
 }
 arch_initcall(customize_machine);
 
-#ifdef CONFIG_KEXEC
-
-/* Physical addr of where the boot params should be for this machine */
-extern unsigned long kexec_boot_params_address;
-
-/* Physical addr of the buffer into which the boot params are copied */
-extern unsigned long kexec_boot_params_copy;
-
-/* Pointer to the boot params buffer, for manipulation and display */
-unsigned long kexec_boot_params;
-EXPORT_SYMBOL(kexec_boot_params);
-
-/* The buffer itself - make sure it is sized correctly */
-static unsigned long kexec_boot_params_buf[(KEXEC_BOOT_PARAMS_SIZE + 3) / 4];
-
-#endif
-
 void __init setup_arch(char **cmdline_p)
 {
 	struct tag *tags = (struct tag *)&init_tags;
@@ -819,18 +817,6 @@ void __init setup_arch(char **cmdline_p)
 	else if (mdesc->boot_params)
 		tags = phys_to_virt(mdesc->boot_params);
 
-#ifdef CONFIG_KEXEC
-	kexec_boot_params_copy = virt_to_phys(kexec_boot_params_buf);
-	kexec_boot_params = (unsigned long)kexec_boot_params_buf;
-	if (__atags_pointer) {
-		kexec_boot_params_address = __atags_pointer;
-		memcpy((void *)kexec_boot_params, tags, KEXEC_BOOT_PARAMS_SIZE);
-	} else if (mdesc->boot_params) {
-		kexec_boot_params_address = mdesc->boot_params;
-		memcpy((void *)kexec_boot_params, tags, KEXEC_BOOT_PARAMS_SIZE);
-	}
-#endif
-
 	/*
 	 * If we have the old style parameters, convert them to
 	 * a tag list.
@@ -846,6 +832,7 @@ void __init setup_arch(char **cmdline_p)
 	if (tags->hdr.tag == ATAG_CORE) {
 		if (meminfo.nr_banks != 0)
 			squash_mem_tags(tags);
+		save_atags(tags);
 		parse_tags(tags);
 	}
 
@@ -880,6 +867,7 @@ void __init setup_arch(char **cmdline_p)
 	conswitchp = &dummy_con;
 #endif
 #endif
+	early_trap_init();
 }
 
 
@@ -1028,7 +1016,7 @@ static void c_stop(struct seq_file *m, void *v)
 {
 }
 
-struct seq_operations cpuinfo_op = {
+const struct seq_operations cpuinfo_op = {
 	.start	= c_start,
 	.next	= c_next,
 	.stop	= c_stop,

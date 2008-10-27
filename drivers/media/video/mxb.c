@@ -38,7 +38,7 @@
 #define MXB_BOARD_CAN_DO_VBI(dev)   (dev->revision != 0)
 
 /* global variable */
-static int mxb_num = 0;
+static int mxb_num;
 
 /* initial frequence the tuner will be tuned to.
    in verden (lower saxony, germany) 4148 is a
@@ -47,7 +47,7 @@ static int freq = 4148;
 module_param(freq, int, 0644);
 MODULE_PARM_DESC(freq, "initial frequency the tuner will be tuned to while setup");
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off device debugging (default:off).");
 
@@ -149,10 +149,33 @@ struct mxb
 
 static struct saa7146_extension extension;
 
+static int mxb_check_clients(struct device *dev, void *data)
+{
+	struct mxb* mxb = data;
+	struct i2c_client *client = i2c_verify_client(dev);
+
+	if( !client )
+		return 0;
+
+	if( I2C_ADDR_TEA6420_1 == client->addr )
+		mxb->tea6420_1 = client;
+	if( I2C_ADDR_TEA6420_2 == client->addr )
+		mxb->tea6420_2 = client;
+	if( I2C_TEA6415C_2 == client->addr )
+		mxb->tea6415c = client;
+	if( I2C_ADDR_TDA9840 == client->addr )
+		mxb->tda9840 = client;
+	if( I2C_SAA7111 == client->addr )
+		mxb->saa7111a = client;
+	if( 0x60 == client->addr )
+		mxb->tuner = client;
+
+	return 0;
+}
+
 static int mxb_probe(struct saa7146_dev* dev)
 {
 	struct mxb* mxb = NULL;
-	struct i2c_client *client;
 	int result;
 
 	if ((result = request_module("saa7111")) < 0) {
@@ -195,25 +218,11 @@ static int mxb_probe(struct saa7146_dev* dev)
 	}
 
 	/* loop through all i2c-devices on the bus and look who is there */
-	list_for_each_entry(client, &mxb->i2c_adapter.clients, list) {
-		if( I2C_ADDR_TEA6420_1 == client->addr )
-			mxb->tea6420_1 = client;
-		if( I2C_ADDR_TEA6420_2 == client->addr )
-			mxb->tea6420_2 = client;
-		if( I2C_TEA6415C_2 == client->addr )
-			mxb->tea6415c = client;
-		if( I2C_ADDR_TDA9840 == client->addr )
-			mxb->tda9840 = client;
-		if( I2C_SAA7111 == client->addr )
-			mxb->saa7111a = client;
-		if( 0x60 == client->addr )
-			mxb->tuner = client;
-	}
+	device_for_each_child(&mxb->i2c_adapter.dev, mxb, mxb_check_clients);
 
 	/* check if all devices are present */
-	if(    0 == mxb->tea6420_1	|| 0 == mxb->tea6420_2	|| 0 == mxb->tea6415c
-	    || 0 == mxb->tda9840	|| 0 == mxb->saa7111a	|| 0 == mxb->tuner ) {
-
+	if (!mxb->tea6420_1 || !mxb->tea6420_2 || !mxb->tea6415c ||
+	    !mxb->tda9840 || !mxb->saa7111a || !mxb->tuner) {
 		printk("mxb: did not find all i2c devices. aborting\n");
 		i2c_del_adapter(&mxb->i2c_adapter);
 		kfree(mxb);
@@ -922,27 +931,29 @@ static int mxb_ioctl(struct saa7146_fh *fh, unsigned int cmd, void *arg)
 	return 0;
 }
 
-static int std_callback(struct saa7146_dev* dev, struct saa7146_standard *std)
+static int std_callback(struct saa7146_dev *dev, struct saa7146_standard *standard)
 {
-	struct mxb* mxb = (struct mxb*)dev->ext_priv;
+	struct mxb *mxb = (struct mxb *)dev->ext_priv;
 	int zero = 0;
 	int one = 1;
 
-	if(V4L2_STD_PAL_I == std->id ) {
+	if (V4L2_STD_PAL_I == standard->id) {
 		v4l2_std_id std = V4L2_STD_PAL_I;
+
 		DEB_D(("VIDIOC_S_STD: setting mxb for PAL_I.\n"));
 		/* set the 7146 gpio register -- I don't know what this does exactly */
 		saa7146_write(dev, GPIO_CTRL, 0x00404050);
 		/* unset the 7111 gpio register -- I don't know what this does exactly */
-		mxb->saa7111a->driver->command(mxb->saa7111a,DECODER_SET_GPIO, &zero);
+		mxb->saa7111a->driver->command(mxb->saa7111a, DECODER_SET_GPIO, &zero);
 		mxb->tuner->driver->command(mxb->tuner, VIDIOC_S_STD, &std);
 	} else {
 		v4l2_std_id std = V4L2_STD_PAL_BG;
+
 		DEB_D(("VIDIOC_S_STD: setting mxb for PAL/NTSC/SECAM.\n"));
 		/* set the 7146 gpio register -- I don't know what this does exactly */
 		saa7146_write(dev, GPIO_CTRL, 0x00404050);
 		/* set the 7111 gpio register -- I don't know what this does exactly */
-		mxb->saa7111a->driver->command(mxb->saa7111a,DECODER_SET_GPIO, &one);
+		mxb->saa7111a->driver->command(mxb->saa7111a, DECODER_SET_GPIO, &one);
 		mxb->tuner->driver->command(mxb->tuner, VIDIOC_S_STD, &std);
 	}
 	return 0;

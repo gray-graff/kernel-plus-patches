@@ -9,8 +9,6 @@
  * ----------------------------------------------------------------------- */
 
 /*
- * arch/i386/boot/edd.c
- *
  * Get EDD BIOS disk information
  */
 
@@ -128,17 +126,28 @@ void query_edd(void)
 {
 	char eddarg[8];
 	int do_mbr = 1;
+#ifdef CONFIG_EDD_OFF
+	int do_edd = 0;
+#else
 	int do_edd = 1;
+#endif
+	int be_quiet;
 	int devno;
 	struct edd_info ei, *edp;
 	u32 *mbrptr;
 
 	if (cmdline_find_option("edd", eddarg, sizeof eddarg) > 0) {
-		if (!strcmp(eddarg, "skipmbr") || !strcmp(eddarg, "skip"))
+		if (!strcmp(eddarg, "skipmbr") || !strcmp(eddarg, "skip")) {
+			do_edd = 1;
 			do_mbr = 0;
+		}
 		else if (!strcmp(eddarg, "off"))
 			do_edd = 0;
+		else if (!strcmp(eddarg, "on"))
+			do_edd = 1;
 	}
+
+	be_quiet = cmdline_find_option_bool("quiet");
 
 	edp    = boot_params.eddbuf;
 	mbrptr = boot_params.edd_mbr_sig_buffer;
@@ -146,14 +155,20 @@ void query_edd(void)
 	if (!do_edd)
 		return;
 
+	/* Bugs in OnBoard or AddOnCards Bios may hang the EDD probe,
+	 * so give a hint if this happens.
+	 */
+
+	if (!be_quiet)
+		printf("Probing EDD (edd=off to disable)... ");
+
 	for (devno = 0x80; devno < 0x80+EDD_MBR_SIG_MAX; devno++) {
 		/*
 		 * Scan the BIOS-supported hard disks and query EDD
 		 * information...
 		 */
-		get_edd_info(devno, &ei);
-
-		if (boot_params.eddbuf_entries < EDDMAXNR) {
+		if (!get_edd_info(devno, &ei)
+		    && boot_params.eddbuf_entries < EDDMAXNR) {
 			memcpy(edp, &ei, sizeof ei);
 			edp++;
 			boot_params.eddbuf_entries++;
@@ -162,6 +177,9 @@ void query_edd(void)
 		if (do_mbr && !read_mbr_sig(devno, &ei, mbrptr++))
 			boot_params.edd_mbr_sig_buf_entries = devno-0x80+1;
 	}
+
+	if (!be_quiet)
+		printf("ok\n");
 }
 
 #endif

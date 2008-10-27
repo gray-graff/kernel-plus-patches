@@ -6,9 +6,10 @@
 
 struct notifier_block;
 void idle_notifier_register(struct notifier_block *n);
-void idle_notifier_unregister(struct notifier_block *n);
 
 void enter_idle(void);
 void exit_idle(void);
+
+void c1e_remove_cpu(int cpu);
 
 #endif

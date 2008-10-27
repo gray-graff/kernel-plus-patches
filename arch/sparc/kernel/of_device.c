@@ -70,7 +70,7 @@ struct of_bus {
 				       int *addrc, int *sizec);
 	int		(*map)(u32 *addr, const u32 *range,
 			       int na, int ns, int pna);
-	unsigned int	(*get_flags)(const u32 *addr);
+	unsigned long	(*get_flags)(const u32 *addr, unsigned long);
 };
 
 /*
@@ -130,8 +130,10 @@ static int of_bus_default_map(u32 *addr, const u32 *range,
 	return 0;
 }
 
-static unsigned int of_bus_default_get_flags(const u32 *addr)
+static unsigned long of_bus_default_get_flags(const u32 *addr, unsigned long flags)
 {
+	if (flags)
+		return flags;
 	return IORESOURCE_MEM;
 }
 
@@ -194,17 +196,21 @@ static int of_bus_pci_map(u32 *addr, const u32 *range,
 	return 0;
 }
 
-static unsigned int of_bus_pci_get_flags(const u32 *addr)
+static unsigned long of_bus_pci_get_flags(const u32 *addr, unsigned long flags)
 {
-	unsigned int flags = 0;
 	u32 w = addr[0];
 
+	/* For PCI, we override whatever child busses may have used.  */
+	flags = 0;
 	switch((w >> 24) & 0x03) {
 	case 0x01:
 		flags |= IORESOURCE_IO;
+		break;
+
 	case 0x02: /* 32 bits */
 	case 0x03: /* 64 bits */
 		flags |= IORESOURCE_MEM;
+		break;
 	}
 	if (w & 0x40000000)
 		flags |= IORESOURCE_PREFETCH;
@@ -235,7 +241,7 @@ static int of_bus_sbus_map(u32 *addr, const u32 *range, int na, int ns, int pna)
 	return of_bus_default_map(addr, range, na, ns, pna);
 }
 
-static unsigned int of_bus_sbus_get_flags(const u32 *addr)
+static unsigned long of_bus_sbus_get_flags(const u32 *addr, unsigned long flags)
 {
 	return IORESOURCE_MEM;
 }
@@ -362,9 +368,10 @@ static void __init build_device_resources(struct of_device *op,
 		int pna, pns;
 
 		size = of_read_addr(reg + na, ns);
-		flags = bus->get_flags(reg);
 
 		memcpy(addr, reg, na * 4);
+
+		flags = bus->get_flags(reg, 0);
 
 		/* If the immediate parent has no ranges property to apply,
 		 * just use a 1<->1 mapping.
@@ -392,6 +399,8 @@ static void __init build_device_resources(struct of_device *op,
 			if (build_one_resource(dp, dbus, pbus, addr,
 					       dna, dns, pna))
 				break;
+
+			flags = pbus->get_flags(addr, flags);
 
 			dna = pna;
 			dns = pns;
@@ -584,30 +593,3 @@ static int __init of_debug(char *str)
 }
 
 __setup("of_debug=", of_debug);
-
-struct of_device* of_platform_device_create(struct device_node *np,
-					    const char *bus_id,
-					    struct device *parent,
-					    struct bus_type *bus)
-{
-	struct of_device *dev;
-
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (!dev)
-		return NULL;
-
-	dev->dev.parent = parent;
-	dev->dev.bus = bus;
-	dev->dev.release = of_release_dev;
-
-	strlcpy(dev->dev.bus_id, bus_id, BUS_ID_SIZE);
-
-	if (of_device_register(dev) != 0) {
-		kfree(dev);
-		return NULL;
-	}
-
-	return dev;
-}
-
-EXPORT_SYMBOL(of_platform_device_create);

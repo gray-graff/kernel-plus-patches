@@ -131,14 +131,8 @@ static const struct file_operations proc_iomem_operations = {
 
 static int __init ioresources_init(void)
 {
-	struct proc_dir_entry *entry;
-
-	entry = create_proc_entry("ioports", 0, NULL);
-	if (entry)
-		entry->proc_fops = &proc_ioports_operations;
-	entry = create_proc_entry("iomem", 0, NULL);
-	if (entry)
-		entry->proc_fops = &proc_iomem_operations;
+	proc_create("ioports", 0, NULL, &proc_ioports_operations);
+	proc_create("iomem", 0, NULL, &proc_iomem_operations);
 	return 0;
 }
 __initcall(ioresources_init);
@@ -228,7 +222,7 @@ int release_resource(struct resource *old)
 
 EXPORT_SYMBOL(release_resource);
 
-#ifdef CONFIG_MEMORY_HOTPLUG
+#if defined(CONFIG_MEMORY_HOTPLUG) && !defined(CONFIG_ARCH_HAS_WALK_MEMORY)
 /*
  * Finds the lowest memory reosurce exists within [res->start.res->end)
  * the caller must specify res->start, res->end, res->flags.
@@ -368,35 +362,21 @@ int allocate_resource(struct resource *root, struct resource *new,
 
 EXPORT_SYMBOL(allocate_resource);
 
-/**
- * insert_resource - Inserts a resource in the resource tree
- * @parent: parent of the new resource
- * @new: new resource to insert
- *
- * Returns 0 on success, -EBUSY if the resource can't be inserted.
- *
- * This function is equivalent to request_resource when no conflict
- * happens. If a conflict happens, and the conflicting resources
- * entirely fit within the range of the new resource, then the new
- * resource is inserted and the conflicting resources become children of
- * the new resource.
+/*
+ * Insert a resource into the resource tree. If successful, return NULL,
+ * otherwise return the conflicting resource (compare to __request_resource())
  */
-int insert_resource(struct resource *parent, struct resource *new)
+static struct resource * __insert_resource(struct resource *parent, struct resource *new)
 {
-	int result;
 	struct resource *first, *next;
 
-	write_lock(&resource_lock);
-
 	for (;; parent = first) {
-	 	result = 0;
 		first = __request_resource(parent, new);
 		if (!first)
-			goto out;
+			return first;
 
-		result = -EBUSY;
 		if (first == parent)
-			goto out;
+			return first;
 
 		if ((first->start > new->start) || (first->end < new->end))
 			break;
@@ -407,14 +387,12 @@ int insert_resource(struct resource *parent, struct resource *new)
 	for (next = first; ; next = next->sibling) {
 		/* Partial overlap? Bad, and unfixable */
 		if (next->start < new->start || next->end > new->end)
-			goto out;
+			return next;
 		if (!next->sibling)
 			break;
 		if (next->sibling->start > new->end)
 			break;
 	}
-
-	result = 0;
 
 	new->parent = parent;
 	new->sibling = next->sibling;
@@ -432,10 +410,64 @@ int insert_resource(struct resource *parent, struct resource *new)
 			next = next->sibling;
 		next->sibling = new;
 	}
+	return NULL;
+}
 
- out:
+/**
+ * insert_resource - Inserts a resource in the resource tree
+ * @parent: parent of the new resource
+ * @new: new resource to insert
+ *
+ * Returns 0 on success, -EBUSY if the resource can't be inserted.
+ *
+ * This function is equivalent to request_resource when no conflict
+ * happens. If a conflict happens, and the conflicting resources
+ * entirely fit within the range of the new resource, then the new
+ * resource is inserted and the conflicting resources become children of
+ * the new resource.
+ */
+int insert_resource(struct resource *parent, struct resource *new)
+{
+	struct resource *conflict;
+
+	write_lock(&resource_lock);
+	conflict = __insert_resource(parent, new);
 	write_unlock(&resource_lock);
-	return result;
+	return conflict ? -EBUSY : 0;
+}
+
+/**
+ * insert_resource_expand_to_fit - Insert a resource into the resource tree
+ * @root: root resource descriptor
+ * @new: new resource to insert
+ *
+ * Insert a resource into the resource tree, possibly expanding it in order
+ * to make it encompass any conflicting resources.
+ */
+void insert_resource_expand_to_fit(struct resource *root, struct resource *new)
+{
+	if (new->parent)
+		return;
+
+	write_lock(&resource_lock);
+	for (;;) {
+		struct resource *conflict;
+
+		conflict = __insert_resource(root, new);
+		if (!conflict)
+			break;
+		if (conflict == root)
+			break;
+
+		/* Ok, expand resource to cover the conflict, then try again .. */
+		if (conflict->start < new->start)
+			new->start = conflict->start;
+		if (conflict->end > new->end)
+			new->end = conflict->end;
+
+		printk("Expanded resource %s due to conflict with %s\n", new->name, conflict->name);
+	}
+	write_unlock(&resource_lock);
 }
 
 /**
@@ -485,6 +517,24 @@ int adjust_resource(struct resource *res, resource_size_t start, resource_size_t
 }
 
 EXPORT_SYMBOL(adjust_resource);
+
+/**
+ * resource_alignment - calculate resource's alignment
+ * @res: resource pointer
+ *
+ * Returns alignment on success, 0 (invalid alignment) on failure.
+ */
+resource_size_t resource_alignment(struct resource *res)
+{
+	switch (res->flags & (IORESOURCE_SIZEALIGN | IORESOURCE_STARTALIGN)) {
+	case IORESOURCE_SIZEALIGN:
+		return resource_size(res);
+	case IORESOURCE_STARTALIGN:
+		return res->start;
+	default:
+		return 0;
+	}
+}
 
 /*
  * This is compatibility stuff for IO resources.

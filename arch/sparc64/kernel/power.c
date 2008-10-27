@@ -13,13 +13,14 @@
 #include <linux/pm.h>
 #include <linux/syscalls.h>
 #include <linux/reboot.h>
+#include <linux/of_device.h>
 
 #include <asm/system.h>
 #include <asm/auxio.h>
 #include <asm/prom.h>
-#include <asm/of_device.h>
 #include <asm/io.h>
 #include <asm/sstate.h>
+#include <asm/reboot.h>
 
 #include <linux/unistd.h>
 
@@ -39,8 +40,6 @@ static irqreturn_t power_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-extern void machine_halt(void);
-extern void machine_alt_power_off(void);
 static void (*poweroff_method)(void) = machine_alt_power_off;
 
 void machine_power_off(void)

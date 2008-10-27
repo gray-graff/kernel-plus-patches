@@ -35,21 +35,13 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/delay.h>
-#include <linux/timer.h>
-#include <linux/mm.h>
-#include <linux/ioport.h>
-#include <linux/blkdev.h>
 #include <linux/hdreg.h>
-
-#include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/ide.h>
 #include <linux/dma-mapping.h>
 
-#include <asm/io.h>
-#include <asm/irq.h>
+#define DRV_NAME "cs5520"
 
 struct pio_clocks
 {
@@ -69,11 +61,8 @@ static struct pio_clocks cs5520_pio_clocks[]={
 static void cs5520_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	ide_hwif_t *hwif = HWIF(drive);
-	struct pci_dev *pdev = hwif->pci_dev;
+	struct pci_dev *pdev = to_pci_dev(hwif->dev);
 	int controller = drive->dn > 1 ? 1 : 0;
-	u8 reg;
-
-	/* FIXME: if DMA = 1 do we need to set the DMA bit here ? */
 
 	/* 8bit CAT/CRT - 8bit command timing for channel */
 	pci_write_config_byte(pdev, 0x62 + controller, 
@@ -91,11 +80,6 @@ static void cs5520_set_pio_mode(ide_drive_t *drive, const u8 pio)
 	pci_write_config_byte(pdev, 0x66 + 4*controller + (drive->dn&1),
 		(cs5520_pio_clocks[pio].recovery << 4) |
 		(cs5520_pio_clocks[pio].assert));
-		
-	/* Set the DMA enable/disable flag */
-	reg = inb(hwif->dma_base + 0x02 + 8*controller);
-	reg |= 1<<((drive->dn&1)+5);
-	outb(reg, hwif->dma_base + 0x02 + 8*controller);
 }
 
 static void cs5520_set_dma_mode(ide_drive_t *drive, const u8 speed)
@@ -105,45 +89,17 @@ static void cs5520_set_dma_mode(ide_drive_t *drive, const u8 speed)
 	cs5520_set_pio_mode(drive, 0);
 }
 
-/*
- *	We wrap the DMA activate to set the vdma flag. This is needed
- *	so that the IDE DMA layer issues PIO not DMA commands over the
- *	DMA channel
- */
- 
-static int cs5520_dma_on(ide_drive_t *drive)
-{
-	/* ATAPI is harder so leave it for now */
-	drive->vdma = 1;
-	return 0;
-}
+static const struct ide_port_ops cs5520_port_ops = {
+	.set_pio_mode		= cs5520_set_pio_mode,
+	.set_dma_mode		= cs5520_set_dma_mode,
+};
 
-static void __devinit init_hwif_cs5520(ide_hwif_t *hwif)
-{
-	hwif->set_pio_mode = &cs5520_set_pio_mode;
-	hwif->set_dma_mode = &cs5520_set_dma_mode;
-
-	if (hwif->dma_base == 0)
-		return;
-
-	hwif->ide_dma_on = &cs5520_dma_on;
-}
-
-#define DECLARE_CS_DEV(name_str)				\
-	{							\
-		.name		= name_str,			\
-		.init_hwif	= init_hwif_cs5520,		\
-		.host_flags	= IDE_HFLAG_ISA_PORTS |		\
-				  IDE_HFLAG_CS5520 |		\
-				  IDE_HFLAG_VDMA |		\
-				  IDE_HFLAG_NO_ATAPI_DMA |	\
-				  IDE_HFLAG_BOOTABLE,		\
-		.pio_mask	= ATA_PIO4,			\
-	}
-
-static const struct ide_port_info cyrix_chipsets[] __devinitdata = {
-	/* 0 */ DECLARE_CS_DEV("Cyrix 5510"),
-	/* 1 */ DECLARE_CS_DEV("Cyrix 5520")
+static const struct ide_port_info cyrix_chipset __devinitdata = {
+	.name		= DRV_NAME,
+	.enablebits	= { { 0x60, 0x01, 0x01 }, { 0x60, 0x02, 0x02 } },
+	.port_ops	= &cs5520_port_ops,
+	.host_flags	= IDE_HFLAG_ISA_PORTS | IDE_HFLAG_CS5520,
+	.pio_mask	= ATA_PIO4,
 };
 
 /*
@@ -154,20 +110,22 @@ static const struct ide_port_info cyrix_chipsets[] __devinitdata = {
  
 static int __devinit cs5520_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	const struct ide_port_info *d = &cyrix_chipsets[id->driver_data];
-	u8 idx[4] = { 0xff, 0xff, 0xff, 0xff };
+	const struct ide_port_info *d = &cyrix_chipset;
+	hw_regs_t hw[4], *hws[] = { NULL, NULL, NULL, NULL };
 
 	ide_setup_pci_noise(dev, d);
 
 	/* We must not grab the entire device, it has 'ISA' space in its
-	   BARS too and we will freak out other bits of the kernel */
-	if (pci_enable_device_bars(dev, 1<<2)) {
+	 * BARS too and we will freak out other bits of the kernel
+	 */
+	if (pci_enable_device_io(dev)) {
 		printk(KERN_WARNING "%s: Unable to enable 55x0.\n", d->name);
 		return -ENODEV;
 	}
 	pci_set_master(dev);
 	if (pci_set_dma_mask(dev, DMA_32BIT_MASK)) {
-		printk(KERN_WARNING "cs5520: No suitable DMA available.\n");
+		printk(KERN_WARNING "%s: No suitable DMA available.\n",
+			d->name);
 		return -ENODEV;
 	}
 
@@ -176,11 +134,9 @@ static int __devinit cs5520_init_one(struct pci_dev *dev, const struct pci_devic
 	 *	do all the device setup for us
 	 */
 
-	ide_pci_setup_ports(dev, d, 14, &idx[0]);
+	ide_pci_setup_ports(dev, d, 14, &hw[0], &hws[0]);
 
-	ide_device_add(idx);
-
-	return 0;
+	return ide_host_add(d, hws, NULL);
 }
 
 static const struct pci_device_id cs5520_pci_tbl[] = {

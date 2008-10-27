@@ -9,9 +9,6 @@
 #ifndef _ASM_PAGE_H
 #define _ASM_PAGE_H
 
-
-#ifdef __KERNEL__
-
 #include <spaces.h>
 
 /*
@@ -36,6 +33,9 @@
 
 #include <linux/pfn.h>
 #include <asm/io.h>
+
+extern void build_clear_page(void);
+extern void build_copy_page(void);
 
 /*
  * It's normally defined only for FLATMEM config but it's
@@ -93,6 +93,7 @@ typedef struct { unsigned long pte; } pte_t;
 #define pte_val(x)	((x).pte)
 #define __pte(x)	((pte_t) { (x) } )
 #endif
+typedef struct page *pgtable_t;
 
 /*
  * For 3-level pagetables we defines these ourselves, for 2-level the
@@ -135,9 +136,6 @@ typedef struct { unsigned long pgprot; } pgprot_t;
 #define ptep_buddy(x)	((pte_t *)((unsigned long)(x) ^ sizeof(pte_t)))
 
 #endif /* !__ASSEMBLY__ */
-
-/* to align the pointer to the (next) page boundary */
-#define PAGE_ALIGN(addr)	(((addr) + PAGE_SIZE - 1) & PAGE_MASK)
 
 /*
  * __pa()/__va() should be used only during mem init.
@@ -189,7 +187,5 @@ typedef struct { unsigned long pgprot; } pgprot_t;
 
 #include <asm-generic/memory_model.h>
 #include <asm-generic/page.h>
-
-#endif /* defined (__KERNEL__) */
 
 #endif /* _ASM_PAGE_H */

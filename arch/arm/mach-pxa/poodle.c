@@ -21,7 +21,7 @@
 #include <linux/pm.h>
 #include <linux/delay.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/irq.h>
 #include <asm/setup.h>
@@ -31,14 +31,17 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/mmc.h>
-#include <asm/arch/udc.h>
-#include <asm/arch/irda.h>
-#include <asm/arch/poodle.h>
-#include <asm/arch/pxafb.h>
-#include <asm/arch/sharpsl.h>
-#include <asm/arch/ssp.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-regs.h>
+#include <mach/pxa2xx-gpio.h>
+#include <mach/mmc.h>
+#include <mach/udc.h>
+#include <mach/i2c.h>
+#include <mach/irda.h>
+#include <mach/poodle.h>
+#include <mach/pxafb.h>
+#include <mach/sharpsl.h>
+#include <mach/ssp.h>
 
 #include <asm/hardware/scoop.h>
 #include <asm/hardware/locomo.h>
@@ -164,7 +167,7 @@ static struct resource poodlets_resources[] = {
 	},
 };
 
-static unsigned long poodle_get_hsync_len(void)
+static unsigned long poodle_get_hsync_invperiod(void)
 {
 	return 0;
 }
@@ -174,9 +177,9 @@ static void poodle_null_hsync(void)
 }
 
 static struct corgits_machinfo  poodle_ts_machinfo = {
-	.get_hsync_len   = poodle_get_hsync_len,
-	.put_hsync       = poodle_null_hsync,
-	.wait_hsync      = poodle_null_hsync,
+	.get_hsync_invperiod	= poodle_get_hsync_invperiod,
+	.put_hsync       	= poodle_null_hsync,
+	.wait_hsync      	= poodle_null_hsync,
 };
 
 static struct platform_device poodle_ts_device = {
@@ -215,12 +218,10 @@ static int poodle_mci_init(struct device *dev, irq_handler_t poodle_detect_int, 
 	err = request_irq(POODLE_IRQ_GPIO_nSD_DETECT, poodle_detect_int,
 			  IRQF_DISABLED | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 			  "MMC card detect", data);
-	if (err) {
+	if (err)
 		printk(KERN_ERR "poodle_mci_init: MMC/SD: can't request MMC card detect IRQ\n");
-		return -1;
-	}
 
-	return 0;
+	return err;
 }
 
 static void poodle_mci_setpower(struct device *dev, unsigned int vdd)
@@ -267,6 +268,7 @@ static void poodle_irda_transceiver_mode(struct device *dev, int mode)
 	} else {
 		GPCR(POODLE_GPIO_IR_ON) = GPIO_bit(POODLE_GPIO_IR_ON);
 	}
+	pxa2xx_transceiver_mode(dev, mode);
 }
 
 static struct pxaficp_platform_data poodle_ficp_platform_data = {
@@ -327,13 +329,11 @@ static struct platform_device *devices[] __initdata = {
 
 static void poodle_poweroff(void)
 {
-	RCSR = RCSR_HWR | RCSR_WDR | RCSR_SMR | RCSR_GPR;
 	arm_machine_restart('h');
 }
 
 static void poodle_restart(char mode)
 {
-	RCSR = RCSR_HWR | RCSR_WDR | RCSR_SMR | RCSR_GPR;
 	arm_machine_restart('h');
 }
 
@@ -388,6 +388,7 @@ static void __init poodle_init(void)
 	pxa_set_udc_info(&udc_info);
 	pxa_set_mci_info(&poodle_mci_platform_data);
 	pxa_set_ficp_info(&poodle_ficp_platform_data);
+	pxa_set_i2c_info(NULL);
 
 	platform_scoop_config = &poodle_pcmcia_config;
 

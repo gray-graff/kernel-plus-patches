@@ -7,8 +7,6 @@
  *	Andi Kleen		<ak@muc.de>
  *	Alexey Kuznetsov	<kuznet@ms2.inr.ac.ru>
  *
- *	$Id: exthdrs.c,v 1.13 2001/06/19 15:58:56 davem Exp $
- *
  *	This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
  *      as published by the Free Software Foundation; either version
@@ -32,6 +30,7 @@
 #include <linux/in6.h>
 #include <linux/icmpv6.h>
 
+#include <net/dst.h>
 #include <net/sock.h>
 #include <net/snmp.h>
 
@@ -307,38 +306,6 @@ static int ipv6_destopt_rcv(struct sk_buff *skb)
 	return -1;
 }
 
-static struct inet6_protocol destopt_protocol = {
-	.handler	=	ipv6_destopt_rcv,
-	.flags		=	INET6_PROTO_NOPOLICY | INET6_PROTO_GSO_EXTHDR,
-};
-
-void __init ipv6_destopt_init(void)
-{
-	if (inet6_add_protocol(&destopt_protocol, IPPROTO_DSTOPTS) < 0)
-		printk(KERN_ERR "ipv6_destopt_init: Could not register protocol\n");
-}
-
-/********************************
-  NONE header. No data in packet.
- ********************************/
-
-static int ipv6_nodata_rcv(struct sk_buff *skb)
-{
-	kfree_skb(skb);
-	return 0;
-}
-
-static struct inet6_protocol nodata_protocol = {
-	.handler	=	ipv6_nodata_rcv,
-	.flags		=	INET6_PROTO_NOPOLICY,
-};
-
-void __init ipv6_nodata_init(void)
-{
-	if (inet6_add_protocol(&nodata_protocol, IPPROTO_NONE) < 0)
-		printk(KERN_ERR "ipv6_nodata_init: Could not register protocol\n");
-}
-
 /********************************
   Routing header.
  ********************************/
@@ -352,7 +319,7 @@ static int ipv6_rthdr_rcv(struct sk_buff *skb)
 	int n, i;
 	struct ipv6_rt_hdr *hdr;
 	struct rt0_hdr *rthdr;
-	int accept_source_route = ipv6_devconf.accept_source_route;
+	int accept_source_route = dev_net(skb->dev)->ipv6.devconf_all->accept_source_route;
 
 	idev = in6_dev_get(skb->dev);
 	if (idev) {
@@ -476,7 +443,7 @@ looped_back:
 			kfree_skb(skb);
 			return -1;
 		}
-		if (!ipv6_chk_home_addr(addr)) {
+		if (!ipv6_chk_home_addr(dev_net(skb->dst->dev), addr)) {
 			IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
 					 IPSTATS_MIB_INADDRERRORS);
 			kfree_skb(skb);
@@ -536,11 +503,47 @@ static struct inet6_protocol rthdr_protocol = {
 	.flags		=	INET6_PROTO_NOPOLICY | INET6_PROTO_GSO_EXTHDR,
 };
 
-void __init ipv6_rthdr_init(void)
-{
-	if (inet6_add_protocol(&rthdr_protocol, IPPROTO_ROUTING) < 0)
-		printk(KERN_ERR "ipv6_rthdr_init: Could not register protocol\n");
+static struct inet6_protocol destopt_protocol = {
+	.handler	=	ipv6_destopt_rcv,
+	.flags		=	INET6_PROTO_NOPOLICY | INET6_PROTO_GSO_EXTHDR,
 };
+
+static struct inet6_protocol nodata_protocol = {
+	.handler	=	dst_discard,
+	.flags		=	INET6_PROTO_NOPOLICY,
+};
+
+int __init ipv6_exthdrs_init(void)
+{
+	int ret;
+
+	ret = inet6_add_protocol(&rthdr_protocol, IPPROTO_ROUTING);
+	if (ret)
+		goto out;
+
+	ret = inet6_add_protocol(&destopt_protocol, IPPROTO_DSTOPTS);
+	if (ret)
+		goto out_rthdr;
+
+	ret = inet6_add_protocol(&nodata_protocol, IPPROTO_NONE);
+	if (ret)
+		goto out_destopt;
+
+out:
+	return ret;
+out_rthdr:
+	inet6_del_protocol(&rthdr_protocol, IPPROTO_ROUTING);
+out_destopt:
+	inet6_del_protocol(&destopt_protocol, IPPROTO_DSTOPTS);
+	goto out;
+};
+
+void ipv6_exthdrs_exit(void)
+{
+	inet6_del_protocol(&nodata_protocol, IPPROTO_NONE);
+	inet6_del_protocol(&destopt_protocol, IPPROTO_DSTOPTS);
+	inet6_del_protocol(&rthdr_protocol, IPPROTO_ROUTING);
+}
 
 /**********************************
   Hop-by-hop options.

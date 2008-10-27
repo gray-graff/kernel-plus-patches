@@ -143,7 +143,10 @@ void cfg80211_put_dev(struct cfg80211_registered_device *drv)
 int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
 			char *newname)
 {
+	struct cfg80211_registered_device *drv;
 	int idx, taken = -1, result, digits;
+
+	mutex_lock(&cfg80211_drv_mutex);
 
 	/* prohibit calling the thing phy%d when %d is not its number */
 	sscanf(newname, PHY_NAME "%d%n", &idx, &taken);
@@ -156,14 +159,30 @@ int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
 		 * deny the name if it is phy<idx> where <idx> is printed
 		 * without leading zeroes. taken == strlen(newname) here
 		 */
+		result = -EINVAL;
 		if (taken == strlen(PHY_NAME) + digits)
-			return -EINVAL;
+			goto out_unlock;
 	}
 
-	/* this will check for collisions */
+
+	/* Ignore nop renames */
+	result = 0;
+	if (strcmp(newname, dev_name(&rdev->wiphy.dev)) == 0)
+		goto out_unlock;
+
+	/* Ensure another device does not already have this name. */
+	list_for_each_entry(drv, &cfg80211_drv_list, list) {
+		result = -EINVAL;
+		if (strcmp(newname, dev_name(&drv->wiphy.dev)) == 0)
+			goto out_unlock;
+	}
+
+	/* this will only check for collisions in sysfs
+	 * which is not even always compiled in.
+	 */
 	result = device_rename(&rdev->wiphy.dev, newname);
 	if (result)
-		return result;
+		goto out_unlock;
 
 	if (!debugfs_rename(rdev->wiphy.debugfsdir->d_parent,
 			    rdev->wiphy.debugfsdir,
@@ -172,9 +191,13 @@ int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
 		printk(KERN_ERR "cfg80211: failed to rename debugfs dir to %s!\n",
 		       newname);
 
-	nl80211_notify_dev_rename(rdev);
+	result = 0;
+out_unlock:
+	mutex_unlock(&cfg80211_drv_mutex);
+	if (result == 0)
+		nl80211_notify_dev_rename(rdev);
 
-	return 0;
+	return result;
 }
 
 /* exported functions */
@@ -183,6 +206,9 @@ struct wiphy *wiphy_new(struct cfg80211_ops *ops, int sizeof_priv)
 {
 	struct cfg80211_registered_device *drv;
 	int alloc_size;
+
+	WARN_ON(!ops->add_key && ops->del_key);
+	WARN_ON(ops->add_key && !ops->del_key);
 
 	alloc_size = sizeof(*drv) + sizeof_priv;
 
@@ -229,6 +255,47 @@ int wiphy_register(struct wiphy *wiphy)
 {
 	struct cfg80211_registered_device *drv = wiphy_to_dev(wiphy);
 	int res;
+	enum ieee80211_band band;
+	struct ieee80211_supported_band *sband;
+	bool have_band = false;
+	int i;
+
+	/* sanity check supported bands/channels */
+	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+		sband = wiphy->bands[band];
+		if (!sband)
+			continue;
+
+		sband->band = band;
+
+		if (!sband->n_channels || !sband->n_bitrates) {
+			WARN_ON(1);
+			return -EINVAL;
+		}
+
+		for (i = 0; i < sband->n_channels; i++) {
+			sband->channels[i].orig_flags =
+				sband->channels[i].flags;
+			sband->channels[i].orig_mag =
+				sband->channels[i].max_antenna_gain;
+			sband->channels[i].orig_mpwr =
+				sband->channels[i].max_power;
+			sband->channels[i].band = band;
+		}
+
+		have_band = true;
+	}
+
+	if (!have_band) {
+		WARN_ON(1);
+		return -EINVAL;
+	}
+
+	/* check and set up bitrates */
+	ieee80211_set_bitrate_flags(wiphy);
+
+	/* set up regulatory info */
+	wiphy_update_regulatory(wiphy);
 
 	mutex_lock(&cfg80211_drv_mutex);
 

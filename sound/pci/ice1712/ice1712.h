@@ -333,6 +333,8 @@ struct snd_ice1712 {
 	unsigned int has_spdif: 1;	/* VT1720/4 - has SPDIF I/O */
 	unsigned int force_pdma4: 1;	/* VT1720/4 - PDMA4 as non-spdif */
 	unsigned int force_rdma1: 1;	/* VT1720/4 - RDMA1 as non-spdif */
+	unsigned int midi_output: 1;	/* VT1720/4: MIDI output triggered */
+	unsigned int midi_input: 1;	/* VT1720/4: MIDI input triggered */
 	unsigned int num_total_dacs;	/* total DACs */
 	unsigned int num_total_adcs;	/* total ADCs */
 	unsigned int cur_rate;		/* current rate */
@@ -366,41 +368,15 @@ struct snd_ice1712 {
 	struct mutex gpio_mutex;
 
 	/* other board-specific data */
-	union {
-		/* additional i2c devices for EWS boards */
-		struct snd_i2c_device *i2cdevs[3];
-		/* AC97 register cache for Aureon */
-		struct aureon_spec {
-			unsigned short stac9744[64];
-			unsigned int cs8415_mux;
-			unsigned short master[2];
-			unsigned short vol[8];
-			unsigned char pca9554_out;
-		} aureon;
-		/* AC97 register cache for Phase28 */
-		struct phase28_spec {
-			unsigned short master[2];
-			unsigned short vol[8];
-		} phase28;
-		/* a non-standard I2C device for revo51 */
-		struct revo51_spec {
-			struct snd_i2c_device *dev;
-			struct snd_pt2258 *pt2258;
-		} revo51;
-		/* Hoontech-specific setting */
-		struct hoontech_spec {
-			unsigned char boxbits[4];
-			unsigned int config;
-			unsigned short boxconfig[4];
-		} hoontech;
-		struct {
-			struct ak4114 *ak4114;
-			unsigned int analog: 1;
-		} juli;
-		struct {
-			struct ak4114 *ak4114;
-		} prodigy192;
-	} spec;
+	void *spec;
+
+	/* VT172x specific */
+	int pro_rate_default;
+	int (*is_spdif_master)(struct snd_ice1712 *ice);
+	unsigned int (*get_rate)(struct snd_ice1712 *ice);
+	void (*set_rate)(struct snd_ice1712 *ice, unsigned int rate);
+	unsigned char (*set_mclk)(struct snd_ice1712 *ice, unsigned int rate);
+	void (*set_spdif_clock)(struct snd_ice1712 *ice);
 
 };
 
@@ -464,10 +440,14 @@ int snd_ice1712_gpio_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_valu
 static inline void snd_ice1712_gpio_write_bits(struct snd_ice1712 *ice,
 					       unsigned int mask, unsigned int bits)
 {
+	unsigned val;
+
 	ice->gpio.direction |= mask;
 	snd_ice1712_gpio_set_dir(ice, ice->gpio.direction);
-	snd_ice1712_gpio_set_mask(ice, ~mask);
-	snd_ice1712_gpio_write(ice, mask & bits);
+	val = snd_ice1712_gpio_read(ice);
+	val &= ~mask;
+	val |= mask & bits;
+	snd_ice1712_gpio_write(ice, val);
 }
 
 static inline int snd_ice1712_gpio_read_bits(struct snd_ice1712 *ice,

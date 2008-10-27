@@ -60,7 +60,7 @@
 /* ======================== Module parameters ======================== */
 
 
-MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>, Jose Orlando Pereira <jop@di.uminho.pt>");
+MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Bluetooth driver for the 3Com Bluetooth PCMCIA card");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE("BT3CPCC.bin");
@@ -470,7 +470,8 @@ static int bt3c_hci_ioctl(struct hci_dev *hdev, unsigned int cmd, unsigned long 
 /* ======================== Card services HCI interaction ======================== */
 
 
-static int bt3c_load_firmware(bt3c_info_t *info, unsigned char *firmware, int count)
+static int bt3c_load_firmware(bt3c_info_t *info, const unsigned char *firmware,
+			      int count)
 {
 	char *ptr = (char *) firmware;
 	char b[9];
@@ -704,7 +705,7 @@ static int next_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *
 
 static int bt3c_config(struct pcmcia_device *link)
 {
-	static kio_addr_t base[5] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x0 };
+	static unsigned int base[5] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x0 };
 	bt3c_info_t *info = link->priv;
 	tuple_t tuple;
 	u_short buf[256];

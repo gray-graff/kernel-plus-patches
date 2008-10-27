@@ -2,7 +2,7 @@
 #define _ASM_X86_64_UNISTD_H_
 
 #ifndef __SYSCALL
-#define __SYSCALL(a,b)
+#define __SYSCALL(a, b)
 #endif
 
 /*
@@ -290,7 +290,7 @@ __SYSCALL(__NR_rt_sigtimedwait, sys_rt_sigtimedwait)
 #define __NR_rt_sigqueueinfo			129
 __SYSCALL(__NR_rt_sigqueueinfo, sys_rt_sigqueueinfo)
 #define __NR_rt_sigsuspend			130
-__SYSCALL(__NR_rt_sigsuspend, stub_rt_sigsuspend)
+__SYSCALL(__NR_rt_sigsuspend, sys_rt_sigsuspend)
 #define __NR_sigaltstack			131
 __SYSCALL(__NR_sigaltstack, stub_sigaltstack)
 #define __NR_utime				132
@@ -629,12 +629,31 @@ __SYSCALL(__NR_utimensat, sys_utimensat)
 __SYSCALL(__NR_epoll_pwait, sys_epoll_pwait)
 #define __NR_signalfd				282
 __SYSCALL(__NR_signalfd, sys_signalfd)
-#define __NR_timerfd				283
-__SYSCALL(__NR_timerfd, sys_timerfd)
+#define __NR_timerfd_create			283
+__SYSCALL(__NR_timerfd_create, sys_timerfd_create)
 #define __NR_eventfd				284
 __SYSCALL(__NR_eventfd, sys_eventfd)
 #define __NR_fallocate				285
 __SYSCALL(__NR_fallocate, sys_fallocate)
+#define __NR_timerfd_settime			286
+__SYSCALL(__NR_timerfd_settime, sys_timerfd_settime)
+#define __NR_timerfd_gettime			287
+__SYSCALL(__NR_timerfd_gettime, sys_timerfd_gettime)
+#define __NR_paccept				288
+__SYSCALL(__NR_paccept, sys_paccept)
+#define __NR_signalfd4				289
+__SYSCALL(__NR_signalfd4, sys_signalfd4)
+#define __NR_eventfd2				290
+__SYSCALL(__NR_eventfd2, sys_eventfd2)
+#define __NR_epoll_create1			291
+__SYSCALL(__NR_epoll_create1, sys_epoll_create1)
+#define __NR_dup3				292
+__SYSCALL(__NR_dup3, sys_dup3)
+#define __NR_pipe2				293
+__SYSCALL(__NR_pipe2, sys_pipe2)
+#define __NR_inotify_init1			294
+__SYSCALL(__NR_inotify_init1, sys_inotify_init1)
+
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

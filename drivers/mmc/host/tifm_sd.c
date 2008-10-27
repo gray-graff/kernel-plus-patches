@@ -180,7 +180,7 @@ static void tifm_sd_transfer_data(struct tifm_sd *host)
 			host->sg_pos++;
 			if (host->sg_pos == host->sg_len) {
 				if ((r_data->flags & MMC_DATA_WRITE)
-				    && DATA_CARRY)
+				    && (host->cmd_flags & DATA_CARRY))
 					writel(host->bounce_buf_data[0],
 					       host->dev->addr
 					       + SOCK_MMCSD_DATA);
@@ -973,7 +973,7 @@ static int tifm_sd_probe(struct tifm_dev *sock)
 
 	mmc->ops = &tifm_sd_ops;
 	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
-	mmc->caps = MMC_CAP_4_BIT_DATA | MMC_CAP_MULTIWRITE;
+	mmc->caps = MMC_CAP_4_BIT_DATA;
 	mmc->f_min = 20000000 / 60;
 	mmc->f_max = 24000000;
 

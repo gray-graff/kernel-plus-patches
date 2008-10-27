@@ -6,7 +6,9 @@
 #ifndef __ARCH_UM_UACCESS_H
 #define __ARCH_UM_UACCESS_H
 
-#include "asm/fixmap.h"
+#include <asm/elf.h>
+#include <asm/fixmap.h>
+#include "sysdep/archsetjmp.h"
 
 #define __under_task_size(addr, size) \
 	(((unsigned long) (addr) < TASK_SIZE) && \
@@ -32,7 +34,6 @@ extern int copy_to_user(void __user *to, const void *from, int n);
 
 extern int __do_copy_to_user(void *to, const void *from, int n,
 			     void **fault_addr, jmp_buf **fault_catcher);
-extern void __do_copy(void *to, const void *from, int n);
 
 /*
  * strncpy_from_user: - Copy a NUL terminated string from userspace.

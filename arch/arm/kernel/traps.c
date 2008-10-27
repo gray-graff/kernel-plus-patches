@@ -19,6 +19,7 @@
 #include <linux/kallsyms.h>
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/kprobes.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
@@ -45,15 +46,6 @@ __setup("user_debug=", user_debug_setup);
 #endif
 
 static void dump_mem(const char *str, unsigned long bottom, unsigned long top);
-
-static inline int in_exception_text(unsigned long ptr)
-{
-	extern char __exception_text_start[];
-	extern char __exception_text_end[];
-
-	return ptr >= (unsigned long)&__exception_text_start &&
-	       ptr < (unsigned long)&__exception_text_end;
-}
 
 void dump_backtrace_entry(unsigned long where, unsigned long from, unsigned long frame)
 {
@@ -296,14 +288,28 @@ void unregister_undef_hook(struct undef_hook *hook)
 	spin_unlock_irqrestore(&undef_lock, flags);
 }
 
+static int call_undef_hook(struct pt_regs *regs, unsigned int instr)
+{
+	struct undef_hook *hook;
+	unsigned long flags;
+	int (*fn)(struct pt_regs *regs, unsigned int instr) = NULL;
+
+	spin_lock_irqsave(&undef_lock, flags);
+	list_for_each_entry(hook, &undef_hook, node)
+		if ((instr & hook->instr_mask) == hook->instr_val &&
+		    (regs->ARM_cpsr & hook->cpsr_mask) == hook->cpsr_val)
+			fn = hook->fn;
+	spin_unlock_irqrestore(&undef_lock, flags);
+
+	return fn ? fn(regs, instr) : 1;
+}
+
 asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 {
 	unsigned int correction = thumb_mode(regs) ? 2 : 4;
 	unsigned int instr;
-	struct undef_hook *hook;
 	siginfo_t info;
 	void __user *pc;
-	unsigned long flags;
 
 	/*
 	 * According to the ARM ARM, PC is 2 or 4 bytes ahead,
@@ -322,17 +328,19 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 		get_user(instr, (u32 __user *)pc);
 	}
 
-	spin_lock_irqsave(&undef_lock, flags);
-	list_for_each_entry(hook, &undef_hook, node) {
-		if ((instr & hook->instr_mask) == hook->instr_val &&
-		    (regs->ARM_cpsr & hook->cpsr_mask) == hook->cpsr_val) {
-			if (hook->fn(regs, instr) == 0) {
-				spin_unlock_irqrestore(&undef_lock, flags);
-				return;
-			}
-		}
+#ifdef CONFIG_KPROBES
+	/*
+	 * It is possible to have recursive kprobes, so we can't call
+	 * the kprobe trap handler with the undef_lock held.
+	 */
+	if (instr == KPROBE_BREAKPOINT_INSTRUCTION && !user_mode(regs)) {
+		kprobe_trap_handler(regs, instr);
+		return;
 	}
-	spin_unlock_irqrestore(&undef_lock, flags);
+#endif
+
+	if (call_undef_hook(regs, instr) == 0)
+		return;
 
 #ifdef CONFIG_DEBUG_USER
 	if (user_debug & UDBG_UNDEFINED) {
@@ -704,6 +712,11 @@ void abort(void)
 EXPORT_SYMBOL(abort);
 
 void __init trap_init(void)
+{
+	return;
+}
+
+void __init early_trap_init(void)
 {
 	unsigned long vectors = CONFIG_VECTORS_BASE;
 	extern char __stubs_start[], __stubs_end[];

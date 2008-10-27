@@ -117,6 +117,7 @@ int pci_cleanup_aer_uncorrect_error_status(struct pci_dev *dev)
 	return 0;
 }
 
+#if 0
 int pci_cleanup_aer_correct_error_status(struct pci_dev *dev)
 {
 	int pos;
@@ -131,6 +132,7 @@ int pci_cleanup_aer_correct_error_status(struct pci_dev *dev)
 
 	return 0;
 }
+#endif  /*  0  */
 
 static int find_device_iter(struct device *device, void *data)
 {
@@ -219,9 +221,9 @@ static void report_error_detected(struct pci_dev *dev, void *data)
 			 * of a driver for this device is unaware of
 			 * its hw state.
 			 */
-			printk(KERN_DEBUG "Device ID[%s] has %s\n",
-					dev->dev.bus_id, (dev->driver) ?
-					"no AER-aware driver" : "no driver");
+			dev_printk(KERN_DEBUG, &dev->dev, "device has %s\n",
+				   dev->driver ?
+				   "no AER-aware driver" : "no driver");
 		}
 		return;
 	}
@@ -302,7 +304,7 @@ static pci_ers_result_t broadcast_error_message(struct pci_dev *dev,
 {
 	struct aer_broadcast_data result_data;
 
-	printk(KERN_DEBUG "Broadcast %s message\n", error_mesg);
+	dev_printk(KERN_DEBUG, &dev->dev, "broadcast %s message\n", error_mesg);
 	result_data.state = state;
 	if (cb == report_error_detected)
 		result_data.result = PCI_ERS_RESULT_CAN_RECOVER;
@@ -402,18 +404,16 @@ static pci_ers_result_t reset_link(struct pcie_device *aerdev,
 			data.aer_driver =
 				to_service_driver(aerdev->device.driver);
 		} else {
-			printk(KERN_DEBUG "No link-reset support to Device ID"
-				"[%s]\n",
-				dev->dev.bus_id);
+			dev_printk(KERN_DEBUG, &dev->dev, "no link-reset "
+				   "support\n");
 			return PCI_ERS_RESULT_DISCONNECT;
 		}
 	}
 
 	status = data.aer_driver->reset_link(udev);
 	if (status != PCI_ERS_RESULT_RECOVERED) {
-		printk(KERN_DEBUG "Link reset at upstream Device ID"
-			"[%s] failed\n",
-			udev->dev.bus_id);
+		dev_printk(KERN_DEBUG, &dev->dev, "link reset at upstream "
+			   "device %s failed\n", pci_name(udev));
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
 
@@ -509,10 +509,12 @@ static void handle_error_source(struct pcie_device * aerdev,
 	} else {
 		status = do_recovery(aerdev, dev, info.severity);
 		if (status == PCI_ERS_RESULT_RECOVERED) {
-			printk(KERN_DEBUG "AER driver successfully recovered\n");
+			dev_printk(KERN_DEBUG, &dev->dev, "AER driver "
+				   "successfully recovered\n");
 		} else {
 			/* TODO: Should kernel panic here? */
-			printk(KERN_DEBUG "AER driver didn't recover\n");
+			dev_printk(KERN_DEBUG, &dev->dev, "AER driver didn't "
+				   "recover\n");
 		}
 	}
 }
@@ -689,7 +691,7 @@ static void aer_isr_one_error(struct pcie_device *p_device,
 			e_info.flags |= AER_MULTI_ERROR_VALID_FLAG;
 		if (!(s_device = find_source_device(p_device->port, id))) {
 			printk(KERN_DEBUG "%s->can't find device of ID%04x\n",
-				__FUNCTION__, id);
+				__func__, id);
 			continue;
 		}
 		if (get_device_error_info(to_pci_dev(s_device), &e_info) ==
@@ -757,5 +759,4 @@ EXPORT_SYMBOL_GPL(pci_find_aer_capability);
 EXPORT_SYMBOL_GPL(pci_enable_pcie_error_reporting);
 EXPORT_SYMBOL_GPL(pci_disable_pcie_error_reporting);
 EXPORT_SYMBOL_GPL(pci_cleanup_aer_uncorrect_error_status);
-EXPORT_SYMBOL_GPL(pci_cleanup_aer_correct_error_status);
 

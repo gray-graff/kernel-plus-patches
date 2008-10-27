@@ -294,10 +294,10 @@ static int run(mddev_t *mddev)
 	}
 	conf->nfaults = 0;
 
-	ITERATE_RDEV(mddev, rdev, tmp)
+	rdev_for_each(rdev, tmp, mddev)
 		conf->rdev = rdev;
 
-	mddev->array_size = mddev->size;
+	mddev->array_sectors = mddev->size * 2;
 	mddev->private = conf;
 
 	reconfig(mddev, mddev->layout, -1);

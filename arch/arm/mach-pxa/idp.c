@@ -25,17 +25,18 @@
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <asm/arch/pxa-regs.h>
-#include <asm/arch/idp.h>
-#include <asm/arch/pxafb.h>
-#include <asm/arch/bitfield.h>
-#include <asm/arch/mmc.h>
+#include <mach/pxa-regs.h>
+#include <mach/pxa2xx-gpio.h>
+#include <mach/idp.h>
+#include <mach/pxafb.h>
+#include <mach/bitfield.h>
+#include <mach/mmc.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -54,7 +55,7 @@ static struct resource smc91x_resources[] = {
 	[1] = {
 		.start	= IRQ_GPIO(4),
 		.end	= IRQ_GPIO(4),
-		.flags	= IORESOURCE_IRQ,
+		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE,
 	}
 };
 

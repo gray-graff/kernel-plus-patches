@@ -25,12 +25,12 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 
-#include <asm/arch/regs-s3c2443-clock.h>
-#include <asm/arch/reset.h>
+#include <mach/regs-s3c2443-clock.h>
+#include <mach/reset.h>
 
 #include <asm/plat-s3c24xx/s3c2443.h>
 #include <asm/plat-s3c24xx/devs.h>
@@ -43,7 +43,7 @@ static struct map_desc s3c2443_iodesc[] __initdata = {
 };
 
 struct sysdev_class s3c2443_sysclass = {
-	set_kset_name("s3c2443-core"),
+	.name = "s3c2443-core",
 };
 
 static struct sys_device s3c2443_sysdev = {

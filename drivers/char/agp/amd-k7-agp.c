@@ -41,6 +41,7 @@ static int amd_create_page_map(struct amd_page_map *page_map)
 	if (page_map->real == NULL)
 		return -ENOMEM;
 
+#ifndef CONFIG_X86
 	SetPageReserved(virt_to_page(page_map->real));
 	global_cache_flush();
 	page_map->remapped = ioremap_nocache(virt_to_gart(page_map->real),
@@ -52,6 +53,10 @@ static int amd_create_page_map(struct amd_page_map *page_map)
 		return -ENOMEM;
 	}
 	global_cache_flush();
+#else
+	set_memory_uc((unsigned long)page_map->real, 1);
+	page_map->remapped = page_map->real;
+#endif
 
 	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
 		writel(agp_bridge->scratch_page, page_map->remapped+i);
@@ -63,8 +68,12 @@ static int amd_create_page_map(struct amd_page_map *page_map)
 
 static void amd_free_page_map(struct amd_page_map *page_map)
 {
+#ifndef CONFIG_X86
 	iounmap(page_map->remapped);
 	ClearPageReserved(virt_to_page(page_map->real));
+#else
+	set_memory_wb((unsigned long)page_map->real, 1);
+#endif
 	free_page((unsigned long) page_map->real);
 }
 
@@ -305,9 +314,9 @@ static int amd_insert_memory(struct agp_memory *mem, off_t pg_start, int type)
 		j++;
 	}
 
-	if (mem->is_flushed == FALSE) {
+	if (!mem->is_flushed) {
 		global_cache_flush();
-		mem->is_flushed = TRUE;
+		mem->is_flushed = true;
 	}
 
 	for (i = 0, j = pg_start; i < mem->page_count; i++, j++) {
@@ -410,8 +419,8 @@ static int __devinit agp_amdk7_probe(struct pci_dev *pdev,
 		return -ENODEV;
 
 	j = ent - agp_amdk7_pci_table;
-	printk(KERN_INFO PFX "Detected AMD %s chipset\n",
-	       amd_agp_device_ids[j].chipset_name);
+	dev_info(&pdev->dev, "AMD %s chipset\n",
+		 amd_agp_device_ids[j].chipset_name);
 
 	bridge = agp_alloc_bridge();
 	if (!bridge)
@@ -427,19 +436,16 @@ static int __devinit agp_amdk7_probe(struct pci_dev *pdev,
 	   system controller may experience noise due to strong drive strengths
 	 */
 	if (agp_bridge->dev->device == PCI_DEVICE_ID_AMD_FE_GATE_7006) {
-		u8 cap_ptr=0;
 		struct pci_dev *gfxcard=NULL;
+
+		cap_ptr = 0;
 		while (!cap_ptr) {
 			gfxcard = pci_get_class(PCI_CLASS_DISPLAY_VGA<<8, gfxcard);
 			if (!gfxcard) {
-				printk (KERN_INFO PFX "Couldn't find an AGP VGA controller.\n");
+				dev_info(&pdev->dev, "no AGP VGA controller\n");
 				return -ENODEV;
 			}
 			cap_ptr = pci_find_capability(gfxcard, PCI_CAP_ID_AGP);
-			if (!cap_ptr) {
-				pci_dev_put(gfxcard);
-				continue;
-			}
 		}
 
 		/* With so many variants of NVidia cards, it's simpler just
@@ -447,7 +453,7 @@ static int __devinit agp_amdk7_probe(struct pci_dev *pdev,
 		   (if necessary at all). */
 		if (gfxcard->vendor == PCI_VENDOR_ID_NVIDIA) {
 			agp_bridge->flags |= AGP_ERRATA_1X;
-			printk (KERN_INFO PFX "AMD 751 chipset with NVidia GeForce detected. Forcing to 1X due to errata.\n");
+			dev_info(&pdev->dev, "AMD 751 chipset with NVidia GeForce; forcing 1X due to errata\n");
 		}
 		pci_dev_put(gfxcard);
 	}
@@ -463,7 +469,7 @@ static int __devinit agp_amdk7_probe(struct pci_dev *pdev,
 			agp_bridge->flags = AGP_ERRATA_FASTWRITES;
 			agp_bridge->flags |= AGP_ERRATA_SBA;
 			agp_bridge->flags |= AGP_ERRATA_1X;
-			printk (KERN_INFO PFX "AMD 761 chipset with errata detected - disabling AGP fast writes & SBA and forcing to 1X.\n");
+			dev_info(&pdev->dev, "AMD 761 chipset with errata; disabling AGP fast writes & SBA and forcing to 1X\n");
 		}
 	}
 

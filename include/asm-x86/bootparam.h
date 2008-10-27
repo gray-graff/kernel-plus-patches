@@ -9,6 +9,18 @@
 #include <asm/ist.h>
 #include <video/edid.h>
 
+/* setup data types */
+#define SETUP_NONE			0
+#define SETUP_E820_EXT			1
+
+/* extensible setup data list node */
+struct setup_data {
+	__u64 next;
+	__u32 type;
+	__u32 len;
+	__u8 data[0];
+};
+
 struct setup_header {
 	__u8	setup_sects;
 	__u16	root_flags;
@@ -29,6 +41,7 @@ struct setup_header {
 	__u8	type_of_loader;
 	__u8	loadflags;
 #define LOADED_HIGH	(1<<0)
+#define QUIET_FLAG	(1<<5)
 #define KEEP_SEGMENTS	(1<<6)
 #define CAN_USE_HEAP	(1<<7)
 	__u16	setup_move_size;
@@ -46,6 +59,9 @@ struct setup_header {
 	__u32	cmdline_size;
 	__u32	hardware_subarch;
 	__u64	hardware_subarch_data;
+	__u32	payload_offset;
+	__u32	payload_length;
+	__u64	setup_data;
 } __attribute__((packed));
 
 struct sys_desc_table {
@@ -54,13 +70,14 @@ struct sys_desc_table {
 };
 
 struct efi_info {
-	__u32 _pad1;
+	__u32 efi_loader_signature;
 	__u32 efi_systab;
 	__u32 efi_memdesc_size;
 	__u32 efi_memdesc_version;
 	__u32 efi_memmap;
 	__u32 efi_memmap_size;
-	__u32 _pad2[2];
+	__u32 efi_systab_hi;
+	__u32 efi_memmap_hi;
 };
 
 /* The so-called "zeropage" */

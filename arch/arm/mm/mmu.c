@@ -35,6 +35,7 @@ extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
  * zero-initialized data and COW.
  */
 struct page *empty_zero_page;
+EXPORT_SYMBOL(empty_zero_page);
 
 /*
  * The pmd table for the upper-most set of pages.
@@ -210,6 +211,12 @@ static struct mem_type mem_types[] = {
 				  PMD_SECT_TEX(1),
 		.domain		= DOMAIN_IO,
 	},
+	[MT_DEVICE_WC] = {	/* ioremap_wc */
+		.prot_pte	= PROT_PTE_DEVICE,
+		.prot_l1	= PMD_TYPE_TABLE,
+		.prot_sect	= PROT_SECT_DEVICE,
+		.domain		= DOMAIN_IO,
+	},
 	[MT_CACHECLEAN] = {
 		.prot_sect = PMD_TYPE_SECT | PMD_SECT_XN,
 		.domain    = DOMAIN_KERNEL,
@@ -269,6 +276,20 @@ static void __init build_mem_type_table(void)
 		if (cachepolicy >= CPOLICY_WRITEALLOC)
 			cachepolicy = CPOLICY_WRITEBACK;
 		ecc_mask = 0;
+	}
+
+	/*
+	 * On non-Xscale3 ARMv5-and-older systems, use CB=01
+	 * (Uncached/Buffered) for ioremap_wc() mappings.  On XScale3
+	 * and ARMv6+, use TEXCB=00100 mappings (Inner/Outer Uncacheable
+	 * in xsc3 parlance, Uncached Normal in ARMv6 parlance).
+	 */
+	if (cpu_is_xsc3() || cpu_arch >= CPU_ARCH_ARMv6) {
+		mem_types[MT_DEVICE_WC].prot_pte_ext |= PTE_EXT_TEX(1);
+		mem_types[MT_DEVICE_WC].prot_sect |= PMD_SECT_TEX(1);
+	} else {
+		mem_types[MT_DEVICE_WC].prot_pte |= L_PTE_BUFFERABLE;
+		mem_types[MT_DEVICE_WC].prot_sect |= PMD_SECT_BUFFERABLE;
 	}
 
 	/*
@@ -567,6 +588,55 @@ void __init iotable_init(struct map_desc *io_desc, int nr)
 		create_mapping(io_desc + i);
 }
 
+static int __init check_membank_valid(struct membank *mb)
+{
+	/*
+	 * Check whether this memory region has non-zero size.
+	 */
+	if (mb->size == 0)
+		return 0;
+
+	/*
+	 * Check whether this memory region would entirely overlap
+	 * the vmalloc area.
+	 */
+	if (phys_to_virt(mb->start) >= VMALLOC_MIN) {
+		printk(KERN_NOTICE "Ignoring RAM at %.8lx-%.8lx "
+			"(vmalloc region overlap).\n",
+			mb->start, mb->start + mb->size - 1);
+		return 0;
+	}
+
+	/*
+	 * Check whether this memory region would partially overlap
+	 * the vmalloc area.
+	 */
+	if (phys_to_virt(mb->start + mb->size) < phys_to_virt(mb->start) ||
+	    phys_to_virt(mb->start + mb->size) > VMALLOC_MIN) {
+		unsigned long newsize = VMALLOC_MIN - phys_to_virt(mb->start);
+
+		printk(KERN_NOTICE "Truncating RAM at %.8lx-%.8lx "
+			"to -%.8lx (vmalloc region overlap).\n",
+			mb->start, mb->start + mb->size - 1,
+			mb->start + newsize - 1);
+		mb->size = newsize;
+	}
+
+	return 1;
+}
+
+static void __init sanity_check_meminfo(struct meminfo *mi)
+{
+	int i;
+	int j;
+
+	for (i = 0, j = 0; i < mi->nr_banks; i++) {
+		if (check_membank_valid(&mi->bank[i]))
+			mi->bank[j++] = mi->bank[i];
+	}
+	mi->nr_banks = j;
+}
+
 static inline void prepare_page_table(struct meminfo *mi)
 {
 	unsigned long addr;
@@ -605,9 +675,11 @@ void __init reserve_node_zero(pg_data_t *pgdat)
 	 * Note that this can only be in node 0.
 	 */
 #ifdef CONFIG_XIP_KERNEL
-	reserve_bootmem_node(pgdat, __pa(&__data_start), &_end - &__data_start);
+	reserve_bootmem_node(pgdat, __pa(&__data_start), &_end - &__data_start,
+			BOOTMEM_DEFAULT);
 #else
-	reserve_bootmem_node(pgdat, __pa(&_stext), &_end - &_stext);
+	reserve_bootmem_node(pgdat, __pa(&_stext), &_end - &_stext,
+			BOOTMEM_DEFAULT);
 #endif
 
 	/*
@@ -615,7 +687,7 @@ void __init reserve_node_zero(pg_data_t *pgdat)
 	 * and can only be in node 0.
 	 */
 	reserve_bootmem_node(pgdat, __pa(swapper_pg_dir),
-			     PTRS_PER_PGD * sizeof(pgd_t));
+			     PTRS_PER_PGD * sizeof(pgd_t), BOOTMEM_DEFAULT);
 
 	/*
 	 * Hmm... This should go elsewhere, but we really really need to
@@ -638,8 +710,10 @@ void __init reserve_node_zero(pg_data_t *pgdat)
 	/* H1940 and RX3715 need to reserve this for suspend */
 
 	if (machine_is_h1940() || machine_is_rx3715()) {
-		reserve_bootmem_node(pgdat, 0x30003000, 0x1000);
-		reserve_bootmem_node(pgdat, 0x30081000, 0x1000);
+		reserve_bootmem_node(pgdat, 0x30003000, 0x1000,
+				BOOTMEM_DEFAULT);
+		reserve_bootmem_node(pgdat, 0x30081000, 0x1000,
+				BOOTMEM_DEFAULT);
 	}
 
 #ifdef CONFIG_SA1111
@@ -650,7 +724,8 @@ void __init reserve_node_zero(pg_data_t *pgdat)
 	res_size = __pa(swapper_pg_dir) - PHYS_OFFSET;
 #endif
 	if (res_size)
-		reserve_bootmem_node(pgdat, PHYS_OFFSET, res_size);
+		reserve_bootmem_node(pgdat, PHYS_OFFSET, res_size,
+				BOOTMEM_DEFAULT);
 }
 
 /*
@@ -747,6 +822,7 @@ void __init paging_init(struct meminfo *mi, struct machine_desc *mdesc)
 	void *zero_page;
 
 	build_mem_type_table();
+	sanity_check_meminfo(mi);
 	prepare_page_table(mi);
 	bootmem_init(mi);
 	devicemaps_init(mdesc);

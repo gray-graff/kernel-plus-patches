@@ -121,7 +121,7 @@ sys32_ptrace_wrapper:
 	lgfr	%r3,%r3			# long
 	llgtr	%r4,%r4			# long
 	llgfr	%r5,%r5			# long
-	jg	sys_ptrace		# branch to system call
+	jg	compat_sys_ptrace	# branch to system call
 
 	.globl	sys32_alarm_wrapper
 sys32_alarm_wrapper:
@@ -1698,14 +1698,6 @@ compat_sys_signalfd_wrapper:
 	llgfr	%r4,%r4			# compat_size_t
 	jg	compat_sys_signalfd
 
-	.globl	compat_sys_timerfd_wrapper
-compat_sys_timerfd_wrapper:
-	lgfr	%r2,%r2			# int
-	lgfr	%r3,%r3			# int
-	lgfr	%r4,%r4			# int
-	llgtr	%r5,%r5			# struct compat_itimerspec *
-	jg	compat_sys_timerfd
-
 	.globl	sys_eventfd_wrapper
 sys_eventfd_wrapper:
 	llgfr	%r2,%r2			# unsigned int
@@ -1720,3 +1712,60 @@ sys_fallocate_wrapper:
 	sllg	%r5,%r6,32		# get high word of 64bit loff_t
 	l	%r5,164(%r15)		# get low word of 64bit loff_t
 	jg	sys_fallocate
+
+	.globl	sys_timerfd_create_wrapper
+sys_timerfd_create_wrapper:
+	lgfr	%r2,%r2			# int
+	lgfr	%r3,%r3			# int
+	jg	sys_timerfd_create
+
+	.globl	compat_sys_timerfd_settime_wrapper
+compat_sys_timerfd_settime_wrapper:
+	lgfr	%r2,%r2			# int
+	lgfr	%r3,%r3			# int
+	llgtr	%r4,%r4			# struct compat_itimerspec *
+	llgtr	%r5,%r5			# struct compat_itimerspec *
+	jg	compat_sys_timerfd_settime
+
+	.globl	compat_sys_timerfd_gettime_wrapper
+compat_sys_timerfd_gettime_wrapper:
+	lgfr	%r2,%r2			# int
+	llgtr	%r3,%r3			# struct compat_itimerspec *
+	jg	compat_sys_timerfd_gettime
+
+	.globl compat_sys_signalfd4_wrapper
+compat_sys_signalfd4_wrapper:
+	lgfr	%r2,%r2			# int
+	llgtr	%r3,%r3			# compat_sigset_t *
+	llgfr	%r4,%r4			# compat_size_t
+	lgfr	%r5,%r5			# int
+	jg	compat_sys_signalfd4
+
+	.globl sys_eventfd2_wrapper
+sys_eventfd2_wrapper:
+	llgfr	%r2,%r2			# unsigned int
+	lgfr	%r3,%r3			# int
+	jg	sys_eventfd2
+
+	.globl	sys_inotify_init1_wrapper
+sys_inotify_init1_wrapper:
+	lgfr	%r2,%r2			# int
+	jg	sys_inotify_init1
+
+	.globl	sys_pipe2_wrapper
+sys_pipe2_wrapper:
+	llgtr	%r2,%r2			# u32 *
+	lgfr	%r3,%r3			# int
+	jg	sys_pipe2		# branch to system call
+
+	.globl	sys_dup3_wrapper
+sys_dup3_wrapper:
+	llgfr	%r2,%r2			# unsigned int
+	llgfr	%r3,%r3			# unsigned int
+	lgfr	%r4,%r4			# int
+	jg	sys_dup3		# branch to system call
+
+	.globl	sys_epoll_create1_wrapper
+sys_epoll_create1_wrapper:
+	lgfr	%r2,%r2			# int
+	jg	sys_epoll_create1	# branch to system call

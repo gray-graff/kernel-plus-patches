@@ -21,11 +21,10 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 
-#include <asm/semaphore.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/io.h>
 
-#include <asm/arch/clock.h>
+#include <mach/clock.h>
 #include "clock.h"
 
 /*forward declaration*/
@@ -976,7 +975,7 @@ static int __init clk_init(void)
 				(*clkp)->set_parent((*clkp), (*clkp)->parent);
 		}
 		pr_debug("%s: clock %s, rate %ld\n",
-			__FUNCTION__, (*clkp)->name, (*clkp)->rate);
+			__func__, (*clkp)->name, (*clkp)->rate);
 	}
 
 	local_clk_use(&ck_pll4);

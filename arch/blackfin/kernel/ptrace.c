@@ -185,14 +185,15 @@ void ptrace_disable(struct task_struct *child)
 {
 	unsigned long tmp;
 	/* make sure the single step bit is not set. */
-	tmp = get_reg(child, PT_SR) & ~(TRACE_BITS << 16);
-	put_reg(child, PT_SR, tmp);
+	tmp = get_reg(child, PT_SYSCFG) & ~TRACE_BITS;
+	put_reg(child, PT_SYSCFG, tmp);
 }
 
 long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	int ret;
 	int add = 0;
+	unsigned long __user *datap = (unsigned long __user *)data;
 
 	switch (request) {
 		/* when I and D space are separate, these will need to be fixed. */
@@ -219,6 +220,20 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 				copied = sizeof(tmp);
 			} else
 #endif
+#if L1_DATA_A_LENGTH != 0
+			if (addr + add >= L1_DATA_A_START
+			    && addr + add + sizeof(tmp) <= L1_DATA_A_START + L1_DATA_A_LENGTH) {
+				memcpy(&tmp, (const void *)(addr + add), sizeof(tmp));
+				copied = sizeof(tmp);
+			} else
+#endif
+#if L1_DATA_B_LENGTH != 0
+			if (addr + add >= L1_DATA_B_START
+			    && addr + add + sizeof(tmp) <= L1_DATA_B_START + L1_DATA_B_LENGTH) {
+				memcpy(&tmp, (const void *)(addr + add), sizeof(tmp));
+				copied = sizeof(tmp);
+			} else
+#endif
 			if (addr + add >= FIXED_CODE_START
 			    && addr + add + sizeof(tmp) <= FIXED_CODE_END) {
 				memcpy(&tmp, (const void *)(addr + add), sizeof(tmp));
@@ -229,7 +244,7 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 			pr_debug("ptrace: copied size %d [0x%08lx]\n", copied, tmp);
 			if (copied != sizeof(tmp))
 				break;
-			ret = put_user(tmp, (unsigned long *)data);
+			ret = put_user(tmp, datap);
 			break;
 		}
 
@@ -263,7 +278,7 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 			} else {
 				tmp = get_reg(child, addr);
 			}
-			ret = put_user(tmp, (unsigned long *)data);
+			ret = put_user(tmp, datap);
 			break;
 		}
 
@@ -286,6 +301,20 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 			if (addr + add >= L1_CODE_START
 			    && addr + add + sizeof(data) <= L1_CODE_START + L1_CODE_LENGTH) {
 				safe_dma_memcpy ((void *)(addr + add), &data, sizeof(data));
+				copied = sizeof(data);
+			} else
+#endif
+#if L1_DATA_A_LENGTH != 0
+			if (addr + add >= L1_DATA_A_START
+			    && addr + add + sizeof(data) <= L1_DATA_A_START + L1_DATA_A_LENGTH) {
+				memcpy((void *)(addr + add), &data, sizeof(data));
+				copied = sizeof(data);
+			} else
+#endif
+#if L1_DATA_B_LENGTH != 0
+			if (addr + add >= L1_DATA_B_START
+			    && addr + add + sizeof(data) <= L1_DATA_B_START + L1_DATA_B_LENGTH) {
+				memcpy((void *)(addr + add), &data, sizeof(data));
 				copied = sizeof(data);
 			} else
 #endif
@@ -389,7 +418,7 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		{
 
 			/* Get all gp regs from the child. */
-			ret = ptrace_getregs(child, (void __user *)data);
+			ret = ptrace_getregs(child, datap);
 			break;
 		}
 

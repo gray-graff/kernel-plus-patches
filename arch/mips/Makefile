@@ -12,7 +12,9 @@
 # for "archclean" cleaning up for this architecture.
 #
 
-cflags-y :=
+KBUILD_DEFCONFIG := ip22_defconfig
+
+cflags-y := -ffunction-sections
 
 #
 # Select the object file format to substitute into the linker script.
@@ -141,6 +143,10 @@ cflags-$(CONFIG_CPU_R8000)	+= -march=r8000 -Wa,--trap
 cflags-$(CONFIG_CPU_R10000)	+= $(call cc-option,-march=r10000,-march=r8000) \
 			-Wa,--trap
 
+cflags-$(CONFIG_CPU_R4000_WORKAROUNDS)	+= $(call cc-option,-mfix-r4000,)
+cflags-$(CONFIG_CPU_R4400_WORKAROUNDS)	+= $(call cc-option,-mfix-r4400,)
+cflags-$(CONFIG_CPU_DADDI_WORKAROUNDS)	+= $(call cc-option,-mno-daddi,)
+
 ifdef CONFIG_CPU_SB1
 ifdef CONFIG_SB1_PASS_1_WORKAROUNDS
 MODFLAGS	+= -msb1-pass1-workarounds
@@ -152,6 +158,8 @@ endif
 #
 libs-$(CONFIG_ARC)		+= arch/mips/fw/arc/
 libs-$(CONFIG_CFE)		+= arch/mips/fw/cfe/
+libs-$(CONFIG_SNIPROM)		+= arch/mips/fw/sni/
+libs-y				+= arch/mips/fw/lib/
 libs-$(CONFIG_SIBYTE_CFE)	+= arch/mips/sibyte/cfe/
 
 #
@@ -297,34 +305,12 @@ load-$(CONFIG_LEMOTE_FULONG) +=0xffffffff80100000
 cflags-$(CONFIG_LEMOTE_FULONG) += -Iinclude/asm-mips/mach-lemote
 
 #
-# For all MIPS, Inc. eval boards
-#
-core-$(CONFIG_MIPS_BOARDS_GEN)	+= arch/mips/mips-boards/generic/
-
-#
-# MIPS Atlas board
-#
-core-$(CONFIG_MIPS_ATLAS)	+= arch/mips/mips-boards/atlas/
-cflags-$(CONFIG_MIPS_ATLAS)	+= -Iinclude/asm-mips/mach-atlas
-cflags-$(CONFIG_MIPS_ATLAS)	+= -Iinclude/asm-mips/mach-mips
-load-$(CONFIG_MIPS_ATLAS)	+= 0xffffffff80100000
-all-$(CONFIG_MIPS_ATLAS)	:= vmlinux.srec
-
-#
 # MIPS Malta board
 #
-core-$(CONFIG_MIPS_MALTA)	+= arch/mips/mips-boards/malta/
-cflags-$(CONFIG_MIPS_MALTA)	+= -Iinclude/asm-mips/mach-mips
+core-$(CONFIG_MIPS_MALTA)	+= arch/mips/mti-malta/
+cflags-$(CONFIG_MIPS_MALTA)	+= -Iinclude/asm-mips/mach-malta
 load-$(CONFIG_MIPS_MALTA)	+= 0xffffffff80100000
-all-$(CONFIG_MIPS_MALTA)	:= vmlinux.srec
-
-#
-# MIPS SEAD board
-#
-core-$(CONFIG_MIPS_SEAD)	+= arch/mips/mips-boards/sead/
-cflags-$(CONFIG_MIPS_SEAD)	+= -Iinclude/asm-mips/mach-mips
-load-$(CONFIG_MIPS_SEAD)	+= 0xffffffff80100000
-all-$(CONFIG_MIPS_SEAD)		:= vmlinux.srec
+all-$(CONFIG_MIPS_MALTA)	:= vmlinux.bin
 
 #
 # MIPS SIM
@@ -349,14 +335,6 @@ cflags-$(CONFIG_PMC_YOSEMITE)	+= -Iinclude/asm-mips/mach-yosemite
 load-$(CONFIG_PMC_YOSEMITE)	+= 0xffffffff80100000
 
 #
-# Qemu simulating MIPS32 4Kc
-#
-core-$(CONFIG_QEMU)		+= arch/mips/qemu/
-cflags-$(CONFIG_QEMU)		+= -Iinclude/asm-mips/mach-qemu
-load-$(CONFIG_QEMU)		+= 0xffffffff80010000
-all-$(CONFIG_QEMU)		:= vmlinux.bin
-
-#
 # Basler eXcite
 #
 core-$(CONFIG_BASLER_EXCITE)	+= arch/mips/basler/excite/
@@ -375,12 +353,6 @@ load-$(CONFIG_LASAT)		+= 0xffffffff80000000
 #
 core-$(CONFIG_MACH_VR41XX)	+= arch/mips/vr41xx/common/
 cflags-$(CONFIG_MACH_VR41XX)	+= -Iinclude/asm-mips/mach-vr41xx
-
-#
-# NEC VR4133
-#
-core-$(CONFIG_NEC_CMBVR4133)	+= arch/mips/vr41xx/nec-cmbvr4133/
-load-$(CONFIG_NEC_CMBVR4133)	+= 0xffffffff80100000
 
 #
 # ZAO Networks Capcella (VR4131)
@@ -410,21 +382,21 @@ load-$(CONFIG_CASIO_E55)	+= 0xffffffff80004000
 load-$(CONFIG_TANBAC_TB022X)	+= 0xffffffff80000000
 
 #
-# Common Philips PNX8550
+# Common NXP PNX8550
 #
-core-$(CONFIG_SOC_PNX8550)	+= arch/mips/philips/pnx8550/common/
+core-$(CONFIG_SOC_PNX8550)	+= arch/mips/nxp/pnx8550/common/
 cflags-$(CONFIG_SOC_PNX8550)	+= -Iinclude/asm-mips/mach-pnx8550
 
 #
-# Philips PNX8550 JBS board
+# NXP PNX8550 JBS board
 #
-libs-$(CONFIG_PNX8550_JBS)	+= arch/mips/philips/pnx8550/jbs/
+libs-$(CONFIG_PNX8550_JBS)	+= arch/mips/nxp/pnx8550/jbs/
 #cflags-$(CONFIG_PNX8550_JBS)	+= -Iinclude/asm-mips/mach-pnx8550
 load-$(CONFIG_PNX8550_JBS)	+= 0xffffffff80060000
 
-# Philips PNX8550 STB810 board
+# NXP PNX8550 STB810 board
 #
-libs-$(CONFIG_PNX8550_STB810)	+= arch/mips/philips/pnx8550/stb810/
+libs-$(CONFIG_PNX8550_STB810)	+= arch/mips/nxp/pnx8550/stb810/
 load-$(CONFIG_PNX8550_STB810)	+= 0xffffffff80060000
 
 # NEC EMMA2RH boards
@@ -475,6 +447,23 @@ endif
 endif
 
 #
+# SGI IP28 (Indigo2 R10k)
+#
+# Set the load address to >= 0xa800000020080000 if you want to leave space for
+# symmon, 0xa800000020004000 for production kernels ?  Note that the value must
+# be 16kb aligned or the handling of the current variable will break.
+# Simplified: what IP22 does at 128MB+ in ksegN, IP28 does at 512MB+ in xkphys
+#
+ifdef CONFIG_SGI_IP28
+  ifeq ($(call cc-option-yn,-mr10k-cache-barrier=1), n)
+      $(error gcc doesn't support needed option -mr10k-cache-barrier=1)
+  endif
+endif
+core-$(CONFIG_SGI_IP28)		+= arch/mips/sgi-ip22/
+cflags-$(CONFIG_SGI_IP28)	+= -mr10k-cache-barrier=1 -Iinclude/asm-mips/mach-ip28
+load-$(CONFIG_SGI_IP28)		+= 0xa800000020004000
+
+#
 # SGI-IP32 (O2)
 #
 # Set the load address to >= 80069000 if you want to leave space for symmon,
@@ -521,19 +510,19 @@ cflags-$(CONFIG_SIBYTE_BCM1x80)	+= -Iinclude/asm-mips/mach-sibyte \
 # Sibyte SWARM board
 # Sibyte BCM91x80 (BigSur) board
 #
-libs-$(CONFIG_SIBYTE_CARMEL)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_CARMEL)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_CARMEL)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_CRHINE)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_CRHINE)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_CRHINE)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_CRHONE)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_CRHONE)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_CRHONE)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_RHONE)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_RHONE)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_RHONE)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_SENTOSA)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_SENTOSA)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_SENTOSA)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_SWARM)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_SWARM)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_SWARM)	:= 0xffffffff80100000
-libs-$(CONFIG_SIBYTE_BIGSUR)	+= arch/mips/sibyte/swarm/
+core-$(CONFIG_SIBYTE_BIGSUR)	+= arch/mips/sibyte/swarm/
 load-$(CONFIG_SIBYTE_BIGSUR)	:= 0xffffffff80100000
 
 #
@@ -548,33 +537,45 @@ load-$(CONFIG_BCM47XX)		:= 0xffffffff80001000
 #
 core-$(CONFIG_SNI_RM)		+= arch/mips/sni/
 cflags-$(CONFIG_SNI_RM)		+= -Iinclude/asm-mips/mach-rm
+ifdef CONFIG_CPU_LITTLE_ENDIAN
 load-$(CONFIG_SNI_RM)		+= 0xffffffff80600000
+else
+load-$(CONFIG_SNI_RM)		+= 0xffffffff80030000
+endif
 all-$(CONFIG_SNI_RM)		:= vmlinux.ecoff
+
+#
+# Common TXx9
+#
+core-$(CONFIG_MACH_TX39XX)	+= arch/mips/txx9/generic/
+cflags-$(CONFIG_MACH_TX39XX) += -Iinclude/asm-mips/mach-tx39xx
+load-$(CONFIG_MACH_TX39XX)	+= 0xffffffff80050000
+core-$(CONFIG_MACH_TX49XX)	+= arch/mips/txx9/generic/
+cflags-$(CONFIG_MACH_TX49XX) += -Iinclude/asm-mips/mach-tx49xx
+load-$(CONFIG_MACH_TX49XX)	+= 0xffffffff80100000
 
 #
 # Toshiba JMR-TX3927 board
 #
-core-$(CONFIG_TOSHIBA_JMR3927)	+= arch/mips/jmr3927/rbhma3100/ \
-				   arch/mips/jmr3927/common/
-cflags-$(CONFIG_TOSHIBA_JMR3927) += -Iinclude/asm-mips/mach-jmr3927
-load-$(CONFIG_TOSHIBA_JMR3927)	+= 0xffffffff80050000
+core-$(CONFIG_TOSHIBA_JMR3927)	+= arch/mips/txx9/jmr3927/
+
+#
+# Routerboard 532 board
+#
+core-$(CONFIG_MIKROTIK_RB532)	+= arch/mips/rb532/
+cflags-$(CONFIG_MIKROTIK_RB532) += -Iinclude/asm-mips/mach-rc32434
+load-$(CONFIG_MIKROTIK_RB532)	+= 0xffffffff80101000
 
 #
 # Toshiba RBTX4927 board or
 # Toshiba RBTX4937 board
 #
-core-$(CONFIG_TOSHIBA_RBTX4927)	+= arch/mips/tx4927/toshiba_rbtx4927/
-core-$(CONFIG_TOSHIBA_RBTX4927)	+= arch/mips/tx4927/common/
-cflags-$(CONFIG_TOSHIBA_RBTX4927) += -Iinclude/asm-mips/mach-tx49xx
-load-$(CONFIG_TOSHIBA_RBTX4927)	+= 0xffffffff80020000
+core-$(CONFIG_TOSHIBA_RBTX4927)	+= arch/mips/txx9/rbtx4927/
 
 #
 # Toshiba RBTX4938 board
 #
-core-$(CONFIG_TOSHIBA_RBTX4938) += arch/mips/tx4938/toshiba_rbtx4938/
-core-$(CONFIG_TOSHIBA_RBTX4938) += arch/mips/tx4938/common/
-cflags-$(CONFIG_TOSHIBA_RBTX4938) += -Iinclude/asm-mips/mach-tx49xx
-load-$(CONFIG_TOSHIBA_RBTX4938) += 0xffffffff80100000
+core-$(CONFIG_TOSHIBA_RBTX4938) += arch/mips/txx9/rbtx4938/
 
 cflags-y			+= -Iinclude/asm-mips/mach-generic
 drivers-$(CONFIG_PCI)		+= arch/mips/pci/
@@ -602,9 +603,11 @@ ifdef CONFIG_64BIT
     endif
   endif
 
-  ifeq ($(KBUILD_SYM32), y)
-    ifeq ($(call cc-option-yn,-msym32), y)
-      cflags-y += -msym32 -DKBUILD_64BIT_SYM32
+  ifeq ($(KBUILD_SYM32)$(call cc-option-yn,-msym32), yy)
+    cflags-y += -msym32 -DKBUILD_64BIT_SYM32
+  else
+    ifeq ($(CONFIG_CPU_DADDI_WORKAROUNDS), y)
+      $(error CONFIG_CPU_DADDI_WORKAROUNDS unsupported without -msym32)
     endif
   endif
 endif

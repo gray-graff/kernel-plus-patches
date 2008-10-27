@@ -120,9 +120,9 @@ static struct irq_chip msi_irq = {
 	/* XXX affinity XXX */
 };
 
-int sparc64_setup_msi_irq(unsigned int *virt_irq_p,
-			  struct pci_dev *pdev,
-			  struct msi_desc *entry)
+static int sparc64_setup_msi_irq(unsigned int *virt_irq_p,
+				 struct pci_dev *pdev,
+				 struct msi_desc *entry)
 {
 	struct pci_pbm_info *pbm = pdev->dev.archdata.host_controller;
 	const struct sparc64_msiq_ops *ops = pbm->msi_ops;
@@ -179,8 +179,8 @@ out_err:
 	return err;
 }
 
-void sparc64_teardown_msi_irq(unsigned int virt_irq,
-			      struct pci_dev *pdev)
+static void sparc64_teardown_msi_irq(unsigned int virt_irq,
+				     struct pci_dev *pdev)
 {
 	struct pci_pbm_info *pbm = pdev->dev.archdata.host_controller;
 	const struct sparc64_msiq_ops *ops = pbm->msi_ops;
@@ -279,11 +279,17 @@ static int bringup_one_msi_queue(struct pci_pbm_info *pbm,
 				 unsigned long devino)
 {
 	int irq = ops->msiq_build_irq(pbm, msiqid, devino);
-	int err;
+	int err, nid;
 
 	if (irq < 0)
 		return irq;
 
+	nid = pbm->numa_node;
+	if (nid != -1) {
+		cpumask_t numa_mask = node_to_cpumask(nid);
+
+		irq_set_affinity(irq, numa_mask);
+	}
 	err = request_irq(irq, sparc64_msiq_interrupt, 0,
 			  "MSIQ",
 			  &pbm->msiq_irq_cookies[msiqid - pbm->msiq_first]);

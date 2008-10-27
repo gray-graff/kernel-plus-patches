@@ -30,6 +30,7 @@
 #include <asm/io.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/mutex.h>
 
 #include <asm/uaccess.h>
@@ -57,11 +58,11 @@ struct i2c_info
 	u8 hits;
 };
 
-static int i2c_count 		= 0;
+static int i2c_count;
 static struct i2c_info i2cinfo[64];
 
 static int decoder 		= PHILIPS2;
-static int standard 		= 0;	/* 0 - auto 1 - ntsc 2 - pal 3 - secam */
+static int standard;	/* 0 - auto 1 - ntsc 2 - pal 3 - secam */
 
 /*
  *	I/O ports and Shared Memory
@@ -885,16 +886,16 @@ static const struct file_operations pms_fops = {
 	.open           = video_exclusive_open,
 	.release        = video_exclusive_release,
 	.ioctl          = pms_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.read           = pms_read,
 	.llseek         = no_llseek,
 };
 
 static struct video_device pms_template=
 {
-	.owner		= THIS_MODULE,
 	.name		= "Mediavision PMS",
-	.type		= VID_TYPE_CAPTURE,
 	.fops           = &pms_fops,
 };
 
@@ -1018,9 +1019,22 @@ static int init_mediavision(void)
  *	Initialization and module stuff
  */
 
+#ifndef MODULE
+static int enable;
+module_param(enable, int, 0);
+#endif
+
 static int __init init_pms_cards(void)
 {
 	printk(KERN_INFO "Mediavision Pro Movie Studio driver 0.02\n");
+
+#ifndef MODULE
+	if (!enable) {
+		printk(KERN_INFO "PMS: not enabled, use pms.enable=1 to "
+				 "probe\n");
+		return -ENODEV;
+	}
+#endif
 
 	data_port = io_port +1;
 

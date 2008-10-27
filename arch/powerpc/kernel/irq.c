@@ -77,28 +77,18 @@ static int ppc_spurious_interrupts;
 EXPORT_SYMBOL(__irq_offset_value);
 atomic_t ppc_n_lost_interrupts;
 
-#ifndef CONFIG_PPC_MERGE
-#define NR_MASK_WORDS	((NR_IRQS + 31) / 32)
-unsigned long ppc_cached_irq_mask[NR_MASK_WORDS];
-#endif
-
 #ifdef CONFIG_TAU_INT
 extern int tau_initialized;
 extern int tau_interrupts(int);
 #endif
 #endif /* CONFIG_PPC32 */
 
-#if defined(CONFIG_SMP) && !defined(CONFIG_PPC_MERGE)
-extern atomic_t ipi_recv;
-extern atomic_t ipi_sent;
-#endif
-
 #ifdef CONFIG_PPC64
 EXPORT_SYMBOL(irq_desc);
 
 int distribute_irqs = 1;
 
-static inline unsigned long get_hard_enabled(void)
+static inline notrace unsigned long get_hard_enabled(void)
 {
 	unsigned long enabled;
 
@@ -108,13 +98,13 @@ static inline unsigned long get_hard_enabled(void)
 	return enabled;
 }
 
-static inline void set_soft_enabled(unsigned long enable)
+static inline notrace void set_soft_enabled(unsigned long enable)
 {
 	__asm__ __volatile__("stb %0,%1(13)"
 	: : "r" (enable), "i" (offsetof(struct paca_struct, soft_enabled)));
 }
 
-void local_irq_restore(unsigned long en)
+notrace void raw_local_irq_restore(unsigned long en)
 {
 	/*
 	 * get_paca()->soft_enabled = en;
@@ -143,7 +133,6 @@ void local_irq_restore(unsigned long en)
 		 */
 		if (local_paca->lppaca_ptr->int_dword.any_int)
 			iseries_handle_interrupts();
-		return;
 	}
 
 	/*
@@ -175,6 +164,7 @@ void local_irq_restore(unsigned long en)
 
 	__hard_irq_enable();
 }
+EXPORT_SYMBOL(raw_local_irq_restore);
 #endif /* CONFIG_PPC64 */
 
 int show_interrupts(struct seq_file *p, void *v)
@@ -216,21 +206,14 @@ int show_interrupts(struct seq_file *p, void *v)
 skip:
 		spin_unlock_irqrestore(&desc->lock, flags);
 	} else if (i == NR_IRQS) {
-#ifdef CONFIG_PPC32
-#ifdef CONFIG_TAU_INT
+#if defined(CONFIG_PPC32) && defined(CONFIG_TAU_INT)
 		if (tau_initialized){
 			seq_puts(p, "TAU: ");
 			for_each_online_cpu(j)
 				seq_printf(p, "%10u ", tau_interrupts(j));
 			seq_puts(p, "  PowerPC             Thermal Assist (cpu temp)\n");
 		}
-#endif
-#if defined(CONFIG_SMP) && !defined(CONFIG_PPC_MERGE)
-		/* should this be per processor send/receive? */
-		seq_printf(p, "IPI (recv/sent): %10u/%u\n",
-				atomic_read(&ipi_recv), atomic_read(&ipi_sent));
-#endif
-#endif /* CONFIG_PPC32 */
+#endif /* CONFIG_PPC32 && CONFIG_TAU_INT*/
 		seq_printf(p, "BAD: %10u\n", ppc_spurious_interrupts);
 	}
 	return 0;
@@ -307,12 +290,29 @@ void do_IRQ(struct pt_regs *regs)
 		if (curtp != irqtp) {
 			struct irq_desc *desc = irq_desc + irq;
 			void *handler = desc->handle_irq;
+			unsigned long saved_sp_limit = current->thread.ksp_limit;
 			if (handler == NULL)
 				handler = &__do_IRQ;
 			irqtp->task = curtp->task;
 			irqtp->flags = 0;
+
+			/* Copy the softirq bits in preempt_count so that the
+			 * softirq checks work in the hardirq context.
+			 */
+			irqtp->preempt_count =
+				(irqtp->preempt_count & ~SOFTIRQ_MASK) |
+				(curtp->preempt_count & SOFTIRQ_MASK);
+
+			current->thread.ksp_limit = (unsigned long)irqtp +
+				_ALIGN_UP(sizeof(struct thread_info), 16);
 			call_handle_irq(irq, desc, irqtp, handler);
+			current->thread.ksp_limit = saved_sp_limit;
 			irqtp->task = NULL;
+
+
+			/* Set any flag that may have been set on the
+			 * alternate stack
+			 */
 			if (irqtp->flags)
 				set_bits(irqtp->flags, &curtp->flags);
 		} else
@@ -339,11 +339,42 @@ void __init init_IRQ(void)
 {
 	if (ppc_md.init_IRQ)
 		ppc_md.init_IRQ();
-#ifdef CONFIG_PPC64
+
+	exc_lvl_ctx_init();
+
 	irq_ctx_init();
-#endif
 }
 
+#if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
+struct thread_info   *critirq_ctx[NR_CPUS] __read_mostly;
+struct thread_info    *dbgirq_ctx[NR_CPUS] __read_mostly;
+struct thread_info *mcheckirq_ctx[NR_CPUS] __read_mostly;
+
+void exc_lvl_ctx_init(void)
+{
+	struct thread_info *tp;
+	int i;
+
+	for_each_possible_cpu(i) {
+		memset((void *)critirq_ctx[i], 0, THREAD_SIZE);
+		tp = critirq_ctx[i];
+		tp->cpu = i;
+		tp->preempt_count = 0;
+
+#ifdef CONFIG_BOOKE
+		memset((void *)dbgirq_ctx[i], 0, THREAD_SIZE);
+		tp = dbgirq_ctx[i];
+		tp->cpu = i;
+		tp->preempt_count = 0;
+
+		memset((void *)mcheckirq_ctx[i], 0, THREAD_SIZE);
+		tp = mcheckirq_ctx[i];
+		tp->cpu = i;
+		tp->preempt_count = HARDIRQ_OFFSET;
+#endif
+	}
+}
+#endif
 
 #ifdef CONFIG_IRQSTACKS
 struct thread_info *softirq_ctx[NR_CPUS] __read_mostly;
@@ -358,7 +389,7 @@ void irq_ctx_init(void)
 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
 		tp = softirq_ctx[i];
 		tp->cpu = i;
-		tp->preempt_count = SOFTIRQ_OFFSET;
+		tp->preempt_count = 0;
 
 		memset((void *)hardirq_ctx[i], 0, THREAD_SIZE);
 		tp = hardirq_ctx[i];
@@ -370,11 +401,15 @@ void irq_ctx_init(void)
 static inline void do_softirq_onstack(void)
 {
 	struct thread_info *curtp, *irqtp;
+	unsigned long saved_sp_limit = current->thread.ksp_limit;
 
 	curtp = current_thread_info();
 	irqtp = softirq_ctx[smp_processor_id()];
 	irqtp->task = curtp->task;
+	current->thread.ksp_limit = (unsigned long)irqtp +
+				    _ALIGN_UP(sizeof(struct thread_info), 16);
 	call_do_softirq(irqtp);
+	current->thread.ksp_limit = saved_sp_limit;
 	irqtp->task = NULL;
 }
 
@@ -401,8 +436,6 @@ void do_softirq(void)
 /*
  * IRQ controller and virtual interrupts
  */
-
-#ifdef CONFIG_PPC_MERGE
 
 static LIST_HEAD(irq_hosts);
 static DEFINE_SPINLOCK(irq_big_lock);
@@ -446,7 +479,7 @@ struct irq_host *irq_alloc_host(struct device_node *of_node,
 	host->revmap_type = revmap_type;
 	host->inval_irq = inval_irq;
 	host->ops = ops;
-	host->of_node = of_node;
+	host->of_node = of_node_get(of_node);
 
 	if (host->ops->match == NULL)
 		host->ops->match = default_irq_host_match;
@@ -1054,15 +1087,13 @@ static const struct file_operations virq_debug_fops = {
 static int __init irq_debugfs_init(void)
 {
 	if (debugfs_create_file("virq_mapping", S_IRUGO, powerpc_debugfs_root,
-				 NULL, &virq_debug_fops))
+				 NULL, &virq_debug_fops) == NULL)
 		return -ENOMEM;
 
 	return 0;
 }
 __initcall(irq_debugfs_init);
 #endif /* CONFIG_VIRQ_DEBUG */
-
-#endif /* CONFIG_PPC_MERGE */
 
 #ifdef CONFIG_PPC64
 static int __init setup_noirqdistrib(char *str)

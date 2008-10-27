@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/transport.c
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2007
+ *   Copyright (C) International Business Machines  Corp., 2002,2008
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *   Jeremy Allison (jra@samba.org) 2006.
  *
@@ -142,6 +142,24 @@ void DeleteOplockQEntry(struct oplock_q_entry *oplockEntry)
 	kmem_cache_free(cifs_oplock_cachep, oplockEntry);
 }
 
+
+void DeleteTconOplockQEntries(struct cifsTconInfo *tcon)
+{
+	struct oplock_q_entry *temp;
+
+	if (tcon == NULL)
+		return;
+
+	spin_lock(&GlobalMid_Lock);
+	list_for_each_entry(temp, &GlobalOplock_Q, qhead) {
+		if ((temp->tcon) && (temp->tcon == tcon)) {
+			list_del(&temp->qhead);
+			kmem_cache_free(cifs_oplock_cachep, temp);
+		}
+	}
+	spin_unlock(&GlobalMid_Lock);
+}
+
 int
 smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
 	 unsigned int smb_buf_length, struct sockaddr *sin)
@@ -247,6 +265,7 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
 	cFYI(1, ("Sending smb:  total_len %d", total_len));
 	dump_smb(smb_buffer, len);
 
+	i = 0;
 	while (total_len) {
 		rc = kernel_sendmsg(ssocket, &smb_msg, &iov[first_vec],
 				    n_vec - first_vec, total_len);
@@ -358,9 +377,9 @@ static int allocate_mid(struct cifsSesInfo *ses, struct smb_hdr *in_buf,
 	} else if (ses->status != CifsGood) {
 		/* check if SMB session is bad because we are setting it up */
 		if ((in_buf->Command != SMB_COM_SESSION_SETUP_ANDX) &&
-			(in_buf->Command != SMB_COM_NEGOTIATE)) {
+			(in_buf->Command != SMB_COM_NEGOTIATE))
 			return -EAGAIN;
-		} /* else ok - we are setting up session */
+		/* else ok - we are setting up session */
 	}
 	*ppmidQ = AllocMidQEntry(in_buf, ses);
 	if (*ppmidQ == NULL)
@@ -437,9 +456,8 @@ SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
 	iov[0].iov_len = in_buf->smb_buf_length + 4;
 	flags |= CIFS_NO_RESP;
 	rc = SendReceive2(xid, ses, iov, 1, &resp_buf_type, flags);
-#ifdef CONFIG_CIFS_DEBUG2
-	cFYI(1, ("SendRcvNoR flags %d rc %d", flags, rc));
-#endif
+	cFYI(DBG2, ("SendRcvNoRsp flags %d rc %d", flags, rc));
+
 	return rc;
 }
 

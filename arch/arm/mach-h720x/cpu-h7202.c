@@ -17,9 +17,9 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <asm/types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
-#include <asm/arch/irqs.h>
+#include <mach/irqs.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 #include <linux/device.h>
@@ -113,9 +113,7 @@ h7202_timerx_demux_handler(unsigned int irq_unused, struct irq_desc *desc)
 	mask = CPU_REG (TIMER_VIRT, TIMER_TOPSTAT);
 
 	if ( mask & TSTAT_T0INT ) {
-		write_seqlock(&xtime_lock);
 		timer_tick();
-		write_sequnlock(&xtime_lock);
 		if( mask == TSTAT_T0INT )
 			return;
 	}

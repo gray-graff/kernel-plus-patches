@@ -162,7 +162,7 @@ static void unmap_area_sections(unsigned long virt, unsigned long size)
 			 * Free the page table, if there was one.
 			 */
 			if ((pmd_val(pmd) & PMD_TYPE_MASK) == PMD_TYPE_TABLE)
-				pte_free_kernel(pmd_page_vaddr(pmd));
+				pte_free_kernel(&init_mm, pmd_page_vaddr(pmd));
 		}
 
 		addr += PGDIR_SIZE;
@@ -259,7 +259,7 @@ remap_area_supersections(unsigned long virt, unsigned long pfn,
  * caller shouldn't need to know that small detail.
  *
  * 'flags' are the extra L_PTE_ flags that you want to specify for this
- * mapping.  See include/asm-arm/proc-armv/pgtable.h for more information.
+ * mapping.  See <asm/pgtable.h> for more information.
  */
 void __iomem *
 __arm_ioremap_pfn(unsigned long pfn, unsigned long offset, size_t size,

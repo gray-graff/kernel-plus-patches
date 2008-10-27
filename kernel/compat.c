@@ -40,10 +40,34 @@ int put_compat_timespec(const struct timespec *ts, struct compat_timespec __user
 			__put_user(ts->tv_nsec, &cts->tv_nsec)) ? -EFAULT : 0;
 }
 
+static long compat_nanosleep_restart(struct restart_block *restart)
+{
+	struct compat_timespec __user *rmtp;
+	struct timespec rmt;
+	mm_segment_t oldfs;
+	long ret;
+
+	restart->nanosleep.rmtp = (struct timespec __user *) &rmt;
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = hrtimer_nanosleep_restart(restart);
+	set_fs(oldfs);
+
+	if (ret) {
+		rmtp = restart->nanosleep.compat_rmtp;
+
+		if (rmtp && put_compat_timespec(&rmt, rmtp))
+			return -EFAULT;
+	}
+
+	return ret;
+}
+
 asmlinkage long compat_sys_nanosleep(struct compat_timespec __user *rqtp,
 				     struct compat_timespec __user *rmtp)
 {
 	struct timespec tu, rmt;
+	mm_segment_t oldfs;
 	long ret;
 
 	if (get_compat_timespec(&tu, rqtp))
@@ -52,11 +76,21 @@ asmlinkage long compat_sys_nanosleep(struct compat_timespec __user *rqtp,
 	if (!timespec_valid(&tu))
 		return -EINVAL;
 
-	ret = hrtimer_nanosleep(&tu, rmtp ? &rmt : NULL, HRTIMER_MODE_REL,
-				CLOCK_MONOTONIC);
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = hrtimer_nanosleep(&tu,
+				rmtp ? (struct timespec __user *)&rmt : NULL,
+				HRTIMER_MODE_REL, CLOCK_MONOTONIC);
+	set_fs(oldfs);
 
-	if (ret && rmtp) {
-		if (put_compat_timespec(&rmt, rmtp))
+	if (ret) {
+		struct restart_block *restart
+			= &current_thread_info()->restart_block;
+
+		restart->fn = compat_nanosleep_restart;
+		restart->nanosleep.compat_rmtp = rmtp;
+
+		if (rmtp && put_compat_timespec(&rmt, rmtp))
 			return -EFAULT;
 	}
 
@@ -411,7 +445,7 @@ asmlinkage long compat_sys_sched_setaffinity(compat_pid_t pid,
 	if (retval)
 		return retval;
 
-	return sched_setaffinity(pid, new_mask);
+	return sched_setaffinity(pid, &new_mask);
 }
 
 asmlinkage long compat_sys_sched_getaffinity(compat_pid_t pid, unsigned int len,
@@ -572,9 +606,9 @@ static long compat_clock_nanosleep_restart(struct restart_block *restart)
 	long err;
 	mm_segment_t oldfs;
 	struct timespec tu;
-	struct compat_timespec *rmtp = (struct compat_timespec *)(restart->arg1);
+	struct compat_timespec *rmtp = restart->nanosleep.compat_rmtp;
 
-	restart->arg1 = (unsigned long) &tu;
+	restart->nanosleep.rmtp = (struct timespec __user *) &tu;
 	oldfs = get_fs();
 	set_fs(KERNEL_DS);
 	err = clock_nanosleep_restart(restart);
@@ -586,7 +620,7 @@ static long compat_clock_nanosleep_restart(struct restart_block *restart)
 
 	if (err == -ERESTART_RESTARTBLOCK) {
 		restart->fn = compat_clock_nanosleep_restart;
-		restart->arg1 = (unsigned long) rmtp;
+		restart->nanosleep.compat_rmtp = rmtp;
 	}
 	return err;
 }
@@ -617,7 +651,7 @@ long compat_sys_clock_nanosleep(clockid_t which_clock, int flags,
 	if (err == -ERESTART_RESTARTBLOCK) {
 		restart = &current_thread_info()->restart_block;
 		restart->fn = compat_clock_nanosleep_restart;
-		restart->arg1 = (unsigned long) rmtp;
+		restart->nanosleep.compat_rmtp = rmtp;
 	}
 	return err;
 }
@@ -864,7 +898,7 @@ asmlinkage long compat_sys_rt_sigsuspend(compat_sigset_t __user *unewset, compat
 
 	current->state = TASK_INTERRUPTIBLE;
 	schedule();
-	set_thread_flag(TIF_RESTORE_SIGMASK);
+	set_restore_sigmask();
 	return -ERESTARTNOHAND;
 }
 #endif /* __ARCH_WANT_COMPAT_SYS_RT_SIGSUSPEND */
@@ -921,7 +955,8 @@ asmlinkage long compat_sys_adjtimex(struct compat_timex __user *utp)
 			__put_user(txc.jitcnt, &utp->jitcnt) ||
 			__put_user(txc.calcnt, &utp->calcnt) ||
 			__put_user(txc.errcnt, &utp->errcnt) ||
-			__put_user(txc.stbcnt, &utp->stbcnt))
+			__put_user(txc.stbcnt, &utp->stbcnt) ||
+			__put_user(txc.tai, &utp->tai))
 		ret = -EFAULT;
 
 	return ret;
@@ -1046,4 +1081,3 @@ compat_sys_sysinfo(struct compat_sysinfo __user *info)
 
 	return 0;
 }
-

@@ -18,8 +18,8 @@
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/freezer.h>
+#include <linux/semaphore.h>
 #include <asm/atomic.h>
-#include <asm/semaphore.h>
 
 #include "csr.h"
 #include "highlevel.h"
@@ -520,8 +520,11 @@ static ssize_t fw_show_drv_device_ids(struct device_driver *drv, char *buf)
 	char *scratch = buf;
 
 	driver = container_of(drv, struct hpsb_protocol_driver, driver);
+	id = driver->id_table;
+	if (!id)
+		return 0;
 
-	for (id = driver->id_table; id->match_flags != 0; id++) {
+	for (; id->match_flags != 0; id++) {
 		int need_coma = 0;
 
 		if (id->match_flags & IEEE1394_MATCH_VENDOR_ID) {
@@ -701,7 +704,11 @@ static int nodemgr_bus_match(struct device * dev, struct device_driver * drv)
 		return 0;
 
 	driver = container_of(drv, struct hpsb_protocol_driver, driver);
-	for (id = driver->id_table; id->match_flags != 0; id++) {
+	id = driver->id_table;
+	if (!id)
+		return 0;
+
+	for (; id->match_flags != 0; id++) {
 		if ((id->match_flags & IEEE1394_MATCH_VENDOR_ID) &&
 		    id->vendor_id != ud->vendor_id)
 			continue;
@@ -727,33 +734,32 @@ static int nodemgr_bus_match(struct device * dev, struct device_driver * drv)
 
 static DEFINE_MUTEX(nodemgr_serialize_remove_uds);
 
+static int __match_ne(struct device *dev, void *data)
+{
+	struct unit_directory *ud;
+	struct node_entry *ne = (struct node_entry *)data;
+
+	ud = container_of(dev, struct unit_directory, unit_dev);
+	return ud->ne == ne;
+}
+
 static void nodemgr_remove_uds(struct node_entry *ne)
 {
 	struct device *dev;
-	struct unit_directory *tmp, *ud;
+	struct unit_directory *ud;
 
-	/* Iteration over nodemgr_ud_class.devices has to be protected by
-	 * nodemgr_ud_class.sem, but device_unregister() will eventually
-	 * take nodemgr_ud_class.sem too. Therefore pick out one ud at a time,
-	 * release the semaphore, and then unregister the ud. Since this code
-	 * may be called from other contexts besides the knodemgrds, protect the
-	 * gap after release of the semaphore by nodemgr_serialize_remove_uds.
+	/* Use class_find device to iterate the devices. Since this code
+	 * may be called from other contexts besides the knodemgrds,
+	 * protect it by nodemgr_serialize_remove_uds.
 	 */
 	mutex_lock(&nodemgr_serialize_remove_uds);
 	for (;;) {
-		ud = NULL;
-		down(&nodemgr_ud_class.sem);
-		list_for_each_entry(dev, &nodemgr_ud_class.devices, node) {
-			tmp = container_of(dev, struct unit_directory,
-					   unit_dev);
-			if (tmp->ne == ne) {
-				ud = tmp;
-				break;
-			}
-		}
-		up(&nodemgr_ud_class.sem);
-		if (ud == NULL)
+		dev = class_find_device(&nodemgr_ud_class, NULL, ne,
+					__match_ne);
+		if (!dev)
 			break;
+		ud = container_of(dev, struct unit_directory, unit_dev);
+		put_device(dev);
 		device_unregister(&ud->unit_dev);
 		device_unregister(&ud->device);
 	}
@@ -838,7 +844,7 @@ static struct node_entry *nodemgr_create_node(octlet_t guid, struct csr1212_csr 
 	ne->host = host;
 	ne->nodeid = nodeid;
 	ne->generation = generation;
-	ne->needs_probe = 1;
+	ne->needs_probe = true;
 
 	ne->guid = guid;
 	ne->guid_vendor_id = (guid >> 40) & 0xffffff;
@@ -882,45 +888,68 @@ fail_alloc:
 	return NULL;
 }
 
+static int __match_ne_guid(struct device *dev, void *data)
+{
+	struct node_entry *ne;
+	u64 *guid = (u64 *)data;
+
+	ne = container_of(dev, struct node_entry, node_dev);
+	return ne->guid == *guid;
+}
 
 static struct node_entry *find_entry_by_guid(u64 guid)
 {
 	struct device *dev;
-	struct node_entry *ne, *ret_ne = NULL;
+	struct node_entry *ne;
 
-	down(&nodemgr_ne_class.sem);
-	list_for_each_entry(dev, &nodemgr_ne_class.devices, node) {
-		ne = container_of(dev, struct node_entry, node_dev);
+	dev = class_find_device(&nodemgr_ne_class, NULL, &guid,
+				__match_ne_guid);
+	if (!dev)
+		return NULL;
+	ne = container_of(dev, struct node_entry, node_dev);
+	put_device(dev);
 
-		if (ne->guid == guid) {
-			ret_ne = ne;
-			break;
-		}
-	}
-	up(&nodemgr_ne_class.sem);
-
-	return ret_ne;
+	return ne;
 }
 
+struct match_nodeid_param {
+	struct hpsb_host *host;
+	nodeid_t nodeid;
+};
+
+static int __match_ne_nodeid(struct device *dev, void *data)
+{
+	int found = 0;
+	struct node_entry *ne;
+	struct match_nodeid_param *param = (struct match_nodeid_param *)data;
+
+	if (!dev)
+		goto ret;
+	ne = container_of(dev, struct node_entry, node_dev);
+	if (ne->host == param->host && ne->nodeid == param->nodeid)
+		found = 1;
+ret:
+	return found;
+}
 
 static struct node_entry *find_entry_by_nodeid(struct hpsb_host *host,
 					       nodeid_t nodeid)
 {
 	struct device *dev;
-	struct node_entry *ne, *ret_ne = NULL;
+	struct node_entry *ne;
+	struct match_nodeid_param param;
 
-	down(&nodemgr_ne_class.sem);
-	list_for_each_entry(dev, &nodemgr_ne_class.devices, node) {
-		ne = container_of(dev, struct node_entry, node_dev);
+	param.host = host;
+	param.nodeid = nodeid;
 
-		if (ne->host == host && ne->nodeid == nodeid) {
-			ret_ne = ne;
-			break;
-		}
-	}
-	up(&nodemgr_ne_class.sem);
+	dev = class_find_device(&nodemgr_ne_class, NULL, &param,
+				__match_ne_nodeid);
+	if (!dev)
+		return NULL;
+	ne = container_of(dev, struct node_entry, node_dev);
+	put_device(dev);
 
-	return ret_ne;
+	return ne;
 }
 
 
@@ -1115,7 +1144,7 @@ static void nodemgr_process_root_directory(struct host_info *hi, struct node_ent
 	struct csr1212_keyval *kv, *vendor_name_kv = NULL;
 	u8 last_key_id = 0;
 
-	ne->needs_probe = 0;
+	ne->needs_probe = false;
 
 	csr1212_for_each_dir_entry(ne->csr, kv, ne->csr->root_kv, dentry) {
 		switch (kv->key.id) {
@@ -1266,7 +1295,7 @@ static void nodemgr_update_node(struct node_entry *ne, struct csr1212_csr *csr,
 		nodemgr_update_bus_options(ne);
 
 		/* Mark the node as new, so it gets re-probed */
-		ne->needs_probe = 1;
+		ne->needs_probe = true;
 	} else {
 		/* old cache is valid, so update its generation */
 		struct nodemgr_csr_info *ci = ne->csr->private;
@@ -1370,107 +1399,112 @@ static void nodemgr_node_scan(struct host_info *hi, int generation)
 	}
 }
 
+static int __nodemgr_driver_suspend(struct device *dev, void *data)
+{
+	struct unit_directory *ud;
+	struct device_driver *drv;
+	struct node_entry *ne = (struct node_entry *)data;
+	int error;
+
+	ud = container_of(dev, struct unit_directory, unit_dev);
+	if (ud->ne == ne) {
+		drv = get_driver(ud->device.driver);
+		if (drv) {
+			error = 1; /* release if suspend is not implemented */
+			if (drv->suspend) {
+				down(&ud->device.sem);
+				error = drv->suspend(&ud->device, PMSG_SUSPEND);
+				up(&ud->device.sem);
+			}
+			if (error)
+				device_release_driver(&ud->device);
+			put_driver(drv);
+		}
+	}
+
+	return 0;
+}
+
+static int __nodemgr_driver_resume(struct device *dev, void *data)
+{
+	struct unit_directory *ud;
+	struct device_driver *drv;
+	struct node_entry *ne = (struct node_entry *)data;
+
+	ud = container_of(dev, struct unit_directory, unit_dev);
+	if (ud->ne == ne) {
+		drv = get_driver(ud->device.driver);
+		if (drv) {
+			if (drv->resume) {
+				down(&ud->device.sem);
+				drv->resume(&ud->device);
+				up(&ud->device.sem);
+			}
+			put_driver(drv);
+		}
+	}
+
+	return 0;
+}
 
 static void nodemgr_suspend_ne(struct node_entry *ne)
 {
-	struct device *dev;
-	struct unit_directory *ud;
-	struct device_driver *drv;
-	int error;
-
 	HPSB_DEBUG("Node suspended: ID:BUS[" NODE_BUS_FMT "]  GUID[%016Lx]",
-		   NODE_BUS_ARGS(ne->host, ne->nodeid), (unsigned long long)ne->guid);
+		   NODE_BUS_ARGS(ne->host, ne->nodeid),
+		   (unsigned long long)ne->guid);
 
 	ne->in_limbo = 1;
 	WARN_ON(device_create_file(&ne->device, &dev_attr_ne_in_limbo));
 
-	down(&nodemgr_ud_class.sem);
-	list_for_each_entry(dev, &nodemgr_ud_class.devices, node) {
-		ud = container_of(dev, struct unit_directory, unit_dev);
-		if (ud->ne != ne)
-			continue;
-
-		drv = get_driver(ud->device.driver);
-		if (!drv)
-			continue;
-
-		error = 1; /* release if suspend is not implemented */
-		if (drv->suspend) {
-			down(&ud->device.sem);
-			error = drv->suspend(&ud->device, PMSG_SUSPEND);
-			up(&ud->device.sem);
-		}
-		if (error)
-			device_release_driver(&ud->device);
-		put_driver(drv);
-	}
-	up(&nodemgr_ud_class.sem);
+	class_for_each_device(&nodemgr_ud_class, NULL, ne,
+			      __nodemgr_driver_suspend);
 }
 
 
 static void nodemgr_resume_ne(struct node_entry *ne)
 {
-	struct device *dev;
-	struct unit_directory *ud;
-	struct device_driver *drv;
-
 	ne->in_limbo = 0;
 	device_remove_file(&ne->device, &dev_attr_ne_in_limbo);
 
-	down(&nodemgr_ud_class.sem);
-	list_for_each_entry(dev, &nodemgr_ud_class.devices, node) {
-		ud = container_of(dev, struct unit_directory, unit_dev);
-		if (ud->ne != ne)
-			continue;
-
-		drv = get_driver(ud->device.driver);
-		if (!drv)
-			continue;
-
-		if (drv->resume) {
-			down(&ud->device.sem);
-			drv->resume(&ud->device);
-			up(&ud->device.sem);
-		}
-		put_driver(drv);
-	}
-	up(&nodemgr_ud_class.sem);
-
+	class_for_each_device(&nodemgr_ud_class, NULL, ne,
+			      __nodemgr_driver_resume);
 	HPSB_DEBUG("Node resumed: ID:BUS[" NODE_BUS_FMT "]  GUID[%016Lx]",
 		   NODE_BUS_ARGS(ne->host, ne->nodeid), (unsigned long long)ne->guid);
 }
 
-
-static void nodemgr_update_pdrv(struct node_entry *ne)
+static int __nodemgr_update_pdrv(struct device *dev, void *data)
 {
-	struct device *dev;
 	struct unit_directory *ud;
 	struct device_driver *drv;
 	struct hpsb_protocol_driver *pdrv;
+	struct node_entry *ne = (struct node_entry *)data;
 	int error;
 
-	down(&nodemgr_ud_class.sem);
-	list_for_each_entry(dev, &nodemgr_ud_class.devices, node) {
-		ud = container_of(dev, struct unit_directory, unit_dev);
-		if (ud->ne != ne)
-			continue;
-
+	ud = container_of(dev, struct unit_directory, unit_dev);
+	if (ud->ne == ne) {
 		drv = get_driver(ud->device.driver);
-		if (!drv)
-			continue;
-
-		error = 0;
-		pdrv = container_of(drv, struct hpsb_protocol_driver, driver);
-		if (pdrv->update) {
-			down(&ud->device.sem);
-			error = pdrv->update(ud);
-			up(&ud->device.sem);
+		if (drv) {
+			error = 0;
+			pdrv = container_of(drv, struct hpsb_protocol_driver,
+					    driver);
+			if (pdrv->update) {
+				down(&ud->device.sem);
+				error = pdrv->update(ud);
+				up(&ud->device.sem);
+			}
+			if (error)
+				device_release_driver(&ud->device);
+			put_driver(drv);
 		}
-		if (error)
-			device_release_driver(&ud->device);
-		put_driver(drv);
 	}
-	up(&nodemgr_ud_class.sem);
+
+	return 0;
+}
+
+static void nodemgr_update_pdrv(struct node_entry *ne)
+{
+	class_for_each_device(&nodemgr_ud_class, NULL, ne,
+			      __nodemgr_update_pdrv);
 }
 
 
@@ -1529,53 +1563,63 @@ static void nodemgr_probe_ne(struct host_info *hi, struct node_entry *ne, int ge
 	put_device(dev);
 }
 
+struct probe_param {
+	struct host_info *hi;
+	int generation;
+	bool probe_now;
+};
+
+static int node_probe(struct device *dev, void *data)
+{
+	struct probe_param *p = data;
+	struct node_entry *ne;
+
+	if (p->generation != get_hpsb_generation(p->hi->host))
+		return -EAGAIN;
+
+	ne = container_of(dev, struct node_entry, node_dev);
+	if (ne->needs_probe == p->probe_now)
+		nodemgr_probe_ne(p->hi, ne, p->generation);
+	return 0;
+}
 
 static void nodemgr_node_probe(struct host_info *hi, int generation)
 {
-	struct hpsb_host *host = hi->host;
-	struct device *dev;
-	struct node_entry *ne;
+	struct probe_param p;
 
-	/* Do some processing of the nodes we've probed. This pulls them
+	p.hi = hi;
+	p.generation = generation;
+	/*
+	 * Do some processing of the nodes we've probed. This pulls them
 	 * into the sysfs layer if needed, and can result in processing of
 	 * unit-directories, or just updating the node and it's
 	 * unit-directories.
 	 *
 	 * Run updates before probes. Usually, updates are time-critical
-	 * while probes are time-consuming. (Well, those probes need some
-	 * improvement...) */
-
-	down(&nodemgr_ne_class.sem);
-	list_for_each_entry(dev, &nodemgr_ne_class.devices, node) {
-		ne = container_of(dev, struct node_entry, node_dev);
-		if (!ne->needs_probe)
-			nodemgr_probe_ne(hi, ne, generation);
-	}
-	list_for_each_entry(dev, &nodemgr_ne_class.devices, node) {
-		ne = container_of(dev, struct node_entry, node_dev);
-		if (ne->needs_probe)
-			nodemgr_probe_ne(hi, ne, generation);
-	}
-	up(&nodemgr_ne_class.sem);
-
-
-	/* If we had a bus reset while we were scanning the bus, it is
-	 * possible that we did not probe all nodes.  In that case, we
-	 * skip the clean up for now, since we could remove nodes that
-	 * were still on the bus.  Another bus scan is pending which will
-	 * do the clean up eventually.
+	 * while probes are time-consuming.
 	 *
+	 * Meanwhile, another bus reset may have happened. In this case we
+	 * skip everything here and let the next bus scan handle it.
+	 * Otherwise we may prematurely remove nodes which are still there.
+	 */
+	p.probe_now = false;
+	if (class_for_each_device(&nodemgr_ne_class, NULL, &p, node_probe) != 0)
+		return;
+
+	p.probe_now = true;
+	if (class_for_each_device(&nodemgr_ne_class, NULL, &p, node_probe) != 0)
+		return;
+	/*
 	 * Now let's tell the bus to rescan our devices. This may seem
 	 * like overhead, but the driver-model core will only scan a
 	 * device for a driver when either the device is added, or when a
 	 * new driver is added. A bus reset is a good reason to rescan
 	 * devices that were there before.  For example, an sbp2 device
 	 * may become available for login, if the host that held it was
-	 * just removed.  */
-
-	if (generation == get_hpsb_generation(host))
-		if (bus_rescan_devices(&ieee1394_bus_type))
-			HPSB_DEBUG("bus_rescan_devices had an error");
+	 * just removed.
+	 */
+	if (bus_rescan_devices(&ieee1394_bus_type) != 0)
+		HPSB_DEBUG("bus_rescan_devices had an error");
 }
 
 static int nodemgr_send_resume_packet(struct hpsb_host *host)
@@ -1757,6 +1801,22 @@ exit:
 	return 0;
 }
 
+struct host_iter_param {
+	void *data;
+	int (*cb)(struct hpsb_host *, void *);
+};
+
+static int __nodemgr_for_each_host(struct device *dev, void *data)
+{
+	struct hpsb_host *host;
+	struct host_iter_param *hip = (struct host_iter_param *)data;
+	int error = 0;
+
+	host = container_of(dev, struct hpsb_host, host_dev);
+	error = hip->cb(host, hip->data);
+
+	return error;
+}
 /**
  * nodemgr_for_each_host - call a function for each IEEE 1394 host
  * @data: an address to supply to the callback
@@ -1771,18 +1831,13 @@ exit:
  */
 int nodemgr_for_each_host(void *data, int (*cb)(struct hpsb_host *, void *))
 {
-	struct device *dev;
-	struct hpsb_host *host;
-	int error = 0;
+	struct host_iter_param hip;
+	int error;
 
-	down(&hpsb_host_class.sem);
-	list_for_each_entry(dev, &hpsb_host_class.devices, node) {
-		host = container_of(dev, struct hpsb_host, host_dev);
-
-		if ((error = cb(host, data)))
-			break;
-	}
-	up(&hpsb_host_class.sem);
+	hip.cb = cb;
+	hip.data = data;
+	error = class_for_each_device(&hpsb_host_class, NULL, &hip,
+				      __nodemgr_for_each_host);
 
 	return error;
 }

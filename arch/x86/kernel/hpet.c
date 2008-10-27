@@ -6,7 +6,6 @@
 #include <linux/init.h>
 #include <linux/sysdev.h>
 #include <linux/pm.h>
-#include <linux/delay.h>
 
 #include <asm/fixmap.h>
 #include <asm/hpet.h>
@@ -16,8 +15,9 @@
 #define HPET_MASK	CLOCKSOURCE_MASK(32)
 #define HPET_SHIFT	22
 
-/* FSEC = 10^-15 NSEC = 10^-9 */
-#define FSEC_PER_NSEC	1000000
+/* FSEC = 10^-15
+   NSEC = 10^-9 */
+#define FSEC_PER_NSEC	1000000L
 
 /*
  * HPET address is set in acpi/boot.c, when an ACPI entry exists
@@ -36,26 +36,15 @@ static inline void hpet_writel(unsigned long d, unsigned long a)
 }
 
 #ifdef CONFIG_X86_64
-
 #include <asm/pgtable.h>
-
-static inline void hpet_set_mapping(void)
-{
-	set_fixmap_nocache(FIX_HPET_BASE, hpet_address);
-	__set_fixmap(VSYSCALL_HPET, hpet_address, PAGE_KERNEL_VSYSCALL_NOCACHE);
-	hpet_virt_address = (void __iomem *)fix_to_virt(FIX_HPET_BASE);
-}
-
-static inline void hpet_clear_mapping(void)
-{
-	hpet_virt_address = NULL;
-}
-
-#else
+#endif
 
 static inline void hpet_set_mapping(void)
 {
 	hpet_virt_address = ioremap_nocache(hpet_address, HPET_MMAP_SIZE);
+#ifdef CONFIG_X86_64
+	__set_fixmap(VSYSCALL_HPET, hpet_address, PAGE_KERNEL_VSYSCALL_NOCACHE);
+#endif
 }
 
 static inline void hpet_clear_mapping(void)
@@ -63,7 +52,6 @@ static inline void hpet_clear_mapping(void)
 	iounmap(hpet_virt_address);
 	hpet_virt_address = NULL;
 }
-#endif
 
 /*
  * HPET command line enable / disable
@@ -107,6 +95,7 @@ int is_hpet_enabled(void)
 {
 	return is_hpet_capable() && hpet_legacy_int_enabled;
 }
+EXPORT_SYMBOL_GPL(is_hpet_enabled);
 
 /*
  * When the hpet driver (/dev/hpet) is enabled, we need to reserve
@@ -136,9 +125,10 @@ static void hpet_reserve_platform_timers(unsigned long id)
 	hd.hd_irq[0] = HPET_LEGACY_8254;
 	hd.hd_irq[1] = HPET_LEGACY_RTC;
 
-	for (i = 2; i < nrtimers; timer++, i++)
-		hd.hd_irq[i] = (timer->hpet_config & Tn_INT_ROUTE_CNF_MASK) >>
+	for (i = 2; i < nrtimers; timer++, i++) {
+		hd.hd_irq[i] = (readl(&timer->hpet_config) & Tn_INT_ROUTE_CNF_MASK) >>
 			Tn_INT_ROUTE_CNF_SHIFT;
+	}
 
 	hpet_alloc(&hd);
 
@@ -204,25 +194,24 @@ static void hpet_enable_legacy_int(void)
 
 static void hpet_legacy_clockevent_register(void)
 {
-	uint64_t hpet_freq;
-
 	/* Start HPET legacy interrupts */
 	hpet_enable_legacy_int();
 
 	/*
-	 * The period is a femto seconds value. We need to calculate the
-	 * scaled math multiplication factor for nanosecond to hpet tick
-	 * conversion.
+	 * The mult factor is defined as (include/linux/clockchips.h)
+	 *  mult/2^shift = cyc/ns (in contrast to ns/cyc in clocksource.h)
+	 * hpet_period is in units of femtoseconds (per cycle), so
+	 *  mult/2^shift = cyc/ns = 10^6/hpet_period
+	 *  mult = (10^6 * 2^shift)/hpet_period
+	 *  mult = (FSEC_PER_NSEC << hpet_clockevent.shift)/hpet_period
 	 */
-	hpet_freq = 1000000000000000ULL;
-	do_div(hpet_freq, hpet_period);
-	hpet_clockevent.mult = div_sc((unsigned long) hpet_freq,
-				      NSEC_PER_SEC, 32);
+	hpet_clockevent.mult = div_sc((unsigned long) FSEC_PER_NSEC,
+				      hpet_period, hpet_clockevent.shift);
 	/* Calculate the min / max delta */
 	hpet_clockevent.max_delta_ns = clockevent_delta2ns(0x7FFFFFFF,
 							   &hpet_clockevent);
-	hpet_clockevent.min_delta_ns = clockevent_delta2ns(0x30,
-							   &hpet_clockevent);
+	/* 5 usec minimum reprogramming delta. */
+	hpet_clockevent.min_delta_ns = 5000;
 
 	/*
 	 * Start hpet with the boot cpu mask and make it
@@ -281,15 +270,22 @@ static void hpet_legacy_set_mode(enum clock_event_mode mode,
 }
 
 static int hpet_legacy_next_event(unsigned long delta,
-			   struct clock_event_device *evt)
+				  struct clock_event_device *evt)
 {
-	unsigned long cnt;
+	u32 cnt;
 
 	cnt = hpet_readl(HPET_COUNTER);
-	cnt += delta;
+	cnt += (u32) delta;
 	hpet_writel(cnt, HPET_T0_CMP);
 
-	return ((long)(hpet_readl(HPET_COUNTER) - cnt ) > 0) ? -ETIME : 0;
+	/*
+	 * We need to read back the CMP register to make sure that
+	 * what we wrote hit the chip before we compare it to the
+	 * counter.
+	 */
+	WARN_ON((u32)hpet_readl(HPET_T0_CMP) != cnt);
+
+	return (s32)((u32)hpet_readl(HPET_COUNTER) - cnt) >= 0 ? -ETIME : 0;
 }
 
 /*
@@ -322,7 +318,7 @@ static struct clocksource clocksource_hpet = {
 
 static int hpet_clocksource_register(void)
 {
-	u64 tmp, start, now;
+	u64 start, now;
 	cycle_t t1;
 
 	/* Start the counter */
@@ -349,33 +345,28 @@ static int hpet_clocksource_register(void)
 		return -ENODEV;
 	}
 
-	/* Initialize and register HPET clocksource
-	 *
-	 * hpet period is in femto seconds per cycle
-	 * so we need to convert this to ns/cyc units
-	 * approximated by mult/2^shift
-	 *
-	 *  fsec/cyc * 1nsec/1000000fsec = nsec/cyc = mult/2^shift
-	 *  fsec/cyc * 1ns/1000000fsec * 2^shift = mult
-	 *  fsec/cyc * 2^shift * 1nsec/1000000fsec = mult
-	 *  (fsec/cyc << shift)/1000000 = mult
-	 *  (hpet_period << shift)/FSEC_PER_NSEC = mult
+	/*
+	 * The definition of mult is (include/linux/clocksource.h)
+	 * mult/2^shift = ns/cyc and hpet_period is in units of fsec/cyc
+	 * so we first need to convert hpet_period to ns/cyc units:
+	 *  mult/2^shift = ns/cyc = hpet_period/10^6
+	 *  mult = (hpet_period * 2^shift)/10^6
+	 *  mult = (hpet_period << shift)/FSEC_PER_NSEC
 	 */
-	tmp = (u64)hpet_period << HPET_SHIFT;
-	do_div(tmp, FSEC_PER_NSEC);
-	clocksource_hpet.mult = (u32)tmp;
+	clocksource_hpet.mult = div_sc(hpet_period, FSEC_PER_NSEC, HPET_SHIFT);
 
 	clocksource_register(&clocksource_hpet);
 
 	return 0;
 }
 
-/*
- * Try to setup the HPET timer
+/**
+ * hpet_enable - Try to setup the HPET timer. Returns 1 on success.
  */
 int __init hpet_enable(void)
 {
 	unsigned long id;
+	int i;
 
 	if (!is_hpet_capable())
 		return 0;
@@ -386,6 +377,29 @@ int __init hpet_enable(void)
 	 * Read the period and check for a sane value:
 	 */
 	hpet_period = hpet_readl(HPET_PERIOD);
+
+	/*
+	 * AMD SB700 based systems with spread spectrum enabled use a
+	 * SMM based HPET emulation to provide proper frequency
+	 * setting. The SMM code is initialized with the first HPET
+	 * register access and takes some time to complete. During
+	 * this time the config register reads 0xffffffff. We check
+	 * for max. 1000 loops whether the config register reads a non
+	 * 0xffffffff value to make sure that HPET is up and running
+	 * before we go further. A counting loop is safe, as the HPET
+	 * access takes thousands of CPU cycles. On non SB700 based
+	 * machines this check is only done once and has no side
+	 * effects.
+	 */
+	for (i = 0; hpet_readl(HPET_CFG) == 0xFFFFFFFF; i++) {
+		if (i == 1000) {
+			printk(KERN_WARNING
+			       "HPET config register value = 0xFFFFFFFF. "
+			       "Disabling HPET\n");
+			goto out_nohpet;
+		}
+	}
+
 	if (hpet_period < HPET_MIN_PERIOD || hpet_period > HPET_MAX_PERIOD)
 		goto out_nohpet;
 
@@ -478,19 +492,52 @@ void hpet_disable(void)
  */
 #include <linux/mc146818rtc.h>
 #include <linux/rtc.h>
+#include <asm/rtc.h>
 
 #define DEFAULT_RTC_INT_FREQ	64
 #define DEFAULT_RTC_SHIFT	6
 #define RTC_NUM_INTS		1
 
 static unsigned long hpet_rtc_flags;
-static unsigned long hpet_prev_update_sec;
+static int hpet_prev_update_sec;
 static struct rtc_time hpet_alarm_time;
 static unsigned long hpet_pie_count;
 static unsigned long hpet_t1_cmp;
 static unsigned long hpet_default_delta;
 static unsigned long hpet_pie_delta;
 static unsigned long hpet_pie_limit;
+
+static rtc_irq_handler irq_handler;
+
+/*
+ * Registers a IRQ handler.
+ */
+int hpet_register_irq_handler(rtc_irq_handler handler)
+{
+	if (!is_hpet_enabled())
+		return -ENODEV;
+	if (irq_handler)
+		return -EBUSY;
+
+	irq_handler = handler;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hpet_register_irq_handler);
+
+/*
+ * Deregisters the IRQ handler registered with hpet_register_irq_handler()
+ * and does cleanup.
+ */
+void hpet_unregister_irq_handler(rtc_irq_handler handler)
+{
+	if (!is_hpet_enabled())
+		return;
+
+	irq_handler = NULL;
+	hpet_rtc_flags = 0;
+}
+EXPORT_SYMBOL_GPL(hpet_unregister_irq_handler);
 
 /*
  * Timer 1 for RTC emulation. We use one shot mode, as periodic mode
@@ -533,6 +580,7 @@ int hpet_rtc_timer_init(void)
 
 	return 1;
 }
+EXPORT_SYMBOL_GPL(hpet_rtc_timer_init);
 
 /*
  * The functions below are called from rtc driver.
@@ -547,6 +595,7 @@ int hpet_mask_rtc_irq_bit(unsigned long bit_mask)
 	hpet_rtc_flags &= ~bit_mask;
 	return 1;
 }
+EXPORT_SYMBOL_GPL(hpet_mask_rtc_irq_bit);
 
 int hpet_set_rtc_irq_bit(unsigned long bit_mask)
 {
@@ -557,11 +606,15 @@ int hpet_set_rtc_irq_bit(unsigned long bit_mask)
 
 	hpet_rtc_flags |= bit_mask;
 
+	if ((bit_mask & RTC_UIE) && !(oldbits & RTC_UIE))
+		hpet_prev_update_sec = -1;
+
 	if (!oldbits)
 		hpet_rtc_timer_init();
 
 	return 1;
 }
+EXPORT_SYMBOL_GPL(hpet_set_rtc_irq_bit);
 
 int hpet_set_alarm_time(unsigned char hrs, unsigned char min,
 			unsigned char sec)
@@ -575,6 +628,7 @@ int hpet_set_alarm_time(unsigned char hrs, unsigned char min,
 
 	return 1;
 }
+EXPORT_SYMBOL_GPL(hpet_set_alarm_time);
 
 int hpet_set_periodic_freq(unsigned long freq)
 {
@@ -593,11 +647,13 @@ int hpet_set_periodic_freq(unsigned long freq)
 	}
 	return 1;
 }
+EXPORT_SYMBOL_GPL(hpet_set_periodic_freq);
 
 int hpet_rtc_dropped_irq(void)
 {
 	return is_hpet_enabled();
 }
+EXPORT_SYMBOL_GPL(hpet_rtc_dropped_irq);
 
 static void hpet_rtc_timer_reinit(void)
 {
@@ -630,7 +686,7 @@ static void hpet_rtc_timer_reinit(void)
 		if (hpet_rtc_flags & RTC_PIE)
 			hpet_pie_count += lost_ints;
 		if (printk_ratelimit())
-			printk(KERN_WARNING "rtc: lost %d interrupts\n",
+			printk(KERN_WARNING "hpet1: lost %d rtc interrupts\n",
 				lost_ints);
 	}
 }
@@ -641,13 +697,15 @@ irqreturn_t hpet_rtc_interrupt(int irq, void *dev_id)
 	unsigned long rtc_int_flag = 0;
 
 	hpet_rtc_timer_reinit();
+	memset(&curr_time, 0, sizeof(struct rtc_time));
 
 	if (hpet_rtc_flags & (RTC_UIE | RTC_AIE))
-		rtc_get_rtc_time(&curr_time);
+		get_rtc_time(&curr_time);
 
 	if (hpet_rtc_flags & RTC_UIE &&
 	    curr_time.tm_sec != hpet_prev_update_sec) {
-		rtc_int_flag = RTC_UF;
+		if (hpet_prev_update_sec >= 0)
+			rtc_int_flag = RTC_UF;
 		hpet_prev_update_sec = curr_time.tm_sec;
 	}
 
@@ -665,8 +723,10 @@ irqreturn_t hpet_rtc_interrupt(int irq, void *dev_id)
 
 	if (rtc_int_flag) {
 		rtc_int_flag |= (RTC_IRQF | (RTC_NUM_INTS << 8));
-		rtc_interrupt(rtc_int_flag, dev_id);
+		if (irq_handler)
+			irq_handler(rtc_int_flag, dev_id);
 	}
 	return IRQ_HANDLED;
 }
+EXPORT_SYMBOL_GPL(hpet_rtc_interrupt);
 #endif

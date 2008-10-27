@@ -51,6 +51,12 @@ static struct atomic_notifier_head dock_notifier_list;
 static struct platform_device *dock_device;
 static char dock_device_name[] = "dock";
 
+static const struct acpi_device_id dock_device_ids[] = {
+	{"LNXDOCK", 0},
+	{"", 0},
+};
+MODULE_DEVICE_TABLE(acpi, dock_device_ids);
+
 struct dock_station {
 	acpi_handle handle;
 	unsigned long last_dock_time;
@@ -557,9 +563,6 @@ EXPORT_SYMBOL_GPL(unregister_hotplug_dock_device);
  */
 static int handle_eject_request(struct dock_station *ds, u32 event)
 {
-	if (!dock_present(ds))
-		return -ENODEV;
-
 	if (dock_in_progress(ds))
 		return -EBUSY;
 
@@ -567,8 +570,16 @@ static int handle_eject_request(struct dock_station *ds, u32 event)
 	 * here we need to generate the undock
 	 * event prior to actually doing the undock
 	 * so that the device struct still exists.
+	 * Also, even send the dock event if the
+	 * device is not present anymore
 	 */
 	dock_event(ds, event, UNDOCK_EVENT);
+
+	if (!dock_present(ds)) {
+		complete_undock(ds);
+		return -ENODEV;
+	}
+
 	hotplug_dock_devices(ds, ACPI_NOTIFY_EJECT_REQUEST);
 	undock(ds);
 	eject_dock(ds);
@@ -680,7 +691,7 @@ static ssize_t show_docked(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", dock_present(dock_station));
 
 }
-DEVICE_ATTR(docked, S_IRUGO, show_docked, NULL);
+static DEVICE_ATTR(docked, S_IRUGO, show_docked, NULL);
 
 /*
  * show_flags - read method for flags file in sysfs
@@ -691,7 +702,7 @@ static ssize_t show_flags(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", dock_station->flags);
 
 }
-DEVICE_ATTR(flags, S_IRUGO, show_flags, NULL);
+static DEVICE_ATTR(flags, S_IRUGO, show_flags, NULL);
 
 /*
  * write_undock - write method for "undock" file in sysfs
@@ -704,10 +715,11 @@ static ssize_t write_undock(struct device *dev, struct device_attribute *attr,
 	if (!count)
 		return -EINVAL;
 
+	begin_undock(dock_station);
 	ret = handle_eject_request(dock_station, ACPI_NOTIFY_EJECT_REQUEST);
 	return ret ? ret: count;
 }
-DEVICE_ATTR(undock, S_IWUSR, NULL, write_undock);
+static DEVICE_ATTR(undock, S_IWUSR, NULL, write_undock);
 
 /*
  * show_dock_uid - read method for "uid" file in sysfs
@@ -723,7 +735,7 @@ static ssize_t show_dock_uid(struct device *dev,
 
 	return snprintf(buf, PAGE_SIZE, "%lx\n", lbuf);
 }
-DEVICE_ATTR(uid, S_IRUGO, show_dock_uid, NULL);
+static DEVICE_ATTR(uid, S_IRUGO, show_dock_uid, NULL);
 
 /**
  * dock_add - add a new dock station
@@ -827,7 +839,7 @@ static int dock_add(acpi_handle handle)
 		goto dock_add_err;
 	}
 
-	printk(KERN_INFO PREFIX "%s \n", ACPI_DOCK_DRIVER_DESCRIPTION);
+	printk(KERN_INFO PREFIX "%s\n", ACPI_DOCK_DRIVER_DESCRIPTION);
 
 	return 0;
 
@@ -909,6 +921,9 @@ static int __init dock_init(void)
 	int num = 0;
 
 	dock_station = NULL;
+
+	if (acpi_disabled)
+		return 0;
 
 	/* look for a dock station */
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,

@@ -20,6 +20,7 @@
 
 #include <asm/hw_irq.h>
 #include <asm/apic.h>
+#include <asm/smp.h>
 
 /*
  * the following functions deal with sending IPIs between CPUs.
@@ -27,7 +28,8 @@
  * We use 'broadcast', CPU->CPU IPIs and self-IPIs too.
  */
 
-static inline unsigned int __prepare_ICR (unsigned int shortcut, int vector, unsigned int dest)
+static inline unsigned int __prepare_ICR(unsigned int shortcut, int vector,
+					 unsigned int dest)
 {
 	unsigned int icr = shortcut | dest;
 
@@ -42,12 +44,13 @@ static inline unsigned int __prepare_ICR (unsigned int shortcut, int vector, uns
 	return icr;
 }
 
-static inline int __prepare_ICR2 (unsigned int mask)
+static inline int __prepare_ICR2(unsigned int mask)
 {
 	return SET_APIC_DEST_FIELD(mask);
 }
 
-static inline void __send_IPI_shortcut(unsigned int shortcut, int vector, unsigned int dest)
+static inline void __send_IPI_shortcut(unsigned int shortcut, int vector,
+				       unsigned int dest)
 {
 	/*
 	 * Subtle. In the case of the 'never do double writes' workaround
@@ -78,7 +81,8 @@ static inline void __send_IPI_shortcut(unsigned int shortcut, int vector, unsign
  * This is used to send an IPI with no shorthand notation (the destination is
  * specified in bits 56 to 63 of the ICR).
  */
-static inline void __send_IPI_dest_field(unsigned int mask, int vector, unsigned int dest)
+static inline void __send_IPI_dest_field(unsigned int mask, int vector,
+					 unsigned int dest)
 {
 	unsigned long cfg;
 
@@ -118,7 +122,7 @@ static inline void send_IPI_mask_sequence(cpumask_t mask, int vector)
 	 * - mbligh
 	 */
 	local_irq_save(flags);
-	for_each_cpu_mask(query_cpu, mask) {
+	for_each_cpu_mask_nr(query_cpu, mask) {
 		__send_IPI_dest_field(per_cpu(x86_cpu_to_apicid, query_cpu),
 				      vector, APIC_DEST_PHYSICAL);
 	}

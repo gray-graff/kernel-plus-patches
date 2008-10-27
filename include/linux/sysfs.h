@@ -32,6 +32,8 @@ struct attribute {
 
 struct attribute_group {
 	const char		*name;
+	mode_t			(*is_visible)(struct kobject *,
+					      struct attribute *, int);
 	struct attribute	**attrs;
 };
 
@@ -99,10 +101,15 @@ void sysfs_remove_bin_file(struct kobject *kobj, struct bin_attribute *attr);
 
 int __must_check sysfs_create_link(struct kobject *kobj, struct kobject *target,
 				   const char *name);
+int __must_check sysfs_create_link_nowarn(struct kobject *kobj,
+					  struct kobject *target,
+					  const char *name);
 void sysfs_remove_link(struct kobject *kobj, const char *name);
 
 int __must_check sysfs_create_group(struct kobject *kobj,
 				    const struct attribute_group *grp);
+int sysfs_update_group(struct kobject *kobj,
+		       const struct attribute_group *grp);
 void sysfs_remove_group(struct kobject *kobj,
 			const struct attribute_group *grp);
 int sysfs_add_file_to_group(struct kobject *kobj,
@@ -129,7 +136,6 @@ static inline int sysfs_create_dir(struct kobject *kobj)
 
 static inline void sysfs_remove_dir(struct kobject *kobj)
 {
-	;
 }
 
 static inline int sysfs_rename_dir(struct kobject *kobj, const char *new_name)
@@ -158,7 +164,6 @@ static inline int sysfs_chmod_file(struct kobject *kobj,
 static inline void sysfs_remove_file(struct kobject *kobj,
 				     const struct attribute *attr)
 {
-	;
 }
 
 static inline int sysfs_create_bin_file(struct kobject *kobj,
@@ -167,10 +172,9 @@ static inline int sysfs_create_bin_file(struct kobject *kobj,
 	return 0;
 }
 
-static inline int sysfs_remove_bin_file(struct kobject *kobj,
-					struct bin_attribute *attr)
+static inline void sysfs_remove_bin_file(struct kobject *kobj,
+					 struct bin_attribute *attr)
 {
-	return 0;
 }
 
 static inline int sysfs_create_link(struct kobject *kobj,
@@ -179,9 +183,15 @@ static inline int sysfs_create_link(struct kobject *kobj,
 	return 0;
 }
 
+static inline int sysfs_create_link_nowarn(struct kobject *kobj,
+					   struct kobject *target,
+					   const char *name)
+{
+	return 0;
+}
+
 static inline void sysfs_remove_link(struct kobject *kobj, const char *name)
 {
-	;
 }
 
 static inline int sysfs_create_group(struct kobject *kobj,
@@ -190,10 +200,15 @@ static inline int sysfs_create_group(struct kobject *kobj,
 	return 0;
 }
 
+static inline int sysfs_update_group(struct kobject *kobj,
+				const struct attribute_group *grp)
+{
+	return 0;
+}
+
 static inline void sysfs_remove_group(struct kobject *kobj,
 				      const struct attribute_group *grp)
 {
-	;
 }
 
 static inline int sysfs_add_file_to_group(struct kobject *kobj,

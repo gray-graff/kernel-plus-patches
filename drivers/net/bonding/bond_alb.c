@@ -345,7 +345,7 @@ static int rlb_arp_recv(struct sk_buff *skb, struct net_device *bond_dev, struct
 	struct arp_pkt *arp = (struct arp_pkt *)skb->data;
 	int res = NET_RX_DROP;
 
-	if (bond_dev->nd_net != &init_net)
+	if (dev_net(bond_dev) != &init_net)
 		goto out;
 
 	if (!(bond_dev->flags & IFF_MASTER))
@@ -419,8 +419,10 @@ static void rlb_teach_disabled_mac_on_primary(struct bonding *bond, u8 addr[])
 	}
 
 	if (!bond->alb_info.primary_is_promisc) {
-		bond->alb_info.primary_is_promisc = 1;
-		dev_set_promiscuity(bond->curr_active_slave->dev, 1);
+		if (!dev_set_promiscuity(bond->curr_active_slave->dev, 1))
+			bond->alb_info.primary_is_promisc = 1;
+		else
+			bond->alb_info.primary_is_promisc = 0;
 	}
 
 	bond->alb_info.rlb_promisc_timeout_counter = 0;
@@ -678,12 +680,8 @@ static struct slave *rlb_choose_channel(struct sk_buff *skb, struct bonding *bon
 		}
 
 		if (!list_empty(&bond->vlan_list)) {
-			unsigned short vlan_id;
-			int res = vlan_get_tag(skb, &vlan_id);
-			if (!res) {
+			if (!vlan_get_tag(skb, &client_info->vlan_id))
 				client_info->tag = 1;
-				client_info->vlan_id = vlan_id;
-			}
 		}
 
 		if (!client_info->assigned) {
