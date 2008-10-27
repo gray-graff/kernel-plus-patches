@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.27-std-def-alt1
-# Mon Oct 27 17:39:00 2008
+# Mon Oct 27 19:49:31 2008
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -3128,6 +3128,7 @@ CONFIG_DRM_MGA=m
 CONFIG_DRM_SIS=m
 CONFIG_DRM_VIA=m
 CONFIG_DRM_SAVAGE=m
+CONFIG_DRM_MACH64=m
 CONFIG_VGASTATE=m
 CONFIG_VIDEO_OUTPUT_CONTROL=m
 CONFIG_FB=y
