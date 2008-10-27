@@ -127,7 +127,7 @@ MODULE_DEVICE_TABLE(usb, atp_table);
  * Threshold for the touchpad sensors. Any change less than ATP_THRESHOLD is
  * ignored.
  */
-#define ATP_THRESHOLD	 5
+#define ATP_THRESHOLD	 3
 
 /* Geyser initialization constants */
 #define ATP_GEYSER_MODE_READ_REQUEST_ID		1
