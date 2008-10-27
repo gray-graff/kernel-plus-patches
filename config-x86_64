@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.27-std-def-alt1
-# Mon Oct 27 15:16:31 2008
+# Mon Oct 27 17:21:39 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -3725,6 +3725,9 @@ CONFIG_UBIFS_FS_LZO=y
 CONFIG_UBIFS_FS_ZLIB=y
 # CONFIG_UBIFS_FS_DEBUG is not set
 CONFIG_CRAMFS=m
+CONFIG_SQUASHFS=m
+CONFIG_SQUASHFS_EMBEDDED=y
+CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=6
 CONFIG_VXFS_FS=m
 CONFIG_MINIX_FS=m
 CONFIG_OMFS_FS=m
