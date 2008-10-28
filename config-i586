@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.27-std-def-alt1
-# Tue Oct 28 15:47:51 2008
+# Tue Oct 28 16:10:49 2008
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -4184,7 +4184,7 @@ CONFIG_SYSCTL_SYSCALL_CHECK=y
 CONFIG_HAVE_FTRACE=y
 CONFIG_HAVE_DYNAMIC_FTRACE=y
 CONFIG_TRACING=y
-CONFIG_FTRACE=y
+# CONFIG_FTRACE is not set
 # CONFIG_IRQSOFF_TRACER is not set
 # CONFIG_SYSPROF_TRACER is not set
 # CONFIG_SCHED_TRACER is not set
