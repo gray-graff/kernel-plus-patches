@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.27-std-def-alt1
-# Sat Nov  1 06:52:31 2008
+# Sat Nov  1 08:48:31 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -3234,6 +3234,8 @@ CONFIG_SC6600=y
 CONFIG_SC6600_JOY=y
 CONFIG_SC6600_CDROM=4
 CONFIG_SC6600_CDROMBASE=0x0
+# CONFIG_AEDSP16_MSS is not set
+# CONFIG_AEDSP16_SBPRO is not set
 CONFIG_SOUND_KAHLUA=m
 CONFIG_AC97_BUS=m
 CONFIG_HID_SUPPORT=y
