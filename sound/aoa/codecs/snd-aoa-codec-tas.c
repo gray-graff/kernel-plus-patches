@@ -71,9 +71,9 @@ MODULE_AUTHOR("Johannes Berg <johannes@sipsolutions.net>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("tas codec driver for snd-aoa");
 
-#include "tas.h"
-#include "tas-gain-table.h"
-#include "tas-basstreble.h"
+#include "snd-aoa-codec-tas.h"
+#include "snd-aoa-codec-tas-gain-table.h"
+#include "snd-aoa-codec-tas-basstreble.h"
 #include "../aoa.h"
 #include "../soundbus/soundbus.h"
 
@@ -654,13 +654,15 @@ static struct snd_kcontrol_new bass_control = {
 static struct transfer_info tas_transfers[] = {
 	{
 		/* input */
-		.formats = SNDRV_PCM_FMTBIT_S16_BE | SNDRV_PCM_FMTBIT_S24_BE,
+		.formats = SNDRV_PCM_FMTBIT_S16_BE | SNDRV_PCM_FMTBIT_S16_BE |
+			   SNDRV_PCM_FMTBIT_S24_BE | SNDRV_PCM_FMTBIT_S24_BE,
 		.rates = SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000,
 		.transfer_in = 1,
 	},
 	{
 		/* output */
-		.formats = SNDRV_PCM_FMTBIT_S16_BE | SNDRV_PCM_FMTBIT_S24_BE,
+		.formats = SNDRV_PCM_FMTBIT_S16_BE | SNDRV_PCM_FMTBIT_S16_BE |
+			   SNDRV_PCM_FMTBIT_S24_BE | SNDRV_PCM_FMTBIT_S24_BE,
 		.rates = SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000,
 		.transfer_in = 0,
 	},
@@ -880,7 +882,7 @@ static void tas_exit_codec(struct aoa_codec *codec)
 		return;
 	tas->codec.soundbus_dev->detach_codec(tas->codec.soundbus_dev, tas);
 }
-
+	
 
 static struct i2c_driver tas_driver;
 

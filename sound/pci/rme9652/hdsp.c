@@ -1036,7 +1036,7 @@ static void hdsp_set_dds_value(struct hdsp *hdsp, int rate)
 	n = DDS_NUMERATOR;
 	div64_32(&n, rate, &r);
 	/* n should be less than 2^32 for being written to FREQ register */
-	snd_BUG_ON(n >> 32);
+	snd_assert((n >> 32) == 0);
 	/* HDSP_freqReg and HDSP_resetPointer are the same, so keep the DDS
 	   value to write it after a reset */
 	hdsp->dds_value = n;
@@ -3043,7 +3043,7 @@ static int snd_hdsp_get_adat_sync_check(struct snd_kcontrol *kcontrol, struct sn
 	struct hdsp *hdsp = snd_kcontrol_chip(kcontrol);
 
 	offset = ucontrol->id.index - 1;
-	snd_BUG_ON(offset < 0);
+	snd_assert(offset >= 0);
 
 	switch (hdsp->io_type) {
 	case Digiface:
@@ -3767,8 +3767,7 @@ static char *hdsp_channel_buffer_location(struct hdsp *hdsp,
 {
 	int mapped_channel;
 
-        if (snd_BUG_ON(channel < 0 || channel >= hdsp->max_channels))
-		return NULL;
+        snd_assert(channel >= 0 && channel < hdsp->max_channels, return NULL);
         
 	if ((mapped_channel = hdsp->channel_map[channel]) < 0)
 		return NULL;
@@ -3785,12 +3784,10 @@ static int snd_hdsp_playback_copy(struct snd_pcm_substream *substream, int chann
 	struct hdsp *hdsp = snd_pcm_substream_chip(substream);
 	char *channel_buf;
 
-	if (snd_BUG_ON(pos + count > HDSP_CHANNEL_BUFFER_BYTES / 4))
-		return -EINVAL;
+	snd_assert(pos + count <= HDSP_CHANNEL_BUFFER_BYTES / 4, return -EINVAL);
 
 	channel_buf = hdsp_channel_buffer_location (hdsp, substream->pstr->stream, channel);
-	if (snd_BUG_ON(!channel_buf))
-		return -EIO;
+	snd_assert(channel_buf != NULL, return -EIO);
 	if (copy_from_user(channel_buf + pos * 4, src, count * 4))
 		return -EFAULT;
 	return count;
@@ -3802,12 +3799,10 @@ static int snd_hdsp_capture_copy(struct snd_pcm_substream *substream, int channe
 	struct hdsp *hdsp = snd_pcm_substream_chip(substream);
 	char *channel_buf;
 
-	if (snd_BUG_ON(pos + count > HDSP_CHANNEL_BUFFER_BYTES / 4))
-		return -EINVAL;
+	snd_assert(pos + count <= HDSP_CHANNEL_BUFFER_BYTES / 4, return -EINVAL);
 
 	channel_buf = hdsp_channel_buffer_location (hdsp, substream->pstr->stream, channel);
-	if (snd_BUG_ON(!channel_buf))
-		return -EIO;
+	snd_assert(channel_buf != NULL, return -EIO);
 	if (copy_to_user(dst, channel_buf + pos * 4, count * 4))
 		return -EFAULT;
 	return count;
@@ -3820,8 +3815,7 @@ static int snd_hdsp_hw_silence(struct snd_pcm_substream *substream, int channel,
 	char *channel_buf;
 
 	channel_buf = hdsp_channel_buffer_location (hdsp, substream->pstr->stream, channel);
-	if (snd_BUG_ON(!channel_buf))
-		return -EIO;
+	snd_assert(channel_buf != NULL, return -EIO);
 	memset(channel_buf + pos * 4, 0, count * 4);
 	return count;
 }
@@ -3933,8 +3927,7 @@ static int snd_hdsp_channel_info(struct snd_pcm_substream *substream,
 	struct hdsp *hdsp = snd_pcm_substream_chip(substream);
 	int mapped_channel;
 
-	if (snd_BUG_ON(info->channel >= hdsp->max_channels))
-		return -EINVAL;
+	snd_assert(info->channel < hdsp->max_channels, return -EINVAL);
 
 	if ((mapped_channel = hdsp->channel_map[info->channel]) < 0)
 		return -EINVAL;

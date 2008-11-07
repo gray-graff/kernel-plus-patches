@@ -221,6 +221,8 @@ int snd_soc_dapm_new_controls(struct snd_soc_codec *codec,
 	int num);
 
 /* dapm path setup */
+int  __deprecated snd_soc_dapm_connect_input(struct snd_soc_codec *codec,
+	const char *sink_name, const char *control_name, const char *src_name);
 int snd_soc_dapm_new_widgets(struct snd_soc_codec *codec);
 void snd_soc_dapm_free(struct snd_soc_device *socdev);
 int snd_soc_dapm_add_routes(struct snd_soc_codec *codec,
@@ -238,7 +240,6 @@ int snd_soc_dapm_sys_add(struct device *dev);
 /* dapm audio pin control and status */
 int snd_soc_dapm_enable_pin(struct snd_soc_codec *codec, char *pin);
 int snd_soc_dapm_disable_pin(struct snd_soc_codec *codec, char *pin);
-int snd_soc_dapm_nc_pin(struct snd_soc_codec *codec, char *pin);
 int snd_soc_dapm_get_pin_status(struct snd_soc_codec *codec, char *pin);
 int snd_soc_dapm_sync(struct snd_soc_codec *codec);
 

@@ -2,7 +2,8 @@
  * soc-dapm.c  --  ALSA SoC Dynamic Audio Power Management
  *
  * Copyright 2005 Wolfson Microelectronics PLC.
- * Author: Liam Girdwood <lrg@slimlogic.co.uk>
+ * Author: Liam Girdwood
+ *         liam.girdwood@wolfsonmicro.com or linux@wolfsonmicro.com
  *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
@@ -37,7 +38,6 @@
 #include <linux/bitops.h>
 #include <linux/platform_device.h>
 #include <linux/jiffies.h>
-#include <linux/debugfs.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -67,9 +67,7 @@ static int dapm_status = 1;
 module_param(dapm_status, int, 0);
 MODULE_PARM_DESC(dapm_status, "enable DPM sysfs entries");
 
-static struct dentry *asoc_debugfs;
-
-static u32 pop_time;
+static unsigned int pop_time;
 
 static void pop_wait(void)
 {
@@ -106,13 +104,10 @@ static void dapm_set_path_status(struct snd_soc_dapm_widget *w,
 	case snd_soc_dapm_switch:
 	case snd_soc_dapm_mixer: {
 		int val;
-		struct soc_mixer_control *mc = (struct soc_mixer_control *)
-			w->kcontrols[i].private_value;
-		unsigned int reg = mc->reg;
-		unsigned int shift = mc->shift;
-		int max = mc->max;
-		unsigned int mask = (1 << fls(max)) - 1;
-		unsigned int invert = mc->invert;
+		int reg = w->kcontrols[i].private_value & 0xff;
+		int shift = (w->kcontrols[i].private_value >> 8) & 0x0f;
+		int mask = (w->kcontrols[i].private_value >> 16) & 0xff;
+		int invert = (w->kcontrols[i].private_value >> 24) & 0x01;
 
 		val = snd_soc_read(w->codec, reg);
 		val = (val >> shift) & mask;
@@ -127,13 +122,13 @@ static void dapm_set_path_status(struct snd_soc_dapm_widget *w,
 		struct soc_enum *e = (struct soc_enum *)w->kcontrols[i].private_value;
 		int val, item, bitmask;
 
-		for (bitmask = 1; bitmask < e->max; bitmask <<= 1)
+		for (bitmask = 1; bitmask < e->mask; bitmask <<= 1)
 		;
 		val = snd_soc_read(w->codec, e->reg);
 		item = (val >> e->shift_l) & (bitmask - 1);
 
 		p->connect = 0;
-		for (i = 0; i < e->max; i++) {
+		for (i = 0; i < e->mask; i++) {
 			if (!(strcmp(p->name, e->texts[i])) && item == i)
 				p->connect = 1;
 		}
@@ -170,7 +165,7 @@ static int dapm_connect_mux(struct snd_soc_codec *codec,
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	int i;
 
-	for (i = 0; i < e->max; i++) {
+	for (i = 0; i < e->mask; i++) {
 		if (!(strcmp(control_name, e->texts[i]))) {
 			list_add(&path->list, &codec->dapm_paths);
 			list_add(&path->list_sink, &dest->sources);
@@ -252,19 +247,16 @@ static int dapm_set_pga(struct snd_soc_dapm_widget *widget, int power)
 		return 0;
 
 	if (widget->num_kcontrols && k) {
-		struct soc_mixer_control *mc =
-			(struct soc_mixer_control *)k->private_value;
-		unsigned int reg = mc->reg;
-		unsigned int shift = mc->shift;
-		int max = mc->max;
-		unsigned int mask = (1 << fls(max)) - 1;
-		unsigned int invert = mc->invert;
+		int reg = k->private_value & 0xff;
+		int shift = (k->private_value >> 8) & 0x0f;
+		int mask = (k->private_value >> 16) & 0xff;
+		int invert = (k->private_value >> 24) & 0x01;
 
 		if (power) {
 			int i;
 			/* power up has happended, increase volume to last level */
 			if (invert) {
-				for (i = max; i > widget->saved_value; i--)
+				for (i = mask; i > widget->saved_value; i--)
 					snd_soc_update_bits(widget->codec, reg, mask, i);
 			} else {
 				for (i = 0; i < widget->saved_value; i++)
@@ -692,7 +684,7 @@ static void dbg_dump_dapm(struct snd_soc_codec* codec, const char *action)
 /* test and update the power status of a mux widget */
 static int dapm_mux_update_power(struct snd_soc_dapm_widget *widget,
 				 struct snd_kcontrol *kcontrol, int mask,
-				 int mux, int val, struct soc_enum *e)
+				 int val, struct soc_enum* e)
 {
 	struct snd_soc_dapm_path *path;
 	int found = 0;
@@ -708,12 +700,12 @@ static int dapm_mux_update_power(struct snd_soc_dapm_widget *widget,
 		if (path->kcontrol != kcontrol)
 			continue;
 
-		if (!path->name || !e->texts[mux])
+		if (!path->name || ! e->texts[val])
 			continue;
 
 		found = 1;
 		/* we now need to match the string in the enum to the path */
-		if (!(strcmp(path->name, e->texts[mux])))
+		if (!(strcmp(path->name, e->texts[val])))
 			path->connect = 1; /* new connection */
 		else
 			path->connect = 0; /* old connection must be powered down */
@@ -819,35 +811,51 @@ static ssize_t dapm_widget_show(struct device *dev,
 
 static DEVICE_ATTR(dapm_widget, 0444, dapm_widget_show, NULL);
 
+/* pop/click delay times */
+static ssize_t dapm_pop_time_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", pop_time);
+}
+
+static ssize_t dapm_pop_time_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+
+{
+	unsigned long val;
+
+	if (strict_strtoul(buf, 10, &val) >= 0)
+		pop_time = val;
+	else
+		printk(KERN_ERR "Unable to parse pop_time setting\n");
+
+	return count;
+}
+
+static DEVICE_ATTR(dapm_pop_time, 0744, dapm_pop_time_show,
+		   dapm_pop_time_store);
+
 int snd_soc_dapm_sys_add(struct device *dev)
 {
 	int ret = 0;
 
-	if (!dapm_status)
-		return 0;
+	if (dapm_status) {
+		ret = device_create_file(dev, &dev_attr_dapm_widget);
 
-	ret = device_create_file(dev, &dev_attr_dapm_widget);
-	if (ret != 0)
-		return ret;
+		if (ret == 0)
+			ret = device_create_file(dev, &dev_attr_dapm_pop_time);
+	}
 
-	asoc_debugfs = debugfs_create_dir("asoc", NULL);
-	if (!IS_ERR(asoc_debugfs) && asoc_debugfs)
-		debugfs_create_u32("dapm_pop_time", 0744, asoc_debugfs,
-				   &pop_time);
-	else
-		asoc_debugfs = NULL;
-
-	return 0;
+	return ret;
 }
 
 static void snd_soc_dapm_sys_remove(struct device *dev)
 {
 	if (dapm_status) {
+		device_remove_file(dev, &dev_attr_dapm_pop_time);
 		device_remove_file(dev, &dev_attr_dapm_widget);
 	}
-
-	if (asoc_debugfs)
-		debugfs_remove_recursive(asoc_debugfs);
 }
 
 /* free all dapm widgets and resources */
@@ -1007,6 +1015,28 @@ err:
 }
 
 /**
+ * snd_soc_dapm_connect_input - connect dapm widgets
+ * @codec: audio codec
+ * @sink: name of target widget
+ * @control: mixer control name
+ * @source: name of source name
+ *
+ * Connects 2 dapm widgets together via a named audio path. The sink is
+ * the widget receiving the audio signal, whilst the source is the sender
+ * of the audio signal.
+ *
+ * This function has been deprecated in favour of snd_soc_dapm_add_routes().
+ *
+ * Returns 0 for success else error.
+ */
+int snd_soc_dapm_connect_input(struct snd_soc_codec *codec, const char *sink,
+	const char *control, const char *source)
+{
+	return snd_soc_dapm_add_route(codec, sink, control, source);
+}
+EXPORT_SYMBOL_GPL(snd_soc_dapm_connect_input);
+
+/**
  * snd_soc_dapm_add_routes - Add routes between DAPM widgets
  * @codec: codec
  * @route: audio routes
@@ -1103,14 +1133,12 @@ int snd_soc_dapm_get_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_dapm_widget *widget = snd_kcontrol_chip(kcontrol);
-	struct soc_mixer_control *mc =
-		(struct soc_mixer_control *)kcontrol->private_value;
-	unsigned int reg = mc->reg;
-	unsigned int shift = mc->shift;
-	unsigned int rshift = mc->rshift;
-	int max = mc->max;
-	unsigned int invert = mc->invert;
-	unsigned int mask = (1 << fls(max)) - 1;
+	int reg = kcontrol->private_value & 0xff;
+	int shift = (kcontrol->private_value >> 8) & 0x0f;
+	int rshift = (kcontrol->private_value >> 12) & 0x0f;
+	int max = (kcontrol->private_value >> 16) & 0xff;
+	int invert = (kcontrol->private_value >> 24) & 0x01;
+	int mask = (1 << fls(max)) - 1;
 
 	/* return the saved value if we are powered down */
 	if (widget->id == snd_soc_dapm_pga && !widget->power) {
@@ -1148,14 +1176,12 @@ int snd_soc_dapm_put_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_dapm_widget *widget = snd_kcontrol_chip(kcontrol);
-	struct soc_mixer_control *mc =
-		(struct soc_mixer_control *)kcontrol->private_value;
-	unsigned int reg = mc->reg;
-	unsigned int shift = mc->shift;
-	unsigned int rshift = mc->rshift;
-	int max = mc->max;
-	unsigned int mask = (1 << fls(max)) - 1;
-	unsigned int invert = mc->invert;
+	int reg = kcontrol->private_value & 0xff;
+	int shift = (kcontrol->private_value >> 8) & 0x0f;
+	int rshift = (kcontrol->private_value >> 12) & 0x0f;
+	int max = (kcontrol->private_value >> 16) & 0xff;
+	int mask = (1 << fls(max)) - 1;
+	int invert = (kcontrol->private_value >> 24) & 0x01;
 	unsigned short val, val2, val_mask;
 	int ret;
 
@@ -1222,7 +1248,7 @@ int snd_soc_dapm_get_enum_double(struct snd_kcontrol *kcontrol,
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	unsigned short val, bitmask;
 
-	for (bitmask = 1; bitmask < e->max; bitmask <<= 1)
+	for (bitmask = 1; bitmask < e->mask; bitmask <<= 1)
 		;
 	val = snd_soc_read(widget->codec, e->reg);
 	ucontrol->value.enumerated.item[0] = (val >> e->shift_l) & (bitmask - 1);
@@ -1252,15 +1278,15 @@ int snd_soc_dapm_put_enum_double(struct snd_kcontrol *kcontrol,
 	unsigned short mask, bitmask;
 	int ret = 0;
 
-	for (bitmask = 1; bitmask < e->max; bitmask <<= 1)
+	for (bitmask = 1; bitmask < e->mask; bitmask <<= 1)
 		;
-	if (ucontrol->value.enumerated.item[0] > e->max - 1)
+	if (ucontrol->value.enumerated.item[0] > e->mask - 1)
 		return -EINVAL;
 	mux = ucontrol->value.enumerated.item[0];
 	val = mux << e->shift_l;
 	mask = (bitmask - 1) << e->shift_l;
 	if (e->shift_l != e->shift_r) {
-		if (ucontrol->value.enumerated.item[1] > e->max - 1)
+		if (ucontrol->value.enumerated.item[1] > e->mask - 1)
 			return -EINVAL;
 		val |= ucontrol->value.enumerated.item[1] << e->shift_r;
 		mask |= (bitmask - 1) << e->shift_r;
@@ -1268,7 +1294,7 @@ int snd_soc_dapm_put_enum_double(struct snd_kcontrol *kcontrol,
 
 	mutex_lock(&widget->codec->mutex);
 	widget->value = val;
-	dapm_mux_update_power(widget, kcontrol, mask, mux, val, e);
+	dapm_mux_update_power(widget, kcontrol, mask, mux, e);
 	if (widget->event) {
 		if (widget->event_flags & SND_SOC_DAPM_PRE_REG) {
 			ret = widget->event(widget,
@@ -1461,26 +1487,6 @@ int snd_soc_dapm_disable_pin(struct snd_soc_codec *codec, char *pin)
 EXPORT_SYMBOL_GPL(snd_soc_dapm_disable_pin);
 
 /**
- * snd_soc_dapm_nc_pin - permanently disable pin.
- * @codec: SoC codec
- * @pin: pin name
- *
- * Marks the specified pin as being not connected, disabling it along
- * any parent or child widgets.  At present this is identical to
- * snd_soc_dapm_disable_pin() but in future it will be extended to do
- * additional things such as disabling controls which only affect
- * paths through the pin.
- *
- * NOTE: snd_soc_dapm_sync() needs to be called after this for DAPM to
- * do any widget power switching.
- */
-int snd_soc_dapm_nc_pin(struct snd_soc_codec *codec, char *pin)
-{
-	return snd_soc_dapm_set_pin(codec, pin, 0);
-}
-EXPORT_SYMBOL_GPL(snd_soc_dapm_nc_pin);
-
-/**
  * snd_soc_dapm_get_pin_status - get audio pin status
  * @codec: audio codec
  * @pin: audio signal pin endpoint (or start point)
@@ -1518,6 +1524,6 @@ void snd_soc_dapm_free(struct snd_soc_device *socdev)
 EXPORT_SYMBOL_GPL(snd_soc_dapm_free);
 
 /* Module information */
-MODULE_AUTHOR("Liam Girdwood, lrg@slimlogic.co.uk");
+MODULE_AUTHOR("Liam Girdwood, liam.girdwood@wolfsonmicro.com, www.wolfsonmicro.com");
 MODULE_DESCRIPTION("Dynamic Audio Power Management core for ALSA SoC");
 MODULE_LICENSE("GPL");
