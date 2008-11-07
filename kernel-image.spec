@@ -466,6 +466,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Fri Nov 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt2
 - turn on KVM
+- rollback alsa to 2.6.27
 
 * Fri Oct 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt1
 - 2.6.27.4
