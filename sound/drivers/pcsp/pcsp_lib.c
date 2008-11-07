@@ -20,8 +20,6 @@ MODULE_PARM_DESC(nforce_wa, "Apply NForce chipset workaround "
 
 #define DMIX_WANTS_S16	1
 
-#define hrtimer_get_expires(t)  (t)->expires
-
 /*
  * Call snd_pcm_period_elapsed in a tasklet
  * This avoids spinlock messes and long-running irq contexts

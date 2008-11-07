@@ -43,8 +43,6 @@
 
 #define OSS_ALSAEMULVER		_SIOR ('M', 249, int)
 
-typedef unsigned int fmode_t;
-
 static int dsp_map[SNDRV_CARDS];
 static int adsp_map[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS-1)] = 1};
 static int nonblock_open = 1;
