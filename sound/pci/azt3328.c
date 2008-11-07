@@ -816,8 +816,7 @@ snd_azf3328_mixer_new(struct snd_azf3328 *chip)
 	int err;
 
 	snd_azf3328_dbgcallenter();
-	if (snd_BUG_ON(!chip || !chip->card))
-		return -EINVAL;
+	snd_assert(chip != NULL && chip->card != NULL, return -EINVAL);
 
 	card = chip->card;
 
@@ -1472,8 +1471,7 @@ snd_azf3328_gameport_cooked_read(struct gameport *gameport,
 	u8 val;
 	unsigned long flags;
 
-	if (snd_BUG_ON(!chip))
-		return 0;
+	snd_assert(chip, return 0);
 
 	spin_lock_irqsave(&chip->reg_lock, flags);
 	val = snd_azf3328_game_inb(chip, IDX_GAME_LEGACY_COMPATIBLE);

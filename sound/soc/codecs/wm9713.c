@@ -2,7 +2,8 @@
  * wm9713.c  --  ALSA Soc WM9713 codec support
  *
  * Copyright 2006 Wolfson Microelectronics PLC.
- * Author: Liam Girdwood <lrg@slimlogic.co.uk>
+ * Author: Liam Girdwood
+ *         liam.girdwood@wolfsonmicro.com or linux@wolfsonmicro.com
  *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
@@ -418,12 +419,8 @@ SND_SOC_DAPM_MIXER("Line Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
 SND_SOC_DAPM_MIXER("Capture Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
 SND_SOC_DAPM_DAC("Voice DAC", "Voice Playback", AC97_EXTENDED_MID, 12, 1),
 SND_SOC_DAPM_DAC("Aux DAC", "Aux Playback", AC97_EXTENDED_MID, 11, 1),
-SND_SOC_DAPM_PGA("Left ADC", AC97_EXTENDED_MID, 5, 1, NULL, 0),
-SND_SOC_DAPM_PGA("Right ADC", AC97_EXTENDED_MID, 4, 1, NULL, 0),
-SND_SOC_DAPM_ADC("Left HiFi ADC", "Left HiFi Capture", SND_SOC_NOPM, 0, 0),
-SND_SOC_DAPM_ADC("Right HiFi ADC", "Right HiFi Capture", SND_SOC_NOPM, 0, 0),
-SND_SOC_DAPM_ADC("Left Voice ADC", "Left Voice Capture", SND_SOC_NOPM, 0, 0),
-SND_SOC_DAPM_ADC("Right Voice ADC", "Right Voice Capture", SND_SOC_NOPM, 0, 0),
+SND_SOC_DAPM_ADC("Left ADC", "Left HiFi Capture", AC97_EXTENDED_MID, 5, 1),
+SND_SOC_DAPM_ADC("Right ADC", "Right HiFi Capture", AC97_EXTENDED_MID, 4, 1),
 SND_SOC_DAPM_PGA("Left Headphone", AC97_EXTENDED_MSTATUS, 10, 1, NULL, 0),
 SND_SOC_DAPM_PGA("Right Headphone", AC97_EXTENDED_MSTATUS, 9, 1, NULL, 0),
 SND_SOC_DAPM_PGA("Left Speaker", AC97_EXTENDED_MSTATUS, 8, 1, NULL, 0),
@@ -586,13 +583,9 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 	/* left ADC */
 	{"Left ADC", NULL, "Left Capture Source"},
-	{"Left Voice ADC", NULL, "Left ADC"},
-	{"Left HiFi ADC", NULL, "Left ADC"},
 
 	/* right ADC */
 	{"Right ADC", NULL, "Right Capture Source"},
-	{"Right Voice ADC", NULL, "Right ADC"},
-	{"Right HiFi ADC", NULL, "Right ADC"},
 
 	/* mic */
 	{"Mic A Pre Amp", NULL, "Mic A Source"},
@@ -956,17 +949,17 @@ static int wm9713_pcm_hw_params(struct snd_pcm_substream *substream,
 
 static void wm9713_voiceshutdown(struct snd_pcm_substream *substream)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_device *socdev = rtd->socdev;
-	struct snd_soc_codec *codec = socdev->codec;
-	u16 status;
+    struct snd_soc_pcm_runtime *rtd = substream->private_data;
+    struct snd_soc_device *socdev = rtd->socdev;
+    struct snd_soc_codec *codec = socdev->codec;
+    u16 status;
 
-	/* Gracefully shut down the voice interface. */
-	status = ac97_read(codec, AC97_EXTENDED_STATUS) | 0x1000;
-	ac97_write(codec, AC97_HANDSET_RATE, 0x0280);
-	schedule_timeout_interruptible(msecs_to_jiffies(1));
-	ac97_write(codec, AC97_HANDSET_RATE, 0x0F80);
-	ac97_write(codec, AC97_EXTENDED_MID, status);
+    /* Gracefully shut down the voice interface. */
+    status = ac97_read(codec, AC97_EXTENDED_STATUS) | 0x1000;
+    ac97_write(codec, AC97_HANDSET_RATE, 0x0280);
+    schedule_timeout_interruptible(msecs_to_jiffies(1));
+    ac97_write(codec, AC97_HANDSET_RATE, 0x0F80);
+    ac97_write(codec, AC97_EXTENDED_MID, status);
 }
 
 static int ac97_hifi_prepare(struct snd_pcm_substream *substream)

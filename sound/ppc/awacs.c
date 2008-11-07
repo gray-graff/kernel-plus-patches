@@ -319,8 +319,7 @@ static void awacs_amp_set_master(struct awacs_amp *amp, int vol)
 static void awacs_amp_free(struct snd_pmac *chip)
 {
 	struct awacs_amp *amp = chip->mixer_data;
-	if (!amp)
-		return;
+	snd_assert(amp, return);
 	kfree(amp);
 	chip->mixer_data = NULL;
 	chip->mixer_free = NULL;
@@ -346,7 +345,8 @@ static int snd_pmac_awacs_get_volume_amp(struct snd_kcontrol *kcontrol,
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	int index = kcontrol->private_value;
 	struct awacs_amp *amp = chip->mixer_data;
-
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 	ucontrol->value.integer.value[0] = 31 - (amp->amp_vol[index][0] & 31);
 	ucontrol->value.integer.value[1] = 31 - (amp->amp_vol[index][1] & 31);
 	return 0;
@@ -359,6 +359,8 @@ static int snd_pmac_awacs_put_volume_amp(struct snd_kcontrol *kcontrol,
 	int index = kcontrol->private_value;
 	int vol[2];
 	struct awacs_amp *amp = chip->mixer_data;
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 
 	vol[0] = (31 - (ucontrol->value.integer.value[0] & 31))
 		| (amp->amp_vol[index][0] & 32);
@@ -373,7 +375,8 @@ static int snd_pmac_awacs_get_switch_amp(struct snd_kcontrol *kcontrol,
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	int index = kcontrol->private_value;
 	struct awacs_amp *amp = chip->mixer_data;
-
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 	ucontrol->value.integer.value[0] = (amp->amp_vol[index][0] & 32)
 					? 0 : 1;
 	ucontrol->value.integer.value[1] = (amp->amp_vol[index][1] & 32)
@@ -388,6 +391,8 @@ static int snd_pmac_awacs_put_switch_amp(struct snd_kcontrol *kcontrol,
 	int index = kcontrol->private_value;
 	int vol[2];
 	struct awacs_amp *amp = chip->mixer_data;
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 
 	vol[0] = (ucontrol->value.integer.value[0] ? 0 : 32)
 		| (amp->amp_vol[index][0] & 31);
@@ -412,7 +417,8 @@ static int snd_pmac_awacs_get_tone_amp(struct snd_kcontrol *kcontrol,
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	int index = kcontrol->private_value;
 	struct awacs_amp *amp = chip->mixer_data;
-
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 	ucontrol->value.integer.value[0] = amp->amp_tone[index];
 	return 0;
 }
@@ -424,7 +430,8 @@ static int snd_pmac_awacs_put_tone_amp(struct snd_kcontrol *kcontrol,
 	int index = kcontrol->private_value;
 	struct awacs_amp *amp = chip->mixer_data;
 	unsigned int val;
-
+	snd_assert(amp, return -EINVAL);
+	snd_assert(index >= 0 && index <= 1, return -EINVAL);
 	val = ucontrol->value.integer.value[0];
 	if (val > 14)
 		return -EINVAL;
@@ -451,7 +458,7 @@ static int snd_pmac_awacs_get_master_amp(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct awacs_amp *amp = chip->mixer_data;
-
+	snd_assert(amp, return -EINVAL);
 	ucontrol->value.integer.value[0] = amp->amp_master;
 	return 0;
 }
@@ -462,7 +469,7 @@ static int snd_pmac_awacs_put_master_amp(struct snd_kcontrol *kcontrol,
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct awacs_amp *amp = chip->mixer_data;
 	unsigned int val;
-
+	snd_assert(amp, return -EINVAL);
 	val = ucontrol->value.integer.value[0];
 	if (val > 99)
 		return -EINVAL;

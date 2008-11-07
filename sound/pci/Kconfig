@@ -501,7 +501,6 @@ config SND_HDA_INTEL
 	tristate "Intel HD Audio"
 	select SND_PCM
 	select SND_VMASTER
-	select SND_JACK if INPUT=y || INPUT=SND
 	help
 	  Say Y here to include support for Intel "High Definition
 	  Audio" (Azalia) motherboard devices.
@@ -517,14 +516,6 @@ config SND_HDA_HWDEP
 	  Say Y here to build a hwdep interface for HD-audio driver.
 	  This interface can be used for out-of-band communication
 	  with codecs for debugging purposes.
-
-config SND_HDA_INPUT_BEEP
-	bool "Support digital beep via input layer"
-	depends on SND_HDA_INTEL
-	depends on INPUT=y || INPUT=SND_HDA_INTEL
-	help
-	  Say Y here to build a digital beep interface for HD-audio
-	  driver. This interface is used to generate digital beeps.
 
 config SND_HDA_CODEC_REALTEK
 	bool "Build Realtek HD-audio codec support"
@@ -565,14 +556,6 @@ config SND_HDA_CODEC_ATIHDMI
 	help
 	  Say Y here to include ATI HDMI HD-audio codec support in
 	  snd-hda-intel driver, such as ATI RS600 HDMI.
-
-config SND_HDA_CODEC_NVHDMI
-	bool "Build NVIDIA HDMI HD-audio codec support"
-	depends on SND_HDA_INTEL
-	default y
-	help
-	  Say Y here to include NVIDIA HDMI HD-audio codec support in
-	  snd-hda-intel driver, such as NVIDIA MCP78 HDMI.
 
 config SND_HDA_CODEC_CONEXANT
 	bool "Build Conexant HD-audio codec support"
@@ -666,9 +649,8 @@ config SND_ICE1712
 
 	  Currently supported hardware is: M-Audio Delta 1010(LT),
 	  DiO 2496, 66, 44, 410, Audiophile 24/96; Digigram VX442;
-	  TerraTec EWX 24/96, EWS 88MT/D, DMX 6Fire, Phase 88;
-	  Hoontech SoundTrack DSP 24/Value/Media7.1; Event EZ8;
-	  Lionstracs Mediastation, Terrasoniq TS 88.
+	  TerraTec EWX 24/96, EWS 88MT, 88D, DMX 6Fire, Phase 88;
+	  Hoontech SoundTrack DSP 24/Value/Media7.1; Event EZ8.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-ice1712.
@@ -683,12 +665,9 @@ config SND_ICE1724
 	  ICE/VT1724/1720 (Envy24HT/PT) chips.
 
 	  Currently supported hardware is: AMP AUDIO2000; M-Audio
-	  Revolution 5.1, 7.1, Audiophile 192; TerraTec Aureon 5.1 Sky,
-	  7.1 Space/Universe, Phase 22/28; Onkyo SE-90PCI, SE-200PCI;
-	  AudioTrak Prodigy 192, 7.1 (HIFI/LT/XT), HD2; Hercules
-	  Fortissimo IV; ESI Juli@; Pontis MS300; EGO-SYS WaveTerminal
-	  192M; Albatron K8X800 Pro II; Chaintech ZNF3-150/250, 9CJS,
-	  AV-710; Shuttle SN25P.
+	  Revolution 7.1; TerraTec Aureon 5.1 Sky, 7.1 Space/Universe;
+	  AudioTrak Prodigy 7.1; Pontis MS300; Albatron K8X800 Pro II;
+	  Chaintech ZNF3-150/250.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-ice1724.
@@ -866,8 +845,7 @@ config SND_VIRTUOSO
 	select SND_OXYGEN_LIB
 	help
 	  Say Y here to include support for sound cards based on the
-	  Asus AV100/AV200 chips, i.e., Xonar D1, DX, D2, D2X and
-	  HDAV1.3 (Deluxe).
+	  Asus AV100/AV200 chips, i.e., Xonar D1, DX, D2 and D2X.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-virtuoso.

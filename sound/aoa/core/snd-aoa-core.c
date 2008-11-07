@@ -10,7 +10,7 @@
 #include <linux/module.h>
 #include <linux/list.h>
 #include "../aoa.h"
-#include "alsa.h"
+#include "snd-aoa-alsa.h"
 
 MODULE_DESCRIPTION("Apple Onboard Audio Sound Driver");
 MODULE_AUTHOR("Johannes Berg <johannes@sipsolutions.net>");

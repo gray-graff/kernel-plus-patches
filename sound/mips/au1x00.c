@@ -190,16 +190,14 @@ au1000_setup_dma_link(struct audio_stream *stream, unsigned int period_bytes,
 static void
 au1000_dma_stop(struct audio_stream *stream)
 {
-	if (snd_BUG_ON(!stream->buffer))
-		return;
+	snd_assert(stream->buffer, return);
 	disable_dma(stream->dma);
 }
 
 static void
 au1000_dma_start(struct audio_stream *stream)
 {
-	if (snd_BUG_ON(!stream->buffer))
-		return;
+	snd_assert(stream->buffer, return);
 
 	init_dma(stream->dma);
 	if (get_dma_active_buffer(stream->dma) == 0) {
