@@ -1,5 +1,5 @@
 Name: kernel-image-std-def
-Version: 2.6327
+Version: 2.6.27
 Release: alt3
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
