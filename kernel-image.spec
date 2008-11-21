@@ -465,7 +465,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
-- 2.6.27.6
+- 2.6.27.7
 
 * Fri Nov 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt2
 - 2.6.27.5
