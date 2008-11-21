@@ -1,7 +1,5 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.27-std-def-alt3
-# Fri Nov 21 09:00:14 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
