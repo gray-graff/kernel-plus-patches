@@ -304,7 +304,7 @@ void __rcu_read_lock(void)
 		local_irq_restore(flags);
 	}
 }
-EXPORT_SYMBOL_GPL(__rcu_read_lock);
+EXPORT_SYMBOL(__rcu_read_lock);
 
 void __rcu_read_unlock(void)
 {
@@ -374,7 +374,7 @@ void __rcu_read_unlock(void)
 		local_irq_restore(flags);
 	}
 }
-EXPORT_SYMBOL_GPL(__rcu_read_unlock);
+EXPORT_SYMBOL(__rcu_read_unlock);
 
 /*
  * If a global counter flip has occurred since the last time that we
