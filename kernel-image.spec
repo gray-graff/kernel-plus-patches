@@ -469,7 +469,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
 - 2.6.27.7
 - Add custom DSDT support.
-- Turn off KVM. Now it in separated package
 - Add to v4l subpackage gspca and uvcvideo provides
 
 * Fri Nov 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt2
