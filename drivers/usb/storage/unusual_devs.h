@@ -167,6 +167,13 @@ UNUSUAL_DEV(  0x0421, 0x005d, 0x0001, 0x0600,
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY ),
 
+/* Patch for Nokia 5310 capacity */
+UNUSUAL_DEV(  0x0421, 0x006a, 0x0000, 0x0591,
+		"Nokia",
+		"5310",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
+
 /* Reported by Mario Rettig <mariorettig@web.de> */
 UNUSUAL_DEV(  0x0421, 0x042e, 0x0100, 0x0100,
 		"Nokia",
@@ -187,6 +194,13 @@ UNUSUAL_DEV(  0x0421, 0x0434, 0x0100, 0x0100,
 		"E60",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY | US_FL_IGNORE_RESIDUE ),
+
+/* Reported by Evgenii Terechkov <evg@altlinux.org>, ALT#18044 */
+UNUSUAL_DEV(  0x0421, 0x043e, 0x0000, 0x0366,
+		"Nokia",
+		"Nokia 6270",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
 
 /* Reported by Sumedha Swamy <sumedhaswamy@gmail.com> and
  * Einar Th. Einarsson <einarthered@gmail.com> */
@@ -233,14 +247,14 @@ UNUSUAL_DEV(  0x0421, 0x0495, 0x0370, 0x0370,
 		US_FL_MAX_SECTORS_64 ),
 
 /* Reported by Cedric Godin <cedric@belbone.be> */
-UNUSUAL_DEV(  0x0421, 0x04b9, 0x0551, 0x0551,
+UNUSUAL_DEV(  0x0421, 0x04b9, 0x0500, 0x0551,
 		"Nokia",
 		"5300",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY ),
 
 /* Reported by Richard Nauber <RichardNauber@web.de> */
-UNUSUAL_DEV(  0x0421, 0x04fa, 0x0601, 0x0601,
+UNUSUAL_DEV(  0x0421, 0x04fa, 0x0550, 0x0660,
 		"Nokia",
 		"6300",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
@@ -250,6 +264,14 @@ UNUSUAL_DEV(  0x0421, 0x04fa, 0x0601, 0x0601,
 UNUSUAL_DEV(  0x0421, 0x006a, 0x0000, 0x0591,
 	"Nokia",
 	"5310",
+	US_SC_DEVICE, US_PR_DEVICE, NULL,
+	US_FL_FIX_CAPACITY ),
+
+/* Submitted by Ricky Wong Yung Fei <evilbladewarrior@gmail.com> */
+/* Nokia 7610 Supernova - Too many sectors reported in usb storage mode */
+UNUSUAL_DEV(  0x0421, 0x00f5, 0x0000, 0x0470,
+	"Nokia",
+	"7610 Supernova",
 	US_SC_DEVICE, US_PR_DEVICE, NULL,
 	US_FL_FIX_CAPACITY ),
 
@@ -333,6 +355,13 @@ UNUSUAL_DEV(  0x0482, 0x0103, 0x0100, 0x0100,
 		"Finecam S5",
 		US_SC_DEVICE, US_PR_DEVICE, NULL, US_FL_FIX_INQUIRY),
 
+/* Patch submitted by Jens Taprogge <jens.taprogge@taprogge.org> */
+UNUSUAL_DEV(  0x0482, 0x0107, 0x0100, 0x0100,
+		"Kyocera",
+		"CONTAX SL300R T*",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY | US_FL_NOT_LOCKABLE),
+
 /* Reported by Paul Stewart <stewart@wetlogic.net>
  * This entry is needed because the device reports Sub=ff */
 UNUSUAL_DEV(  0x04a4, 0x0004, 0x0001, 0x0001,
@@ -408,6 +437,13 @@ UNUSUAL_DEV(  0x04b0, 0x0415, 0x0100, 0x0100,
 UNUSUAL_DEV(  0x04b0, 0x0417, 0x0100, 0x0100,
 		"NIKON",
 		"NIKON DSC D40X",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by paul ready <lxtwin@homecall.co.uk> */
+UNUSUAL_DEV(  0x04b0, 0x0419, 0x0100, 0x0200,
+		"NIKON",
+		"NIKON DSC D300",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY),
 
@@ -1833,6 +1869,15 @@ UNUSUAL_DEV(  0x2770, 0x915d, 0x0010, 0x0010,
 		"Pixtreme",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY ),
+
+/* Reported by Frederic Marchal <frederic.marchal@wowcompany.com>
+ * Mio Moov 330
+ */
+UNUSUAL_DEV(  0x3340, 0xffff, 0x0000, 0x0000,
+		"Mitac",
+		"Mio DigiWalker USB Sync",
+		US_SC_DEVICE,US_PR_DEVICE,NULL,
+		US_FL_MAX_SECTORS_64 ),
 
 /* Reported by Andrey Rahmatullin <wrar@altlinux.org> */
 UNUSUAL_DEV(  0x4102, 0x1020, 0x0100,  0x0100,
