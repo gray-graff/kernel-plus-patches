@@ -475,6 +475,34 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	- add Nikon D300
 	- add Kyocera / Contax SL300R T*
 	- add Mio moov 330 gps
+- config changes:
+    + Builded as module, what before was compiled in:
+    	- IKCONFIG - /proc/config.gz  - How need it, can load it.
+    	- IOSCHED_DEADLINE IOSCHED_DEADLINE - not default IO schedulers
+    	- BLK_DEV_MD - SoftRAID support aka MD. (MAY BREAK BOOT ON MD,  TESTING NEEDED)
+    	- FIREWIRE - new experemental firewire stack. Need testing.
+    	- ULTRA32 - ISA network card.
+    	- CRYPTO_HASH, CRYPTO_MANAGER, CRYPTO_HMAC, CRYPTO_DES(x86_64), CRYPTO_DEV_HIFN_795X(x86_64 )
+    
+    +Builded as module, what before was not build:
+    	- LTPC ,COPS, COPS_DAYNA, COPS_TANGENT - some additional network features.
+    	- NET_TCPPROBE - TCP network probber
+    	- MTD_OOPS - save kernel oops to MTD
+    	- SCSI_SRP - SCSI RDMA Protocol helper library
+    	- ISDN_DRV_AVMB1_B1ISA, ISDN_DRV_AVMB1_T1ISA - Missed ISDN cards
+    	- INPUT_WISTRON_BTNS - x86 Wistron laptop button interface -
+    	- HP_WATCHDOG - HP Proliant watchdog driver
+    	- SCx200_WDT - National Semiconductor SCx200 Watchdog
+    	- RDC321X_WDT  - RDC R-321x SoC watchdog
+    	- VIDEO_SAA7134_DVB -  DVB on SAA7134 support
+    	- RADIO_CADET, RADIO_RTRACK, RADIO_RTRACK2,CONFIG_RADIO_AZTECH,
+    	 RADIO_GEMTEK,RADIO_GEMTEK_PCI,RADIO_MAXIRADIO, RADIO_MAESTRO, RADIO_SF16FMI, CONFIG_RADIO_SF16FMR2,
+    	 CONFIG_RADIO_TERRATEC, RADIO_TRUST,RADIO_TYPHOON,
+    	 RADIO_ZOLTRIX, USB_DSBR, USB_SI470X - missed radio drives
+    	- MDA_CONSOLE - Monochrome console support
+    	- USB_SERIAL_DEBUG - USB serial debug support
+    	- USB_MIDI_GADGET -
+    	- BACKTRACE_SELF_TEST, LKDTM, DEBUG_NX_TEST  - for debug perpouse
 
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
 - 2.6.27.7
