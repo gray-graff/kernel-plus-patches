@@ -470,6 +470,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - Add elantech touchpad dirver
 - Add missing evms-nodm patch
 - Move KVM modules to separated package 
+- USB: update unusual dev: (thank to vsu@)
+	- add Nokia 6270, 5300, 6300, 7610 Supernova, 5310
+	- add Nikon D300
+	- add Kyocera / Contax SL300R T*
+	- add Mio moov 330 gps
 
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
 - 2.6.27.7
