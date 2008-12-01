@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Sat Nov 29 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
 - Add elantech touchpad dirver
 - Add missing evms-nodm patch
+- Move KVM modules to separated package 
 
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
 - 2.6.27.7
