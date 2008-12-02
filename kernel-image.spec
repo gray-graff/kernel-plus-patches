@@ -466,7 +466,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Sat Nov 29 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
+* Tue Dec 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
 - Add elantech touchpad dirver
 - Add missing evms-nodm patch
 - Move KVM modules to separated package 
@@ -475,6 +475,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	- add Nikon D300
 	- add Kyocera / Contax SL300R T*
 	- add Mio moov 330 gps
+- Update r8169 driver (thank to vsu@)
 - config changes:
     + Builded as module, what before was compiled in:
     	- IKCONFIG - /proc/config.gz  - How need it, can load it.
