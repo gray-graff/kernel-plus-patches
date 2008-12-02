@@ -207,4 +207,4 @@ config VIRT_TO_BUS
 	depends on !ARCH_NO_VIRT_TO_BUS
 
 config MMU_NOTIFIER
-	bool
+	bool "mmu_notifier"
