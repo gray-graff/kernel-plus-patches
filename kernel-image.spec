@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.27
-Release: alt4
+Release: alt5
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -466,6 +466,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Dec 04 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt5
+- 
+
 * Tue Dec 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
 - Add elantech touchpad dirver
 - Add missing evms-nodm patch
