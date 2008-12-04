@@ -467,7 +467,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Dec 04 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt5
-- 
+- Build in MD raid support. Fix boot from MD. 
 
 * Tue Dec 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
 - Add elantech touchpad dirver
