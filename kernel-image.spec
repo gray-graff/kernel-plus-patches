@@ -468,6 +468,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Dec 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt6
 - 2.6.27.8 
+- fix rtc-cmos autoloading
 
 * Thu Dec 04 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt5
 - Build in MD raid support. Fix boot from MD. 
