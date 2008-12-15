@@ -34,7 +34,9 @@ struct linux_binprm{
 #endif
 	struct mm_struct *mm;
 	unsigned long p; /* current top of mem */
-	unsigned char recursion_depth;
+	unsigned int sh_bang:1,
+		     misc_bang:1;
+	unsigned int recursion_depth;
 	struct file * file;
 	int e_uid, e_gid;
 	kernel_cap_t cap_post_exec_permitted;
