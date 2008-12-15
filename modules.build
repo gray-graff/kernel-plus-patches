@@ -1,26 +1,40 @@
+#video drivers
 fglrx
-nvidia 
+nvidia
+
+#network card drivers
+igb
+
+#wireless network card drivers
 ndiswrapper
-tp_smapi
 madwifi
 madwifi-dfs
 madwifi-ar5007
-kqemu
-lirc
+rt2860
+rtl8187se
+
+#vendor specific  hardware features drives
 acerhk
-subfs
-igb
+tp_smapi
+heci
+omnibook
+eeepc
+
+#virtualization drivers
+kqemu
 virtualbox
 virtualbox-vfs
 virtualbox-addition
-heci
-dst
-omnibook
-eeepc
 kvm
-drbd8
+
+#other drivers
+lirc
+subfs
 svgalib_helper
+zaptel
+
+#network block devices and cluster filesystems
+dst
+drbd8
 gnbd
 gfs
-rt2860
-zaptel
