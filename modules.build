@@ -32,6 +32,7 @@ lirc
 subfs
 svgalib_helper
 zaptel
+wanpipe 
 
 #network block devices and cluster filesystems
 dst
