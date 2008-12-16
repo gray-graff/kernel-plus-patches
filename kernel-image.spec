@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.27
-Release: alt6
+Release: alt7
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -466,6 +466,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Dec 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt7
+- 2.6.27.9
+- turn on SND_HDA_POWER_SAVE on x86_64 
 * Mon Dec 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt6
 - 2.6.27.8 
 - fix rtc-cmos autoloading
