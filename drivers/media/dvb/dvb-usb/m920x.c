@@ -256,6 +256,9 @@ static u32 m920x_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm m920x_i2c_algo = {
 	.master_xfer   = m920x_i2c_xfer,
 	.functionality = m920x_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* pid filter */

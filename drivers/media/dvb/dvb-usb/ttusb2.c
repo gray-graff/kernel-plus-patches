@@ -124,6 +124,9 @@ static u32 ttusb2_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm ttusb2_i2c_algo = {
 	.master_xfer   = ttusb2_i2c_xfer,
 	.functionality = ttusb2_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* Callbacks for DVB USB */
@@ -142,6 +145,12 @@ static int ttusb2_power_ctrl(struct dvb_usb_device *d, int onoff)
 	return ttusb2_msg(d, CMD_POWER, &b, 1, NULL, 0);
 }
 
+#if 0
+static int ttusb2_streaming_ctrl(struct dvb_usb_device *d, int onoff)
+{
+	return 0;
+}
+#endif
 
 static struct tda10086_config tda10086_config = {
 	.demod_address = 0x0e,

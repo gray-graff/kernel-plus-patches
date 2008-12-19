@@ -22,6 +22,7 @@
 #define _ET61X251_SENSOR_H_
 
 #include <linux/usb.h>
+#include "compat.h"
 #include <linux/videodev2.h>
 #include <linux/device.h>
 #include <linux/stddef.h>

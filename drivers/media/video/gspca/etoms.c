@@ -691,7 +691,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 }
 
 /* -- start the camera -- */
-static void sd_start(struct gspca_dev *gspca_dev)
+static int sd_start(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 
@@ -704,6 +704,7 @@ static void sd_start(struct gspca_dev *gspca_dev)
 
 	reg_w_val(gspca_dev, ET_RESET_ALL, 0x08);
 	et_video(gspca_dev, 1);		/* video on */
+	return 0;
 }
 
 static void sd_stopN(struct gspca_dev *gspca_dev)
@@ -732,6 +733,12 @@ static void Et_setgainG(struct gspca_dev *gspca_dev, __u8 gain)
 
 		i2c_w(gspca_dev, PAS106_REG13, &i2cflags, 1, 3);
 		i2c_w(gspca_dev, PAS106_REG0e, &gain, 1, 1);
+#if 0
+		i2c_w(gspca_dev, 0x09, &gain, 1, 1);
+		i2c_w(gspca_dev, 0x0a, &gain, 1, 1);
+		i2c_w(gspca_dev, 0x0b, &gain, 1, 1);
+		i2c_w(gspca_dev, 0x0c, &gain, 1, 1);
+#endif
 	}
 }
 

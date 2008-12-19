@@ -75,8 +75,10 @@ struct pp_cam_entry {
 	struct pardevice *pdev;
 	struct parport *port;
 	struct work_struct cb_task;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 	void (*cb_func)(void *cbdata);
 	void *cb_data;
+#endif
 	int open_count;
 	wait_queue_head_t wq_stream;
 	/* image state flags */
@@ -125,6 +127,7 @@ static void cpia_parport_disable_irq( struct parport *port ) {
 #define PARPORT_CHUNK_SIZE	PAGE_SIZE
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 static void cpia_pp_run_callback(struct work_struct *work)
 {
 	void (*cb_func)(void *cbdata);
@@ -138,6 +141,7 @@ static void cpia_pp_run_callback(struct work_struct *work)
 	cb_func(cb_data);
 }
 
+#endif
 /****************************************************************************
  *
  *  CPiA-specific  low-level parport functions for nibble uploads
@@ -672,9 +676,13 @@ static int cpia_pp_registerCallback(void *privdata, void (*cb)(void *cbdata), vo
 	int retval = 0;
 
 	if(cam->port->irq != PARPORT_IRQ_NONE) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+		INIT_WORK(&cam->cb_task, cb, cbdata);
+#else
 		cam->cb_func = cb;
 		cam->cb_data = cbdata;
 		INIT_WORK(&cam->cb_task, cpia_pp_run_callback);
+#endif
 	} else {
 		retval = -1;
 	}

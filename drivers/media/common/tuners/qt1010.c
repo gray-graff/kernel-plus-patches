@@ -19,6 +19,7 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include "qt1010.h"
+#include "compat.h"
 #include "qt1010_priv.h"
 
 static int debug;
@@ -459,6 +460,9 @@ struct dvb_frontend * qt1010_attach(struct dvb_frontend *fe,
 	if (fe->ops.i2c_gate_ctrl)
 		fe->ops.i2c_gate_ctrl(fe, 1); /* open i2c_gate */
 
+#if 0
+	qt1010_dump_regs(priv);
+#endif
 
 	/* Try to detect tuner chip. Probably this is not correct register. */
 	if (qt1010_readreg(priv, 0x29, &id) != 0 || (id != 0x39)) {

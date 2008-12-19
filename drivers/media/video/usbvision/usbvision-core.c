@@ -45,10 +45,6 @@
 
 #include <linux/workqueue.h>
 
-#ifdef CONFIG_KMOD
-#include <linux/kmod.h>
-#endif
-
 #include "usbvision.h"
 
 static unsigned int core_debug;
@@ -84,7 +80,8 @@ MODULE_PARM_DESC(adjust_Y_Offset, "adjust Y offset display [core]");
 #ifdef USBVISION_DEBUG
 	#define PDEBUG(level, fmt, args...) { \
 		if (core_debug & (level)) \
-			info("[%s:%d] " fmt, __func__, __LINE__ , ## args); \
+			printk(KERN_INFO KBUILD_MODNAME ":[%s:%d] " fmt, \
+				__func__, __LINE__ , ## args); \
 	}
 #else
 	#define PDEBUG(level, fmt, args...) do {} while(0)
@@ -1443,8 +1440,13 @@ static int usbvision_compress_isochronous(struct usb_usbvision *usbvision,
  return totlen;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
 static void usbvision_isocIrq(struct urb *urb)
 {
+#else
+static void usbvision_isocIrq(struct urb *urb, struct pt_regs *regs)
+{
+#endif
 	int errCode = 0;
 	int len;
 	struct usb_usbvision *usbvision = urb->context;
@@ -1583,7 +1585,11 @@ int usbvision_write_reg(struct usb_usbvision *usbvision, unsigned char reg,
 }
 
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
 static void usbvision_ctrlUrb_complete(struct urb *urb)
+#else
+static void usbvision_ctrlUrb_complete(struct urb *urb, struct pt_regs *regs)
+#endif
 {
 	struct usb_usbvision *usbvision = (struct usb_usbvision *)urb->context;
 
@@ -2287,9 +2293,17 @@ int usbvision_power_on(struct usb_usbvision *usbvision)
  */
 
 // to call usbvision_power_off from task queue
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void call_usbvision_power_off(void *_usbvision)
+#else
 static void call_usbvision_power_off(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct usb_usbvision *usbvision = _usbvision;
+#else
 	struct usb_usbvision *usbvision = container_of(work, struct usb_usbvision, powerOffWork);
+#endif
 
 	PDEBUG(DBG_FUNC, "");
 	if(mutex_lock_interruptible(&usbvision->lock)) {
@@ -2312,7 +2326,11 @@ static void usbvision_powerOffTimer(unsigned long data)
 
 	PDEBUG(DBG_FUNC, "");
 	del_timer(&usbvision->powerOffTimer);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&usbvision->powerOffWork, call_usbvision_power_off, usbvision);
+#else
 	INIT_WORK(&usbvision->powerOffWork, call_usbvision_power_off);
+#endif
 	(void) schedule_work(&usbvision->powerOffWork);
 }
 

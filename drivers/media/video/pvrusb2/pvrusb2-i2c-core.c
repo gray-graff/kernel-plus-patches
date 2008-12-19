@@ -23,6 +23,7 @@
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
 #include "pvrusb2.h"
+#include "compat.h"
 
 #define trace_i2c(...) pvr2_trace(PVR2_TRACE_I2C,__VA_ARGS__)
 
@@ -54,6 +55,9 @@ static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 	/* Return value - default 0 means success */
 	int ret;
 
+#if 0
+	trace_i2c("pvr2_i2c_write");
+#endif
 
 	if (!data) length = 0;
 	if (length > (sizeof(hdw->cmd_buffer) - 3)) {
@@ -92,6 +96,10 @@ static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 			}
 		}
 	}
+#if 0
+	trace_i2c("i2c_write(0x%x) len=%d ret=%d stat=%d",i2c_addr,length,ret,
+		  hdw->cmd_buffer[0]);
+#endif
 
 	LOCK_GIVE(hdw->ctl_lock);
 
@@ -108,6 +116,9 @@ static int pvr2_i2c_read(struct pvr2_hdw *hdw, /* Context */
 	/* Return value - default 0 means success */
 	int ret;
 
+#if 0
+	trace_i2c("pvr2_i2c_read");
+#endif
 
 	if (!data) dlen = 0;
 	if (dlen > (sizeof(hdw->cmd_buffer) - 4)) {
@@ -157,6 +168,10 @@ static int pvr2_i2c_read(struct pvr2_hdw *hdw, /* Context */
 		}
 	}
 
+#if 0
+	trace_i2c("i2c_read(0x%x) wlen=%d rlen=%d ret=%d stat=%d",
+		  i2c_addr,dlen,rlen,ret,hdw->cmd_buffer[0]);
+#endif
 	/* Copy back the result */
 	if (res && rlen) {
 		if (ret) {
@@ -190,6 +205,66 @@ static int pvr2_i2c_basic_op(struct pvr2_hdw *hdw,
 	}
 }
 
+#if 0
+/* This is special code for spying on IR transactions for 29xxx devices.
+   We use this to reverse-engineer the IR protocol in order to simulate it
+   correctly for 24xxx devices. */
+static int i2c_29xxx_ir(struct pvr2_hdw *hdw,
+			u8 i2c_addr,u8 *wdata,u16 wlen,u8 *rdata,u16 rlen)
+{
+	char buf[200];
+	unsigned int c1,c2;
+	unsigned int idx,stat;
+	if (!(rlen || wlen)) {
+		/* This is a probe attempt.  Just let it succeed. */
+		pvr2_trace(PVR2_TRACE_DEBUG,"IR: probe");
+		return 0;
+	}
+	stat = pvr2_i2c_basic_op(hdw,i2c_addr,wdata,wlen,rdata,rlen);
+	if ((wlen == 0) && (rlen == 3) && (stat == 0) &&
+	    (rdata[0] == 0) && (rdata[1] == 0) && (rdata[2] == 0xc1)) {
+		return stat;
+	}
+	c1 = 0;
+	c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       "IR: stat=%d",stat);
+	c1 += c2;
+	if (wlen) {
+		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       " write [");
+		c1 += c2;
+		for (idx = 0; idx < wlen; idx++) {
+			c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+				       "%s%02x",idx == 0 ? "" : " ",
+				       wdata[idx]);
+			c1 += c2;
+		}
+		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       "]");
+		c1 += c2;
+	}
+	if (rlen && (stat == 0)) {
+		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       " read [");
+		c1 += c2;
+		for (idx = 0; idx < rlen; idx++) {
+			c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+				       "%s%02x",idx == 0 ? "" : " ",
+				       rdata[idx]);
+			c1 += c2;
+		}
+		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       "]");
+		c1 += c2;
+	} else if (rlen) {
+		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
+			       " read cnt=%u",rlen);
+		c1 += c2;
+	}
+	pvr2_trace(PVR2_TRACE_DEBUG,"%.*s",c1,buf);
+	return stat;
+}
+#endif
 
 /* This is a special entry point for cases of I2C transaction attempts to
    the IR receiver.  The implementation here simulates the IR receiver by
@@ -827,7 +902,7 @@ static unsigned int pvr2_i2c_client_describe(struct pvr2_i2c_client *cp,
 	if ((detail & PVR2_I2C_DETAIL_CTLMASK) && cp->ctl_mask) {
 		unsigned int idx;
 		unsigned long msk,sm;
-		int spcfl;
+
 		bcnt = scnprintf(buf,maxlen," [");
 		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
 		sm = 0;
@@ -891,6 +966,7 @@ static int pvr2_i2c_attach_inform(struct i2c_client *client)
 	INIT_LIST_HEAD(&cp->list);
 	cp->client = client;
 	mutex_lock(&hdw->i2c_list_lock); do {
+		hdw->cropcap_stale = !0;
 		list_add_tail(&cp->list,&hdw->i2c_clients);
 		hdw->i2c_pend_types |= PVR2_I2C_PEND_DETECT;
 	} while (0); mutex_unlock(&hdw->i2c_list_lock);
@@ -905,6 +981,7 @@ static int pvr2_i2c_detach_inform(struct i2c_client *client)
 	unsigned long amask = 0;
 	int foundfl = 0;
 	mutex_lock(&hdw->i2c_list_lock); do {
+		hdw->cropcap_stale = !0;
 		list_for_each_entry_safe(cp, ncp, &hdw->i2c_clients, list) {
 			if (cp->client == client) {
 				trace_i2c("pvr2_i2c_detach"
@@ -936,6 +1013,9 @@ static int pvr2_i2c_detach_inform(struct i2c_client *client)
 static struct i2c_algorithm pvr2_i2c_algo_template = {
 	.master_xfer   = pvr2_i2c_xfer,
 	.functionality = pvr2_i2c_functionality,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 static struct i2c_adapter pvr2_i2c_adap_template = {
@@ -946,22 +1026,32 @@ static struct i2c_adapter pvr2_i2c_adap_template = {
 	.client_unregister = pvr2_i2c_detach_inform,
 };
 
-static void do_i2c_scan(struct pvr2_hdw *hdw)
+
+/* Return true if device exists at given address */
+static int do_i2c_probe(struct pvr2_hdw *hdw, int addr)
 {
 	struct i2c_msg msg[1];
-	int i,rc;
+	int rc;
 	msg[0].addr = 0;
 	msg[0].flags = I2C_M_RD;
 	msg[0].len = 0;
 	msg[0].buf = NULL;
-	printk("%s: i2c scan beginning\n",hdw->name);
+	msg[0].addr = addr;
+	rc = i2c_transfer(&hdw->i2c_adap, msg, ARRAY_SIZE(msg));
+	return rc == 1;
+}
+
+static void do_i2c_scan(struct pvr2_hdw *hdw)
+{
+	int i;
+	printk(KERN_INFO "%s: i2c scan beginning\n", hdw->name);
 	for (i = 0; i < 128; i++) {
-		msg[0].addr = i;
-		rc = i2c_transfer(&hdw->i2c_adap,msg, ARRAY_SIZE(msg));
-		if (rc != 1) continue;
-		printk("%s: i2c scan: found device @ 0x%x\n",hdw->name,i);
+		if (do_i2c_probe(hdw, i)) {
+			printk(KERN_INFO "%s: i2c scan: found device @ 0x%x\n",
+			       hdw->name, i);
+		}
 	}
-	printk("%s: i2c scan done.\n",hdw->name);
+	printk(KERN_INFO "%s: i2c scan done.\n", hdw->name);
 }
 
 void pvr2_i2c_core_init(struct pvr2_hdw *hdw)
@@ -980,8 +1070,6 @@ void pvr2_i2c_core_init(struct pvr2_hdw *hdw)
 		hdw->i2c_func[0x18] = i2c_black_hole;
 	} else if (ir_mode[hdw->unit_number] == 1) {
 		if (hdw->hdw_desc->ir_scheme == PVR2_IR_SCHEME_24XXX) {
-			/* This comment is present PURELY to get
-			   checkpatch.pl to STFU.  Lovely, eh? */
 			hdw->i2c_func[0x18] = i2c_24xxx_ir;
 		}
 	}
@@ -1006,6 +1094,16 @@ void pvr2_i2c_core_init(struct pvr2_hdw *hdw)
 	mutex_init(&hdw->i2c_list_lock);
 	hdw->i2c_linked = !0;
 	i2c_add_adapter(&hdw->i2c_adap);
+	if (hdw->i2c_func[0x18] == i2c_24xxx_ir) {
+		/* Probe for a different type of IR receiver on this
+		   device.  If present, disable the emulated IR receiver. */
+		if (do_i2c_probe(hdw, 0x71)) {
+			pvr2_trace(PVR2_TRACE_INFO,
+				   "Device has newer IR hardware;"
+				   " disabling unneeded virtual IR device");
+			hdw->i2c_func[0x18] = NULL;
+		}
+	}
 	if (i2c_scan) do_i2c_scan(hdw);
 }
 

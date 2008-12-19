@@ -27,7 +27,9 @@
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 #include <linux/freezer.h>
+#endif
 #include <asm/div64.h>
 
 #include "saa7134-reg.h"
@@ -159,7 +161,7 @@ static struct saa7134_tvaudio tvaudio[] = {
 		.mode          = TVAUDIO_FM_MONO,
 	}
 };
-#define TVAUDIO (sizeof(tvaudio)/sizeof(struct saa7134_tvaudio))
+#define TVAUDIO ARRAY_SIZE(tvaudio)
 
 /* ------------------------------------------------------------------ */
 
@@ -376,6 +378,23 @@ static int tvaudio_checkcarrier(struct saa7134_dev *dev, struct mainscan *scan)
 	return value;
 }
 
+#if 0
+static void sifdebug_dump_regs(struct saa7134_dev *dev)
+{
+	print_regb(AUDIO_STATUS);
+	print_regb(IDENT_SIF);
+	print_regb(LEVEL_READOUT1);
+	print_regb(LEVEL_READOUT2);
+	print_regb(DCXO_IDENT_CTRL);
+	print_regb(DEMODULATOR);
+	print_regb(AGC_GAIN_SELECT);
+	print_regb(MONITOR_SELECT);
+	print_regb(FM_DEEMPHASIS);
+	print_regb(FM_DEMATRIX);
+	print_regb(SIF_SAMPLE_FREQ);
+	print_regb(ANALOG_IO_SELECT);
+}
+#endif
 
 static int tvaudio_getstereo(struct saa7134_dev *dev, struct saa7134_tvaudio *audio)
 {
@@ -477,7 +496,9 @@ static int tvaudio_thread(void *data)
 	unsigned int i, audio, nscan;
 	int max1,max2,carrier,rx,mode,lastmode,default_carrier;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 	set_freezable();
+#endif
 
 	for (;;) {
 		tvaudio_sleep(dev,-1);
@@ -691,6 +712,24 @@ static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 	return 0;
 }
 
+#if 0
+static int saa_dsp_readl(struct saa7134_dev *dev, int reg, u32 *value)
+{
+	int err;
+
+	d2printk("dsp read reg 0x%x\n", reg<<2);
+	saa_readl(reg);
+	err = saa_dsp_wait_bit(dev,SAA7135_DSP_RWSTATE_RDB);
+	if (err < 0)
+		return err;
+	*value = saa_readl(reg);
+	d2printk("dsp read   => 0x%06x\n", *value & 0xffffff);
+	err = saa_dsp_wait_bit(dev,SAA7135_DSP_RWSTATE_IDA);
+	if (err < 0)
+		return err;
+	return 0;
+}
+#endif
 
 int saa_dsp_writel(struct saa7134_dev *dev, int reg, u32 value)
 {
@@ -774,7 +813,9 @@ static int tvaudio_thread_ddep(void *data)
 	struct saa7134_dev *dev = data;
 	u32 value, norms;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 	set_freezable();
+#endif
 	for (;;) {
 		tvaudio_sleep(dev,-1);
 		if (kthread_should_stop())

@@ -13,6 +13,7 @@
 
 #include <linux/kernel.h>
 #include <linux/i2c.h>
+#include "compat.h"
 
 #include "dvb_frontend.h"
 
@@ -552,6 +553,15 @@ static int dib3000mc_autosearch_start(struct dvb_frontend *demod, struct dvb_fro
 	schan = *chan;
 
 	/* TODO what is that ? */
+#if 0
+	if (boost) {
+		val  = (dib3000mc_read_word(state, 6) << 16) | dib3000mc_read_word(state, 7);
+		val *= 85;
+		val >>= 7;
+		dib3000mc_write_word(state, 6, (val >> 16) & 0xffff);
+		dib3000mc_write_word(state, 7, (val      ) & 0xffff);
+	}
+#endif
 
 	/* a channel for autosearch */
 	schan.u.ofdm.transmission_mode = TRANSMISSION_MODE_8K;

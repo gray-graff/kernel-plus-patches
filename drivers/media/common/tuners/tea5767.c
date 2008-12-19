@@ -12,6 +12,7 @@
 
 #include <linux/i2c.h>
 #include <linux/delay.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include "tuner-i2c.h"
 #include "tea5767.h"
@@ -370,6 +371,9 @@ int tea5767_autodetection(struct i2c_adapter* i2c_adap, u8 i2c_addr)
 	struct tuner_i2c_props i2c = { .adap = i2c_adap, .addr = i2c_addr };
 	unsigned char buffer[7] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 	int rc;
+#if 0 /* Needed if uncomment I2C send code below */
+	int div;
+#endif
 
 	if ((rc = tuner_i2c_xfer_recv(&i2c, buffer, 7))< 5) {
 		printk(KERN_WARNING "It is not a TEA5767. Received %i bytes.\n", rc);
@@ -393,7 +397,42 @@ int tea5767_autodetection(struct i2c_adapter* i2c_adap, u8 i2c_addr)
 		return -EINVAL;
 	}
 
+#if 0	/* Not working for TEA5767 in Beholder Columbus card */
+	/* It seems that tea5767 returns 0xff after the 5th byte */
+	if ((buffer[5] != 0xff) || (buffer[6] != 0xff)) {
+		printk(KERN_WARNING "Returned more than 5 bytes. It is not a TEA5767\n");
+		return -EINVAL;
+	}
+#endif
 
+#if 0 /*Sometimes, this code doesn't work */
+	/* Sets tuner at some freq (87.5 MHz) and see if it is ok */
+	div = ((87500 * 4000 + 700000 + 225000) + 16768) >> 15;
+	buffer[0] = ((div >> 8) & 0x3f) | TEA5767_MUTE;
+	buffer[1] = div & 0xff;
+	buffer[2] = TEA5767_PORT1_HIGH;
+	buffer[3] = TEA5767_PORT2_HIGH | TEA5767_HIGH_CUT_CTRL |
+		    TEA5767_ST_NOISE_CTL;
+	buffer[4] = 0;
+
+	if (5 != (rc = tuner_i2c_xfer_send(&i2c, buffer, 5)))
+		printk(KERN_WARNING "i2c i/o error: rc == %d (should be 5)\n", rc);
+
+	msleep(15);
+
+	if (5 != (rc = tuner_i2c_xfer_recv(&i2c, buffer, 5))) {
+		printk(KERN_WARNING "It is not a TEA5767. Received %i bytes.\n", rc);
+		return -EINVAL;
+	}
+
+	/* Initial freq for 32.768KHz clock */
+	if ((buffer[1] != (div & 0xff) ) || ((buffer[0] & 0x3f) != ((div >> 8) & 0x3f))) {
+		printk(KERN_WARNING "It is not a TEA5767. div=%d, Return: %02x %02x %02x %02x %02x\n",
+				div,buffer[0],buffer[1],buffer[2],buffer[3],buffer[4]);
+		tea5767_status_dump(buffer);
+		return -EINVAL;
+	}
+#endif
 	return 0;
 }
 
@@ -425,6 +464,11 @@ static int tea5767_set_config (struct dvb_frontend *fe, void *priv_cfg)
 static struct dvb_tuner_ops tea5767_tuner_ops = {
 	.info = {
 		.name           = "tea5767", // Philips TEA5767HN FM Radio
+#if 0
+		.frequency_min  = ,
+		.frequency_max  = ,
+		.frequency_step = ,
+#endif
 	},
 
 	.set_analog_params = set_radio_freq,
@@ -442,6 +486,10 @@ struct dvb_frontend *tea5767_attach(struct dvb_frontend *fe,
 {
 	struct tea5767_priv *priv = NULL;
 
+#if 0 /* By removing autodetection allows forcing TEA chip */
+	if (tea5767_autodetection(i2c_adap, i2c_addr) == -EINVAL)
+		return -EINVAL;
+#endif
 	priv = kzalloc(sizeof(struct tea5767_priv), GFP_KERNEL);
 	if (priv == NULL)
 		return NULL;

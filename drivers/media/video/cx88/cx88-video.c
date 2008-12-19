@@ -34,6 +34,7 @@
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
+#include "compat.h"
 #include <linux/kthread.h>
 #include <asm/div64.h>
 
@@ -426,24 +427,7 @@ int cx88_video_mux(struct cx88_core *core, unsigned int input)
 
 	/* if there are audioroutes defined, we have an external
 	   ADC to deal with audio */
-
 	if (INPUT(input).audioroute) {
-
-		/* cx2388's C-ADC is connected to the tuner only.
-		   When used with S-Video, that ADC is busy dealing with
-		   chroma, so an external must be used for baseband audio */
-
-		if (INPUT(input).type != CX88_VMUX_TELEVISION &&
-			INPUT(input).type != CX88_RADIO) {
-			/* "ADC mode" */
-			cx_write(AUD_I2SCNTL, 0x1);
-			cx_set(AUD_CTL, EN_I2SIN_ENABLE);
-		} else {
-			/* Normal mode */
-			cx_write(AUD_I2SCNTL, 0x0);
-			cx_clear(AUD_CTL, EN_I2SIN_ENABLE);
-		}
-
 		/* The wm8775 module has the "2" route hardwired into
 		   the initialization. Some boards may use different
 		   routes for different inputs. HVR-1300 surely does */
@@ -454,9 +438,19 @@ int cx88_video_mux(struct cx88_core *core, unsigned int input)
 			route.input = INPUT(input).audioroute;
 			cx88_call_i2c_clients(core,
 				VIDIOC_INT_S_AUDIO_ROUTING, &route);
-
 		}
-
+		/* cx2388's C-ADC is connected to the tuner only.
+		   When used with S-Video, that ADC is busy dealing with
+		   chroma, so an external must be used for baseband audio */
+		if (INPUT(input).type != CX88_VMUX_TELEVISION ) {
+			/* "I2S ADC mode" */
+			core->tvaudio = WW_I2SADC;
+			cx88_set_tvaudio(core);
+		} else {
+			/* Normal mode */
+			cx_write(AUD_I2SCNTL, 0x0);
+			cx_clear(AUD_CTL, EN_I2SIN_ENABLE);
+		}
 	}
 
 	return 0;
@@ -735,6 +729,231 @@ static struct videobuf_queue_ops cx8800_video_qops = {
 
 /* ------------------------------------------------------------------ */
 
+#if 0 /* overlay support not finished yet */
+static u32* ov_risc_field(struct cx8800_dev *dev, struct cx8800_fh *fh,
+			  u32 *rp, struct btcx_skiplist *skips,
+			  u32 sync_line, int skip_even, int skip_odd)
+{
+	int line,maxy,start,end,skip,nskips;
+	u32 ri,ra;
+	u32 addr;
+
+	/* sync instruction */
+	*(rp++) = cpu_to_le32(RISC_RESYNC | sync_line);
+
+	addr  = (unsigned long)dev->fbuf.base;
+	addr += dev->fbuf.fmt.bytesperline * fh->win.w.top;
+	addr += (fh->fmt->depth >> 3)      * fh->win.w.left;
+
+	/* scan lines */
+	for (maxy = -1, line = 0; line < fh->win.w.height;
+	     line++, addr += dev->fbuf.fmt.bytesperline) {
+		if ((line%2) == 0  &&  skip_even)
+			continue;
+		if ((line%2) == 1  &&  skip_odd)
+			continue;
+
+		/* calculate clipping */
+		if (line > maxy)
+			btcx_calc_skips(line, fh->win.w.width, &maxy,
+					skips, &nskips, fh->clips, fh->nclips);
+
+		/* write out risc code */
+		for (start = 0, skip = 0; start < fh->win.w.width; start = end) {
+			if (skip >= nskips) {
+				ri  = RISC_WRITE;
+				end = fh->win.w.width;
+			} else if (start < skips[skip].start) {
+				ri  = RISC_WRITE;
+				end = skips[skip].start;
+			} else {
+				ri  = RISC_SKIP;
+				end = skips[skip].end;
+				skip++;
+			}
+			if (RISC_WRITE == ri)
+				ra = addr + (fh->fmt->depth>>3)*start;
+			else
+				ra = 0;
+
+			if (0 == start)
+				ri |= RISC_SOL;
+			if (fh->win.w.width == end)
+				ri |= RISC_EOL;
+			ri |= (fh->fmt->depth>>3) * (end-start);
+
+			*(rp++)=cpu_to_le32(ri);
+			if (0 != ra)
+				*(rp++)=cpu_to_le32(ra);
+		}
+	}
+	kfree(skips);
+	return rp;
+}
+
+static int ov_risc_frame(struct cx8800_dev *dev, struct cx8800_fh *fh,
+			 struct cx88_buffer *buf)
+{
+	struct btcx_skiplist *skips;
+	u32 instructions,fields;
+	u32 *rp;
+	int rc;
+
+	/* skip list for window clipping */
+	if (NULL == (skips = kmalloc(sizeof(*skips) * fh->nclips,GFP_KERNEL)))
+		return -ENOMEM;
+
+	fields = 0;
+	if (V4L2_FIELD_HAS_TOP(fh->win.field))
+		fields++;
+	if (V4L2_FIELD_HAS_BOTTOM(fh->win.field))
+		fields++;
+
+	/* estimate risc mem: worst case is (clip+1) * lines instructions
+	   + syncs + jump (all 2 dwords) */
+	instructions  = (fh->nclips+1) * fh->win.w.height;
+	instructions += 3 + 4;
+	if ((rc = btcx_riscmem_alloc(dev->pci,&buf->risc,instructions*8)) < 0) {
+		kfree(skips);
+		return rc;
+	}
+
+	/* write risc instructions */
+	rp = buf->risc.cpu;
+	switch (fh->win.field) {
+	case V4L2_FIELD_TOP:
+		rp = ov_risc_field(dev, fh, rp, skips, 0,     0, 0);
+		break;
+	case V4L2_FIELD_BOTTOM:
+		rp = ov_risc_field(dev, fh, rp, skips, 0x200, 0, 0);
+		break;
+	case V4L2_FIELD_INTERLACED:
+		rp = ov_risc_field(dev, fh, rp, skips, 0,     0, 1);
+		rp = ov_risc_field(dev, fh, rp, skips, 0x200, 1, 0);
+		break;
+	default:
+		BUG();
+	}
+
+	/* save pointer to jmp instruction address */
+	buf->risc.jmp = rp;
+	kfree(skips);
+	return 0;
+}
+
+static int verify_window(struct cx8800_dev *dev, struct v4l2_window *win)
+{
+	enum v4l2_field field;
+	int maxw, maxh;
+
+	if (NULL == dev->fbuf.base)
+		return -EINVAL;
+	if (win->w.width < 48 || win->w.height <  32)
+		return -EINVAL;
+	if (win->clipcount > 2048)
+		return -EINVAL;
+
+	field = win->field;
+	maxw  = norm_maxw(core->tvnorm);
+	maxh  = norm_maxh(core->tvnorm);
+
+	if (V4L2_FIELD_ANY == field) {
+		field = (win->w.height > maxh/2)
+			? V4L2_FIELD_INTERLACED
+			: V4L2_FIELD_TOP;
+	}
+	switch (field) {
+	case V4L2_FIELD_TOP:
+	case V4L2_FIELD_BOTTOM:
+		maxh = maxh / 2;
+		break;
+	case V4L2_FIELD_INTERLACED:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	win->field = field;
+	if (win->w.width > maxw)
+		win->w.width = maxw;
+	if (win->w.height > maxh)
+		win->w.height = maxh;
+	return 0;
+}
+
+static int setup_window(struct cx8800_dev *dev, struct cx8800_fh *fh,
+			struct v4l2_window *win)
+{
+	struct v4l2_clip *clips = NULL;
+	int n,size,retval = 0;
+
+	if (NULL == fh->fmt)
+		return -EINVAL;
+	retval = verify_window(dev,win);
+	if (0 != retval)
+		return retval;
+
+	/* copy clips  --  luckily v4l1 + v4l2 are binary
+	   compatible here ...*/
+	n = win->clipcount;
+	size = sizeof(*clips)*(n+4);
+	clips = kmalloc(size,GFP_KERNEL);
+	if (NULL == clips)
+		return -ENOMEM;
+	if (n > 0) {
+		if (copy_from_user(clips,win->clips,sizeof(struct v4l2_clip)*n)) {
+			kfree(clips);
+			return -EFAULT;
+		}
+	}
+
+	/* clip against screen */
+	if (NULL != dev->fbuf.base)
+		n = btcx_screen_clips(dev->fbuf.fmt.width, dev->fbuf.fmt.height,
+				      &win->w, clips, n);
+	btcx_sort_clips(clips,n);
+
+	/* 4-byte alignments */
+	switch (fh->fmt->depth) {
+	case 8:
+	case 24:
+		btcx_align(&win->w, clips, n, 3);
+		break;
+	case 16:
+		btcx_align(&win->w, clips, n, 1);
+		break;
+	case 32:
+		/* no alignment fixups needed */
+		break;
+	default:
+		BUG();
+	}
+
+	down(&fh->vidq.lock);
+	if (fh->clips)
+		kfree(fh->clips);
+	fh->clips    = clips;
+	fh->nclips   = n;
+	fh->win      = *win;
+/* #if 0 */
+	fh->ov.setup_ok = 1;
+/* #endif */
+
+	/* update overlay if needed */
+	retval = 0;
+/* #if 0 */
+	if (check_btres(fh, RESOURCE_OVERLAY)) {
+		struct bttv_buffer *new;
+
+		new = videobuf_pci_alloc(sizeof(*new));
+		bttv_overlay_risc(btv, &fh->ov, fh->ovfmt, new);
+		retval = bttv_switch_overlay(btv,fh,new);
+	}
+/* #endif */
+	up(&fh->vidq.lock);
+	return retval;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 
@@ -773,6 +992,7 @@ static int video_open(struct inode *inode, struct file *file)
 	enum v4l2_buf_type type = 0;
 	int radio = 0;
 
+	lock_kernel();
 	list_for_each_entry(h, &cx8800_devlist, devlist) {
 		if (h->video_dev->minor == minor) {
 			dev  = h;
@@ -788,8 +1008,10 @@ static int video_open(struct inode *inode, struct file *file)
 			dev   = h;
 		}
 	}
-	if (NULL == dev)
+	if (NULL == dev) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	core = dev->core;
 
@@ -798,8 +1020,10 @@ static int video_open(struct inode *inode, struct file *file)
 
 	/* allocate + initialize per filehandle data */
 	fh = kzalloc(sizeof(*fh),GFP_KERNEL);
-	if (NULL == fh)
+	if (NULL == fh) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	file->private_data = fh;
 	fh->dev      = dev;
 	fh->radio    = radio;
@@ -827,11 +1051,29 @@ static int video_open(struct inode *inode, struct file *file)
 		cx_write(MO_GP0_IO, core->board.radio.gpio0);
 		cx_write(MO_GP1_IO, core->board.radio.gpio1);
 		cx_write(MO_GP2_IO, core->board.radio.gpio2);
-		core->tvaudio = WW_FM;
-		cx88_set_tvaudio(core);
-		cx88_set_stereo(core,V4L2_TUNER_MODE_STEREO,1);
+		if (core->board.radio.audioroute) {
+			if(core->board.audio_chip &&
+				core->board.audio_chip == V4L2_IDENT_WM8775) {
+				struct v4l2_routing route;
+
+				route.input = core->board.radio.audioroute;
+				cx88_call_i2c_clients(core,
+					VIDIOC_INT_S_AUDIO_ROUTING, &route);
+			}
+			/* "I2S ADC mode" */
+			core->tvaudio = WW_I2SADC;
+			cx88_set_tvaudio(core);
+		} else {
+			/* FM Mode */
+			core->tvaudio = WW_FM;
+			cx88_set_tvaudio(core);
+			cx88_set_stereo(core,V4L2_TUNER_MODE_STEREO,1);
+		}
 		cx88_call_i2c_clients(core,AUDC_SET_RADIO,NULL);
 	}
+	unlock_kernel();
+
+	atomic_inc(&core->users);
 
 	return 0;
 }
@@ -920,7 +1162,8 @@ static int video_release(struct inode *inode, struct file *file)
 	file->private_data = NULL;
 	kfree(fh);
 
-	cx88_call_i2c_clients (dev->core, TUNER_SET_STANDBY, NULL);
+	if(atomic_dec_and_test(&dev->core->users))
+		cx88_call_i2c_clients (dev->core, TUNER_SET_STANDBY, NULL);
 
 	return 0;
 }
@@ -983,9 +1226,17 @@ int cx88_set_control(struct cx88_core *core, struct v4l2_control *ctl)
 		return -EINVAL;
 
 	if (ctl->value < c->v.minimum)
+#if 0
+		return -ERANGE;
+#else
 		ctl->value = c->v.minimum;
+#endif
 	if (ctl->value > c->v.maximum)
+#if 0
+		return -ERANGE;
+#else
 		ctl->value = c->v.maximum;
+#endif
 	mask=c->mask;
 	switch (ctl->id) {
 	case V4L2_CID_AUDIO_BALANCE:
@@ -1139,6 +1390,9 @@ static int vidioc_querycap (struct file *file, void  *priv,
 	sprintf(cap->bus_info,"PCI:%s",pci_name(dev->pci));
 	cap->version = CX88_VERSION_CODE;
 	cap->capabilities =
+#if 0
+		V4L2_CAP_VIDEO_OVERLAY |
+#endif
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_READWRITE     |
 		V4L2_CAP_STREAMING     |
@@ -1199,8 +1453,12 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 	struct cx8800_fh  *fh   = priv;
 	struct cx8800_dev *dev  = fh->dev;
 
-	if (unlikely(fh->type != V4L2_BUF_TYPE_VIDEO_CAPTURE))
+	/* We should remember that this driver also supports teletext,  */
+	/* so we have to test if the v4l2_buf_type is VBI capture data. */
+	if (unlikely((fh->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) &&
+		     (fh->type != V4L2_BUF_TYPE_VBI_CAPTURE)))
 		return -EINVAL;
+
 	if (unlikely(i != fh->type))
 		return -EINVAL;
 
@@ -1215,8 +1473,10 @@ static int vidioc_streamoff(struct file *file, void *priv, enum v4l2_buf_type i)
 	struct cx8800_dev *dev  = fh->dev;
 	int               err, res;
 
-	if (fh->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if ((fh->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) &&
+	    (fh->type != V4L2_BUF_TYPE_VBI_CAPTURE))
 		return -EINVAL;
+
 	if (i != fh->type)
 		return -EINVAL;
 
@@ -1302,6 +1562,35 @@ static int vidioc_s_input (struct file *file, void *priv, unsigned int i)
 }
 
 
+#if 0
+static int vidioc_g_audio (struct file *file, void *priv, unsigned int i)
+{
+	struct v4l2_audio *a = arg;
+	unsigned int n = a->index;
+
+	memset(a,0,sizeof(*a));
+	a->index = n;
+	switch (n) {
+	case 0:
+		if ((CX88_VMUX_TELEVISION == INPUT(n).type) ||
+		    (CX88_VMUX_CABLE == INPUT(n).type)) {
+			strcpy(a->name,"Television");
+			/* FIXME figure out if stereo received and set V4L2_AUDCAP_STEREO. */
+			return 0;
+		}
+		break;
+	case 1:
+		if (CX88_BOARD_DVICO_FUSIONHDTV_3_GOLD_Q == core->boardnr) {
+			strcpy(a->name,"Line In");
+			a->capability = V4L2_AUDCAP_STEREO;
+			return 0;
+		}
+		break;
+	}
+	/* Audio input not available. */
+	return -EINVAL;
+}
+#endif
 
 static int vidioc_queryctrl (struct file *file, void *priv,
 				struct v4l2_queryctrl *qctrl)
@@ -1637,7 +1926,11 @@ static void cx8800_vid_irq(struct cx8800_dev *dev)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t cx8800_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t cx8800_irq(int irq, void *dev_id)
+#endif
 {
 	struct cx8800_dev *dev = dev_id;
 	struct cx88_core *core = dev->core;
@@ -1838,6 +2131,10 @@ static int __devinit cx8800_initdev(struct pci_dev *pci_dev,
 	strcpy(cx8800_vbi_template.name,"cx8800-vbi");
 
 	/* initialize driver struct */
+#if 0
+	/* moved to cx88_core_get */
+	init_MUTEX(&dev->lock);
+#endif
 	spin_lock_init(&dev->slock);
 	core->tvnorm = cx8800_video_template.current_norm;
 
@@ -1894,7 +2191,7 @@ static int __devinit cx8800_initdev(struct pci_dev *pci_dev,
 		goto fail_unreg;
 	}
 	printk(KERN_INFO "%s/0: registered device video%d [v4l2]\n",
-	       core->name,dev->video_dev->minor & 0x1f);
+	       core->name, dev->video_dev->num);
 
 	dev->vbi_dev = cx88_vdev_init(core,dev->pci,&cx8800_vbi_template,"vbi");
 	err = video_register_device(dev->vbi_dev,VFL_TYPE_VBI,
@@ -1905,7 +2202,7 @@ static int __devinit cx8800_initdev(struct pci_dev *pci_dev,
 		goto fail_unreg;
 	}
 	printk(KERN_INFO "%s/0: registered device vbi%d\n",
-	       core->name,dev->vbi_dev->minor & 0x1f);
+	       core->name, dev->vbi_dev->num);
 
 	if (core->board.radio.type == CX88_RADIO) {
 		dev->radio_dev = cx88_vdev_init(core,dev->pci,
@@ -1918,7 +2215,7 @@ static int __devinit cx8800_initdev(struct pci_dev *pci_dev,
 			goto fail_unreg;
 		}
 		printk(KERN_INFO "%s/0: registered device radio%d\n",
-		       core->name,dev->radio_dev->minor & 0x1f);
+		       core->name, dev->radio_dev->num);
 	}
 
 	/* everything worked */
@@ -2005,8 +2302,10 @@ static int cx8800_suspend(struct pci_dev *pci_dev, pm_message_t state)
 
 	if (core->ir)
 		cx88_ir_stop(core, core->ir);
+#if 1
 	/* FIXME -- shutdown device */
 	cx88_shutdown(core);
+#endif
 
 	pci_save_state(pci_dev);
 	if (0 != pci_set_power_state(pci_dev, pci_choose_state(pci_dev, state))) {
@@ -2042,8 +2341,10 @@ static int cx8800_resume(struct pci_dev *pci_dev)
 	}
 	pci_restore_state(pci_dev);
 
+#if 1
 	/* FIXME: re-initialize hardware */
 	cx88_reset(core);
+#endif
 	if (core->ir)
 		cx88_ir_start(core, core->ir);
 

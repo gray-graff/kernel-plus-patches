@@ -15,9 +15,14 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
+#else
+#include <linux/usb_input.h>
+#endif
 
 #include "usbvideo.h"
+#include "compat.h"
 
 #define MAX_BRIGHTNESS	108
 #define MAX_CONTRAST	108
@@ -229,22 +234,28 @@ static void konicawc_register_input(struct konicawc *cam, struct usb_device *dev
 
 	cam->input = input_dev = input_allocate_device();
 	if (!input_dev) {
-		warn("Not enough memory for camera's input device\n");
+		dev_warn(&dev->dev,
+			 "Not enough memory for camera's input device\n");
 		return;
 	}
 
 	input_dev->name = "Konicawc snapshot button";
 	input_dev->phys = cam->input_physname;
 	usb_to_input_id(dev, &input_dev->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->dev;
+#else
+	input_dev->cdev.dev = &dev->dev;
+#endif
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY);
 	input_dev->keybit[BIT_WORD(BTN_0)] = BIT_MASK(BTN_0);
 
 	error = input_register_device(cam->input);
 	if (error) {
-		warn("Failed to register camera's input device, err: %d\n",
-		     error);
+		dev_warn(&dev->dev,
+			 "Failed to register camera's input device, err: %d\n",
+			 error);
 		input_free_device(cam->input);
 		cam->input = NULL;
 	}
@@ -337,7 +348,8 @@ static int konicawc_compress_iso(struct uvd *uvd, struct urb *dataurb, struct ur
 		}
 
 		if((sts > 0x01) && (sts < 0x80)) {
-			info("unknown status %2.2x", sts);
+			dev_info(&uvd->dev->dev, "unknown status %2.2x\n",
+				 sts);
 			bad++;
 			continue;
 		}
@@ -385,7 +397,11 @@ static void resubmit_urb(struct uvd *uvd, struct urb *urb)
 }
 
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void konicawc_isoc_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void konicawc_isoc_irq(struct urb *urb)
+#endif
 {
 	struct uvd *uvd = urb->context;
 	struct konicawc *cam = (struct konicawc *)uvd->user_data;
@@ -568,8 +584,12 @@ static void konicawc_process_isoc(struct uvd *uvd, struct usbvideo_frame *frame)
 					fdrops = (0x80 + curframe - cam->lastframe) & 0x7F;
 					fdrops--;
 					if(fdrops) {
-						info("Dropped %d frames (%d -> %d)", fdrops,
-						     cam->lastframe, curframe);
+						dev_info(&uvd->dev->dev,
+							 "Dropped %d frames "
+							 "(%d -> %d)\n",
+							 fdrops,
+							 cam->lastframe,
+							 curframe);
 					}
 				}
 				cam->lastframe = curframe;
@@ -784,7 +804,8 @@ static int konicawc_probe(struct usb_interface *intf, const struct usb_device_id
 	if (dev->descriptor.bNumConfigurations != 1)
 		return -ENODEV;
 
-	info("Konica Webcam (rev. 0x%04x)", le16_to_cpu(dev->descriptor.bcdDevice));
+	dev_info(&intf->dev, "Konica Webcam (rev. 0x%04x)\n",
+		 le16_to_cpu(dev->descriptor.bcdDevice));
 	RESTRICT_TO_RANGE(speed, 0, MAX_SPEED);
 
 	/* Validate found interface: must have one ISO endpoint */
@@ -925,7 +946,8 @@ static struct usb_device_id id_table[] = {
 static int __init konicawc_init(void)
 {
 	struct usbvideo_cb cbTbl;
-	info(DRIVER_DESC " " DRIVER_VERSION);
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
 	memset(&cbTbl, 0, sizeof(cbTbl));
 	cbTbl.probe = konicawc_probe;
 	cbTbl.setupOnOpen = konicawc_setup_on_open;

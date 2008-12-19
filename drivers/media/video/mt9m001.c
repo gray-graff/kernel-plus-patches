@@ -117,24 +117,51 @@ static int reg_clear(struct soc_camera_device *icd, const u8 reg,
 
 static int mt9m001_init(struct soc_camera_device *icd)
 {
+	struct mt9m001 *mt9m001 = container_of(icd, struct mt9m001, icd);
+	struct soc_camera_link *icl = mt9m001->client->dev.platform_data;
 	int ret;
 
-	/* Disable chip, synchronous option update */
 	dev_dbg(icd->vdev->parent, "%s\n", __func__);
 
-	ret = reg_write(icd, MT9M001_RESET, 1);
-	if (ret >= 0)
-		ret = reg_write(icd, MT9M001_RESET, 0);
-	if (ret >= 0)
+	if (icl->power) {
+		ret = icl->power(&mt9m001->client->dev, 1);
+		if (ret < 0) {
+			dev_err(icd->vdev->parent,
+				"Platform failed to power-on the camera.\n");
+			return ret;
+		}
+	}
+
+	/* The camera could have been already on, we reset it additionally */
+	if (icl->reset)
+		ret = icl->reset(&mt9m001->client->dev);
+	else
+		ret = -ENODEV;
+
+	if (ret < 0) {
+		/* Either no platform reset, or platform reset failed */
+		ret = reg_write(icd, MT9M001_RESET, 1);
+		if (!ret)
+			ret = reg_write(icd, MT9M001_RESET, 0);
+	}
+	/* Disable chip, synchronous option update */
+	if (!ret)
 		ret = reg_write(icd, MT9M001_OUTPUT_CONTROL, 0);
 
-	return ret >= 0 ? 0 : -EIO;
+	return ret;
 }
 
 static int mt9m001_release(struct soc_camera_device *icd)
 {
+	struct mt9m001 *mt9m001 = container_of(icd, struct mt9m001, icd);
+	struct soc_camera_link *icl = mt9m001->client->dev.platform_data;
+
 	/* Disable the chip */
 	reg_write(icd, MT9M001_OUTPUT_CONTROL, 0);
+
+	if (icl->power)
+		icl->power(&mt9m001->client->dev, 0);
+
 	return 0;
 }
 
@@ -258,8 +285,8 @@ static unsigned long mt9m001_query_bus_param(struct soc_camera_device *icd)
 		width_flag;
 }
 
-static int mt9m001_set_fmt_cap(struct soc_camera_device *icd,
-		__u32 pixfmt, struct v4l2_rect *rect)
+static int mt9m001_set_fmt(struct soc_camera_device *icd,
+			   __u32 pixfmt, struct v4l2_rect *rect)
 {
 	struct mt9m001 *mt9m001 = container_of(icd, struct mt9m001, icd);
 	int ret;
@@ -267,24 +294,24 @@ static int mt9m001_set_fmt_cap(struct soc_camera_device *icd,
 
 	/* Blanking and start values - default... */
 	ret = reg_write(icd, MT9M001_HORIZONTAL_BLANKING, hblank);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9M001_VERTICAL_BLANKING, vblank);
 
 	/* The caller provides a supported format, as verified per
-	 * call to icd->try_fmt_cap() */
-	if (ret >= 0)
+	 * call to icd->try_fmt() */
+	if (!ret)
 		ret = reg_write(icd, MT9M001_COLUMN_START, rect->left);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9M001_ROW_START, rect->top);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9M001_WINDOW_WIDTH, rect->width - 1);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9M001_WINDOW_HEIGHT,
 				rect->height + icd->y_skip_top - 1);
-	if (ret >= 0 && mt9m001->autoexposure) {
+	if (!ret && mt9m001->autoexposure) {
 		ret = reg_write(icd, MT9M001_SHUTTER_WIDTH,
 				rect->height + icd->y_skip_top + vblank);
-		if (ret >= 0) {
+		if (!ret) {
 			const struct v4l2_queryctrl *qctrl =
 				soc_camera_find_qctrl(icd->ops,
 						      V4L2_CID_EXPOSURE);
@@ -295,11 +322,11 @@ static int mt9m001_set_fmt_cap(struct soc_camera_device *icd,
 		}
 	}
 
-	return ret < 0 ? ret : 0;
+	return ret;
 }
 
-static int mt9m001_try_fmt_cap(struct soc_camera_device *icd,
-			       struct v4l2_format *f)
+static int mt9m001_try_fmt(struct soc_camera_device *icd,
+			   struct v4l2_format *f)
 {
 	if (f->fmt.pix.height < 32 + icd->y_skip_top)
 		f->fmt.pix.height = 32 + icd->y_skip_top;
@@ -420,8 +447,8 @@ static struct soc_camera_ops mt9m001_ops = {
 	.release		= mt9m001_release,
 	.start_capture		= mt9m001_start_capture,
 	.stop_capture		= mt9m001_stop_capture,
-	.set_fmt_cap		= mt9m001_set_fmt_cap,
-	.try_fmt_cap		= mt9m001_try_fmt_cap,
+	.set_fmt		= mt9m001_set_fmt,
+	.try_fmt		= mt9m001_try_fmt,
 	.set_bus_param		= mt9m001_set_bus_param,
 	.query_bus_param	= mt9m001_query_bus_param,
 	.controls		= mt9m001_controls,
@@ -617,8 +644,12 @@ static void mt9m001_video_remove(struct soc_camera_device *icd)
 	soc_camera_video_stop(&mt9m001->icd);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static int mt9m001_probe(struct i2c_client *client,
 			 const struct i2c_device_id *did)
+#else
+static int mt9m001_probe(struct i2c_client *client)
+#endif
 {
 	struct mt9m001 *mt9m001;
 	struct soc_camera_device *icd;
@@ -694,11 +725,13 @@ static int mt9m001_remove(struct i2c_client *client)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id mt9m001_id[] = {
 	{ "mt9m001", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, mt9m001_id);
+#endif
 
 static struct i2c_driver mt9m001_i2c_driver = {
 	.driver = {
@@ -706,7 +739,9 @@ static struct i2c_driver mt9m001_i2c_driver = {
 	},
 	.probe		= mt9m001_probe,
 	.remove		= mt9m001_remove,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table	= mt9m001_id,
+#endif
 };
 
 static int __init mt9m001_mod_init(void)

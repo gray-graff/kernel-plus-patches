@@ -10,7 +10,7 @@
 int flexcop_dma_allocate(struct pci_dev *pdev, struct flexcop_dma *dma, u32 size)
 {
 	u8 *tcpu;
-	dma_addr_t tdma;
+	dma_addr_t tdma = 0;
 
 	if (size % 2) {
 		err("dma buffersize has to be even.");
@@ -169,3 +169,42 @@ int flexcop_dma_config_timer(struct flexcop_device *fc,
 }
 EXPORT_SYMBOL(flexcop_dma_config_timer);
 
+#if 0
+
+/* packet IRQ does not exist in FCII or FCIIb - according to data book and tests */
+int flexcop_dma_control_packet_irq(struct flexcop_device *fc,
+		flexcop_dma_index_t no,
+		int onoff)
+{
+	flexcop_ibi_value v = fc->read_ibi_reg(fc,ctrl_208);
+
+	deb_rdump("reg: %03x: %x\n",ctrl_208,v.raw);
+	if (no & FC_DMA_1)
+		v.ctrl_208.DMA1_Size_IRQ_Enable_sig = onoff;
+
+	if (no & FC_DMA_2)
+		v.ctrl_208.DMA2_Size_IRQ_Enable_sig = onoff;
+
+	fc->write_ibi_reg(fc,ctrl_208,v);
+	deb_rdump("reg: %03x: %x\n",ctrl_208,v.raw);
+
+	return 0;
+}
+EXPORT_SYMBOL(flexcop_dma_control_packet_irq);
+
+int flexcop_dma_config_packet_count(struct flexcop_device *fc,
+		flexcop_dma_index_t dma_idx,
+		u8 packets)
+{
+	flexcop_ibi_register r = (dma_idx & FC_DMA_1) ? dma1_004 : dma2_014;
+	flexcop_ibi_value v = fc->read_ibi_reg(fc,r);
+
+	flexcop_dma_remap(fc,dma_idx,1);
+
+	v.dma_0x4_remap.DMA_maxpackets = packets;
+	fc->write_ibi_reg(fc,r,v);
+	return 0;
+}
+EXPORT_SYMBOL(flexcop_dma_config_packet_count);
+
+#endif  /*  0  */

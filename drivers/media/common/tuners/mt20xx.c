@@ -6,6 +6,7 @@
  */
 #include <linux/delay.h>
 #include <linux/i2c.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include "tuner-i2c.h"
 #include "mt20xx.h"
@@ -363,6 +364,14 @@ static int mt2032_set_params(struct dvb_frontend *fe,
 }
 
 static struct dvb_tuner_ops mt2032_tuner_ops = {
+#if 0
+	.info = {
+		.name           = "MT2032",
+		.frequency_min  = ,
+		.frequency_max  = ,
+		.frequency_step = ,
+	},
+#endif
 	.set_analog_params = mt2032_set_params,
 	.release           = microtune_release,
 	.get_frequency     = microtune_get_frequency,
@@ -564,6 +573,14 @@ static int mt2050_set_params(struct dvb_frontend *fe,
 }
 
 static struct dvb_tuner_ops mt2050_tuner_ops = {
+#if 0
+	.info = {
+		.name           = "MT2050",
+		.frequency_min  = ,
+		.frequency_max  = ,
+		.frequency_step = ,
+	},
+#endif
 	.set_analog_params = mt2050_set_params,
 	.release           = microtune_release,
 	.get_frequency     = microtune_get_frequency,
@@ -633,6 +650,22 @@ struct dvb_frontend *microtune_attach(struct dvb_frontend *fe,
 	tuner_info("microtune: companycode=%04x part=%02x rev=%02x\n",
 		   company_code,buf[0x13],buf[0x14]);
 
+#if 0
+	/* seems to cause more problems than it solves ... */
+	switch (company_code) {
+	case 0x30bf:
+	case 0x3cbf:
+	case 0x3dbf:
+	case 0x4d54:
+	case 0x8e81:
+	case 0x8e91:
+		/* ok (?) */
+		break;
+	default:
+		tuner_warn("tuner: microtune: unknown companycode\n");
+		return 0;
+	}
+#endif
 
 	if (buf[0x13] < ARRAY_SIZE(microtune_part) &&
 	    NULL != microtune_part[buf[0x13]])

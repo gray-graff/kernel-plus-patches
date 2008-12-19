@@ -25,7 +25,7 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  *  Stripped of 2.4 stuff ready for main kernel submit by
- *		Alan Cox <alan@redhat.com>
+ *		Alan Cox <alan@lxorguk.ukuu.org.uk>
  *
  ****************************************************************************/
 
@@ -34,10 +34,16 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 #include <linux/firmware.h>
+#endif
 
 /* #define _CPIA2_DEBUG_ */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#include "cpia2patch.h"
+
+#endif
 #ifdef _CPIA2_DEBUG_
 
 static const char *block_name[] = {
@@ -893,6 +899,7 @@ int cpia2_set_low_power(struct camera_data *cam)
  *  apply_vp_patch
  *
  *****************************************************************************/
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 static int cpia2_send_onebyte_command(struct camera_data *cam,
 				      struct cpia2_command *cmd,
 				      u8 start, u8 datum)
@@ -903,13 +910,19 @@ static int cpia2_send_onebyte_command(struct camera_data *cam,
 	return cpia2_send_command(cam, cmd);
 }
 
+#endif
 static int apply_vp_patch(struct camera_data *cam)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	int i, j;
+#else
 	const struct firmware *fw;
 	const char fw_name[] = "cpia2/stv0672_vp4.bin";
 	int i, ret;
+#endif
 	struct cpia2_command cmd;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	ret = request_firmware(&fw, fw_name, &cam->dev->dev);
 	if (ret) {
 		printk(KERN_ERR "cpia2: failed to load VP patch \"%s\"\n",
@@ -917,9 +930,19 @@ static int apply_vp_patch(struct camera_data *cam)
 		return ret;
 	}
 
+#endif
 	cmd.req_mode = CAMERAACCESS_TYPE_REPEAT | CAMERAACCESS_VP;
 	cmd.direction = TRANSFER_WRITE;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	for (i = 0; i < PATCH_DATA_SIZE; i++) {
+		for (j = 0; j < patch_data[i].count; j++) {
+			cmd.buffer.block_data[j] = patch_data[i].data[j];
+		}
+
+		cmd.start = patch_data[i].reg;
+		cmd.reg_count = patch_data[i].count;
+#else
 	/* First send the start address... */
 	cpia2_send_onebyte_command(cam, &cmd, 0x0A, fw->data[0]); /* hi */
 	cpia2_send_onebyte_command(cam, &cmd, 0x0B, fw->data[1]); /* lo */
@@ -929,9 +952,11 @@ static int apply_vp_patch(struct camera_data *cam)
 		cmd.start = 0x0C; /* Data */
 		cmd.reg_count = min_t(int, 64, fw->size - i);
 		memcpy(cmd.buffer.block_data, &fw->data[i], cmd.reg_count);
+#endif
 		cpia2_send_command(cam, &cmd);
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	/* Next send the start address... */
 	cpia2_send_onebyte_command(cam, &cmd, 0x0A, fw->data[0]); /* hi */
 	cpia2_send_onebyte_command(cam, &cmd, 0x0B, fw->data[1]); /* lo */
@@ -940,6 +965,7 @@ static int apply_vp_patch(struct camera_data *cam)
 	cpia2_send_onebyte_command(cam, &cmd, 0x0D, 1);
 
 	release_firmware(fw);
+#endif
 	return 0;
 }
 
@@ -1537,7 +1563,7 @@ static int config_sensor_500(struct camera_data *cam,
  *
  *  This sets all user changeable properties to the values in cam->params.
  *****************************************************************************/
-int set_all_properties(struct camera_data *cam)
+static int set_all_properties(struct camera_data *cam)
 {
 	/**
 	 * Don't set target_kb here, it will be set later.
@@ -1588,7 +1614,7 @@ void cpia2_save_camera_state(struct camera_data *cam)
  *  get_color_params
  *
  *****************************************************************************/
-void get_color_params(struct camera_data *cam)
+static void get_color_params(struct camera_data *cam)
 {
 	cpia2_do_command(cam, CPIA2_CMD_GET_VP_BRIGHTNESS, TRANSFER_READ, 0);
 	cpia2_do_command(cam, CPIA2_CMD_GET_VP_SATURATION, TRANSFER_READ, 0);
@@ -1881,7 +1907,7 @@ void cpia2_set_saturation(struct camera_data *cam, unsigned char value)
  *  wake_system
  *
  *****************************************************************************/
-void wake_system(struct camera_data *cam)
+static void wake_system(struct camera_data *cam)
 {
 	cpia2_do_command(cam, CPIA2_CMD_SET_WAKEUP, TRANSFER_WRITE, 0);
 }
@@ -1892,7 +1918,7 @@ void wake_system(struct camera_data *cam)
  *
  *  Valid for STV500 sensor only
  *****************************************************************************/
-void set_lowlight_boost(struct camera_data *cam)
+static void set_lowlight_boost(struct camera_data *cam)
 {
 	struct cpia2_command cmd;
 
@@ -2169,7 +2195,7 @@ void cpia2_dbg_dump_registers(struct camera_data *cam)
  *
  *  Sets all values to the defaults
  *****************************************************************************/
-void reset_camera_struct(struct camera_data *cam)
+static void reset_camera_struct(struct camera_data *cam)
 {
 	/***
 	 * The following parameter values are the defaults from the register map.

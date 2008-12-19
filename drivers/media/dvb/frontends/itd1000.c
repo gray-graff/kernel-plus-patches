@@ -95,6 +95,14 @@ static inline int itd1000_write_reg(struct itd1000_state *state, u8 r, u8 v)
 	return ret;
 }
 
+#if 0
+static void reg_dump(struct itd1000_state *state)
+{
+	int i;
+	for (i = 0x65; i < 0x9c; i++)
+		printk(KERN_DEBUG "ITD: %02x: %02x\n", i, itd1000_read_reg(state, i));
+}
+#endif
 
 static struct {
 	u32 symbol_rate;

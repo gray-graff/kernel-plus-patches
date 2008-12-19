@@ -201,7 +201,7 @@
 #define R_FB_PULSE_C_POS_MSB                          0xfb
 #define R_FF_S_PLL_MAX_PHASE_ERR_THRESH_NUM_LINES     0xff
 
-#if 0
+#if 0 /* keep */
 /* Those structs will be used in the future for debug purposes */
 struct saa711x_reg_descr {
 	u8 reg;

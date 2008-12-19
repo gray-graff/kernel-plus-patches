@@ -29,6 +29,7 @@
 #include <media/v4l2-common.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
+#include "compat.h"
 
 #include <media/i2c-addr.h>
 
@@ -120,6 +121,19 @@ static int tda9875_write(struct i2c_client *client, int subaddr, unsigned char v
 	return 0;
 }
 
+#if 0
+static int tda9875_read(struct i2c_client *client)
+{
+	unsigned char buffer;
+	v4l_dbg(2, debug,client,"In tda9875_read\n");
+	if (1 != i2c_master_recv(client,&buffer,1)) {
+		v4l_err(client,"I/O error, trying (read)\n");
+		return -1;
+	}
+	v4l_dbg(1, debug,client,"Read 0x%02x\n", buffer);
+	return buffer;
+}
+#endif
 
 static int i2c_read_register(struct i2c_adapter *adap, int addr, int reg)
 {

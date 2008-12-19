@@ -60,6 +60,7 @@ static int smsdvb_onresponse(void *context, struct smscore_buffer_t *cb)
 
 			client->fe_snr = p->Stat.SNR;
 			client->fe_ber = p->Stat.BER;
+			client->fe_unc = p->Stat.BERErrorCount;
 
 			if (p->Stat.InBandPwr < -95)
 				client->fe_signal_strength = 0;
@@ -72,6 +73,7 @@ static int smsdvb_onresponse(void *context, struct smscore_buffer_t *cb)
 			client->fe_status = 0;
 			client->fe_snr =
 			client->fe_ber =
+			client->fe_unc =
 			client->fe_signal_strength = 0;
 		}
 
@@ -165,8 +167,18 @@ static int smsdvb_send_statistics_request(struct smsdvb_client_t *client)
 	struct SmsMsgHdr_ST Msg = { MSG_SMS_GET_STATISTICS_REQ,
 			     DVBT_BDA_CONTROL_MSG_ID,
 			     HIF_TASK, sizeof(struct SmsMsgHdr_ST), 0 };
-	return smsdvb_sendrequest_and_wait(client, &Msg, sizeof(Msg),
-					   &client->stat_done);
+	int ret = smsdvb_sendrequest_and_wait(client, &Msg, sizeof(Msg),
+					      &client->stat_done);
+	if (ret < 0)
+		return ret;
+
+	if (client->fe_status & FE_HAS_LOCK)
+		sms_board_led_feedback(client->coredev,
+				       (client->fe_unc == 0) ?
+				       SMS_LED_HI : SMS_LED_LO);
+	else
+		sms_board_led_feedback(client->coredev, SMS_LED_OFF);
+	return ret;
 }
 
 static int smsdvb_read_status(struct dvb_frontend *fe, fe_status_t *stat)
@@ -217,6 +229,18 @@ static int smsdvb_read_snr(struct dvb_frontend *fe, u16 *snr)
 	return rc;
 }
 
+static int smsdvb_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
+{
+	struct smsdvb_client_t *client =
+		container_of(fe, struct smsdvb_client_t, frontend);
+	int rc = smsdvb_send_statistics_request(client);
+
+	if (!rc)
+		*ucblocks = client->fe_unc;
+
+	return rc;
+}
+
 static int smsdvb_get_tune_settings(struct dvb_frontend *fe,
 				    struct dvb_frontend_tune_settings *tune)
 {
@@ -254,6 +278,9 @@ static int smsdvb_set_frontend(struct dvb_frontend *fe,
 	case BANDWIDTH_8_MHZ: Msg.Data[1] = BW_8_MHZ; break;
 	case BANDWIDTH_7_MHZ: Msg.Data[1] = BW_7_MHZ; break;
 	case BANDWIDTH_6_MHZ: Msg.Data[1] = BW_6_MHZ; break;
+#if 0
+	case BANDWIDTH_5_MHZ: Msg.Data[1] = BW_5_MHZ; break;
+#endif
 	case BANDWIDTH_AUTO: return -EOPNOTSUPP;
 	default: return -EINVAL;
 	}
@@ -273,6 +300,28 @@ static int smsdvb_get_frontend(struct dvb_frontend *fe,
 	/* todo: */
 	memcpy(fep, &client->fe_params,
 	       sizeof(struct dvb_frontend_parameters));
+
+	return 0;
+}
+
+static int smsdvb_init(struct dvb_frontend *fe)
+{
+	struct smsdvb_client_t *client =
+		container_of(fe, struct smsdvb_client_t, frontend);
+
+	sms_board_power(client->coredev, 1);
+
+	return 0;
+}
+
+static int smsdvb_sleep(struct dvb_frontend *fe)
+{
+	struct smsdvb_client_t *client =
+		container_of(fe, struct smsdvb_client_t, frontend);
+
+	sms_board_led_feedback(client->coredev, SMS_LED_OFF);
+	sms_board_power(client->coredev, 0);
+
 	return 0;
 }
 
@@ -308,6 +357,10 @@ static struct dvb_frontend_ops smsdvb_fe_ops = {
 	.read_ber = smsdvb_read_ber,
 	.read_signal_strength = smsdvb_read_signal_strength,
 	.read_snr = smsdvb_read_snr,
+	.read_ucblocks = smsdvb_read_ucblocks,
+
+	.init = smsdvb_init,
+	.sleep = smsdvb_sleep,
 };
 
 static int smsdvb_hotplug(struct smscore_device_t *coredev,
@@ -322,9 +375,15 @@ static int smsdvb_hotplug(struct smscore_device_t *coredev,
 		return 0;
 
 	if (smscore_get_device_mode(coredev) != 4) {
+#if 1 /* new siano drop (1.2.17) does this -- yuck */
 		sms_err("SMS Device mode is not set for "
 			"DVB operation.");
 		return 0;
+#else
+		rc = smscore_set_device_mode(coredev, 4);
+		if (rc < 0)
+			return rc;
+#endif
 	}
 
 	client = kzalloc(sizeof(struct smsdvb_client_t), GFP_KERNEL);
@@ -401,6 +460,8 @@ static int smsdvb_hotplug(struct smscore_device_t *coredev,
 	kmutex_unlock(&g_smsdvb_clientslock);
 
 	sms_info("success");
+
+	sms_board_setup(coredev);
 
 	return 0;
 

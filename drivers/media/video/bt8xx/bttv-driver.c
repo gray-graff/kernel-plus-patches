@@ -76,9 +76,9 @@ static unsigned int gbuffers = 8;
 static unsigned int gbufsize = 0x208000;
 static unsigned int reset_crop = 1;
 
-static int video_nr = -1;
-static int radio_nr = -1;
-static int vbi_nr = -1;
+static int video_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
+static int radio_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
+static int vbi_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
 static int debug_latency;
 
 static unsigned int fdsr;
@@ -108,9 +108,6 @@ module_param(irq_debug,         int, 0644);
 module_param(debug_latency,     int, 0644);
 
 module_param(fdsr,              int, 0444);
-module_param(video_nr,          int, 0444);
-module_param(radio_nr,          int, 0444);
-module_param(vbi_nr,            int, 0444);
 module_param(gbuffers,          int, 0444);
 module_param(gbufsize,          int, 0444);
 module_param(reset_crop,        int, 0444);
@@ -130,7 +127,10 @@ module_param(uv_ratio,          int, 0444);
 module_param(full_luma_range,   int, 0444);
 module_param(coring,            int, 0444);
 
-module_param_array(radio, int, NULL, 0444);
+module_param_array(radio,       int, NULL, 0444);
+module_param_array(video_nr,    int, NULL, 0444);
+module_param_array(radio_nr,    int, NULL, 0444);
+module_param_array(vbi_nr,      int, NULL, 0444);
 
 MODULE_PARM_DESC(radio,"The TV card supports radio, default is 0 (no)");
 MODULE_PARM_DESC(bigendian,"byte order of the framebuffer, default is native endian");
@@ -152,6 +152,9 @@ MODULE_PARM_DESC(irq_iswitch,"switch inputs in irq handler");
 MODULE_PARM_DESC(uv_ratio,"ratio between u and v gains, default is 50");
 MODULE_PARM_DESC(full_luma_range,"use the full luma range, default is 0 (no)");
 MODULE_PARM_DESC(coring,"set the luma coring level, default is 0 (no)");
+MODULE_PARM_DESC(video_nr, "video device numbers");
+MODULE_PARM_DESC(vbi_nr, "vbi device numbers");
+MODULE_PARM_DESC(radio_nr, "radio device numbers");
 
 MODULE_DESCRIPTION("bttv - v4l/v4l2 driver module for bt848/878 based cards");
 MODULE_AUTHOR("Ralph Metzler & Marcus Metzler & Gerd Knorr");
@@ -160,26 +163,42 @@ MODULE_LICENSE("GPL");
 /* ----------------------------------------------------------------------- */
 /* sysfs                                                                   */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 static ssize_t show_card(struct device *cd,
 			 struct device_attribute *attr, char *buf)
+#else
+static ssize_t show_card(struct class_device *cd, char *buf)
+#endif
 {
 	struct video_device *vfd = container_of(cd, struct video_device, dev);
 	struct bttv *btv = dev_get_drvdata(vfd->parent);
 	return sprintf(buf, "%d\n", btv ? btv->c.type : UNSET);
 }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 static DEVICE_ATTR(card, S_IRUGO, show_card, NULL);
+#else
+static CLASS_DEVICE_ATTR(card, S_IRUGO, show_card, NULL);
+#endif
 
 /* ----------------------------------------------------------------------- */
 /* dvb auto-load setup                                                     */
 #if defined(CONFIG_MODULES) && defined(MODULE)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void request_module_async(void *ptr)
+#else
 static void request_module_async(struct work_struct *work)
+#endif
 {
 	request_module("dvb-bt8xx");
 }
 
 static void request_modules(struct bttv *dev)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&dev->request_module_wk, request_module_async, (void*)dev);
+#else
 	INIT_WORK(&dev->request_module_wk, request_module_async);
+#endif
 	schedule_work(&dev->request_module_wk);
 }
 #else
@@ -929,10 +948,12 @@ disclaim_video_lines(struct bttv *btv)
 static
 void free_btres(struct bttv *btv, struct bttv_fh *fh, int bits)
 {
+#if 1 /* DEBUG */
 	if ((fh->resources & bits) != bits) {
 		/* trying to free ressources not allocated by us ... */
 		printk("bttv: BUG! (btres)\n");
 	}
+#endif
 	mutex_lock(&btv->lock);
 	fh->resources  &= ~bits;
 	btv->resources &= ~bits;
@@ -1176,6 +1197,11 @@ audio_mux(struct bttv *btv, int input, int mute)
 		gpio_val = bttv_tvcards[btv->c.type].gpiomute;
 	else
 		gpio_val = bttv_tvcards[btv->c.type].gpiomux[input];
+#if 0
+	printk("bttv%d: amux: input=%d mute=%d signal=%s gpio_mux=%d irq=%s\n",
+	       btv->c.nr, input, mute, signal ? "yes" : "no",
+	       gpio_val, in_interrupt() ? "yes" : "no");
+#endif
 
 	gpio_bits(bttv_tvcards[btv->c.type].gpiomask, gpio_val);
 	if (bttv_gpio)
@@ -1321,6 +1347,11 @@ set_tvnorm(struct bttv *btv, unsigned int norm)
 	case BTTV_BOARD_VOODOOTV_200:
 		bttv_tda9880_setnorm(btv,norm);
 		break;
+#if 0
+	case BTTV_BOARD_OSPREY540:
+		osprey_540_set_norm(btv,norm);
+		break;
+#endif
 	}
 	id = tvnorm->v4l2_id;
 	bttv_call_i2c_clients(btv, VIDIOC_S_STD, &id);
@@ -1367,7 +1398,7 @@ static void init_irqreg(struct bttv *btv)
 			(btv->gpioirq ? BT848_INT_GPINT : 0) |
 			BT848_INT_SCERR |
 			(fdsr ? BT848_INT_FDSR : 0) |
-			BT848_INT_RISCI|BT848_INT_OCERR|BT848_INT_VPRES|
+			BT848_INT_RISCI | BT848_INT_OCERR |
 			BT848_INT_FMTCHG|BT848_INT_HLOCK|
 			BT848_INT_I2CDONE,
 			BT848_INT_MASK);
@@ -2661,18 +2692,6 @@ static int bttv_querycap(struct file *file, void  *priv,
 	return 0;
 }
 
-static int bttv_enum_fmt_vbi_cap(struct file *file, void  *priv,
-				struct v4l2_fmtdesc *f)
-{
-	if (0 != f->index)
-		return -EINVAL;
-
-	f->pixelformat = V4L2_PIX_FMT_GREY;
-	strcpy(f->description, "vbi data");
-
-	return 0;
-}
-
 static int bttv_enum_fmt_cap_ovr(struct v4l2_fmtdesc *f)
 {
 	int index = -1, i;
@@ -3227,6 +3246,7 @@ static int bttv_open(struct inode *inode, struct file *file)
 
 	dprintk(KERN_DEBUG "bttv: open minor=%d\n",minor);
 
+	lock_kernel();
 	for (i = 0; i < bttv_num; i++) {
 		if (bttvs[i].video_dev &&
 		    bttvs[i].video_dev->minor == minor) {
@@ -3241,16 +3261,20 @@ static int bttv_open(struct inode *inode, struct file *file)
 			break;
 		}
 	}
-	if (NULL == btv)
+	if (NULL == btv) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	dprintk(KERN_DEBUG "bttv%d: open called (type=%s)\n",
 		btv->c.nr,v4l2_type_names[type]);
 
 	/* allocate per filehandle data */
 	fh = kmalloc(sizeof(*fh),GFP_KERNEL);
-	if (NULL == fh)
+	if (NULL == fh) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	file->private_data = fh;
 	*fh = btv->init;
 	fh->type = type;
@@ -3270,6 +3294,7 @@ static int bttv_open(struct inode *inode, struct file *file)
 			    sizeof(struct bttv_buffer),
 			    fh);
 	set_tvnorm(btv,btv->tvnorm);
+	set_input(btv, btv->input, btv->tvnorm);
 
 	btv->users++;
 
@@ -3290,6 +3315,7 @@ static int bttv_open(struct inode *inode, struct file *file)
 	bttv_vbi_fmt_reset(&fh->vbi_fmt, btv->tvnorm);
 
 	bttv_field_count(btv);
+	unlock_kernel();
 	return 0;
 }
 
@@ -3330,6 +3356,10 @@ static int bttv_release(struct inode *inode, struct file *file)
 
 	btv->users--;
 	bttv_field_count(btv);
+
+	if (!btv->users)
+		audio_mute(btv, 1);
+
 	return 0;
 }
 
@@ -3367,7 +3397,6 @@ static const struct v4l2_ioctl_ops bttv_ioctl_ops = {
 	.vidioc_g_fmt_vid_overlay       = bttv_g_fmt_vid_overlay,
 	.vidioc_try_fmt_vid_overlay     = bttv_try_fmt_vid_overlay,
 	.vidioc_s_fmt_vid_overlay       = bttv_s_fmt_vid_overlay,
-	.vidioc_enum_fmt_vbi_cap        = bttv_enum_fmt_vbi_cap,
 	.vidioc_g_fmt_vbi_cap           = bttv_g_fmt_vbi_cap,
 	.vidioc_try_fmt_vbi_cap         = bttv_try_fmt_vbi_cap,
 	.vidioc_s_fmt_vbi_cap           = bttv_s_fmt_vbi_cap,
@@ -3430,21 +3459,26 @@ static int radio_open(struct inode *inode, struct file *file)
 
 	dprintk("bttv: open minor=%d\n",minor);
 
+	lock_kernel();
 	for (i = 0; i < bttv_num; i++) {
 		if (bttvs[i].radio_dev && bttvs[i].radio_dev->minor == minor) {
 			btv = &bttvs[i];
 			break;
 		}
 	}
-	if (NULL == btv)
+	if (NULL == btv) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	dprintk("bttv%d: open called (radio)\n",btv->c.nr);
 
 	/* allocate per filehandle data */
 	fh = kmalloc(sizeof(*fh), GFP_KERNEL);
-	if (NULL == fh)
+	if (NULL == fh) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	file->private_data = fh;
 	*fh = btv->init;
 	v4l2_prio_open(&btv->prio, &fh->prio);
@@ -3457,6 +3491,7 @@ static int radio_open(struct inode *inode, struct file *file)
 	audio_input(btv,TVAUDIO_INPUT_RADIO);
 
 	mutex_unlock(&btv->lock);
+	unlock_kernel();
 	return 0;
 }
 
@@ -4062,7 +4097,11 @@ bttv_irq_switch_vbi(struct bttv *btv)
 	spin_unlock(&btv->s_lock);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+static irqreturn_t bttv_irq(int irq, void *dev_id, struct pt_regs * regs)
+#else
 static irqreturn_t bttv_irq(int irq, void *dev_id)
+#endif
 {
 	u32 stat,astat;
 	u32 dstat;
@@ -4235,12 +4274,18 @@ static int __devinit bttv_register_video(struct bttv *btv)
 
 	if (NULL == btv->video_dev)
 		goto err;
-	if (video_register_device(btv->video_dev,VFL_TYPE_GRABBER,video_nr)<0)
+	if (video_register_device(btv->video_dev, VFL_TYPE_GRABBER,
+				  video_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device video%d\n",
-	       btv->c.nr,btv->video_dev->minor & 0x1f);
+	       btv->c.nr, btv->video_dev->num);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+	if (class_device_create_file(&btv->video_dev->dev,
+				     &class_device_attr_card)<0) {
+#else
 	if (device_create_file(&btv->video_dev->dev,
 				     &dev_attr_card)<0) {
+#endif
 		printk(KERN_ERR "bttv%d: device_create_file 'card' "
 		       "failed\n", btv->c.nr);
 		goto err;
@@ -4251,10 +4296,11 @@ static int __devinit bttv_register_video(struct bttv *btv)
 
 	if (NULL == btv->vbi_dev)
 		goto err;
-	if (video_register_device(btv->vbi_dev,VFL_TYPE_VBI,vbi_nr)<0)
+	if (video_register_device(btv->vbi_dev, VFL_TYPE_VBI,
+				  vbi_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device vbi%d\n",
-	       btv->c.nr,btv->vbi_dev->minor & 0x1f);
+	       btv->c.nr, btv->vbi_dev->num);
 
 	if (!btv->has_radio)
 		return 0;
@@ -4262,10 +4308,11 @@ static int __devinit bttv_register_video(struct bttv *btv)
 	btv->radio_dev = vdev_init(btv, &radio_template, "radio");
 	if (NULL == btv->radio_dev)
 		goto err;
-	if (video_register_device(btv->radio_dev, VFL_TYPE_RADIO,radio_nr)<0)
+	if (video_register_device(btv->radio_dev, VFL_TYPE_RADIO,
+				  radio_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device radio%d\n",
-	       btv->c.nr,btv->radio_dev->minor & 0x1f);
+	       btv->c.nr, btv->radio_dev->num);
 
 	/* all done */
 	return 0;

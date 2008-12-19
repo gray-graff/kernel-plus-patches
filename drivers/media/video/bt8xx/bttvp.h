@@ -38,12 +38,14 @@
 #include <linux/mutex.h>
 #include <linux/scatterlist.h>
 #include <asm/io.h>
+#include "compat.h"
 #include <media/v4l2-common.h>
 #include <linux/device.h>
 #include <media/videobuf-dma-sg.h>
 #include <media/tveeprom.h>
 #include <media/ir-common.h>
 
+#include "compat.h"
 
 #include "bt848.h"
 #include "bttv.h"
@@ -459,7 +461,7 @@ struct bttv {
 };
 
 /* our devices */
-#define BTTV_MAX 16
+#define BTTV_MAX 32
 extern unsigned int bttv_num;
 extern struct bttv bttvs[BTTV_MAX];
 

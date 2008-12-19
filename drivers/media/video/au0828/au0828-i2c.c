@@ -25,6 +25,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 
+#include "compat.h"
 #include "au0828.h"
 
 #include <media/v4l2-common.h>
@@ -300,6 +301,9 @@ static u32 au0828_functionality(struct i2c_adapter *adap)
 static struct i2c_algorithm au0828_i2c_algo_template = {
 	.master_xfer	= i2c_xfer,
 	.functionality	= au0828_functionality,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* ----------------------------------------------------------------------- */

@@ -4,6 +4,7 @@
  *  Derived from ivtv-i2c.c
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
+ *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -22,12 +23,12 @@
  */
 
 #include "cx18-driver.h"
+#include "cx18-io.h"
 #include "cx18-cards.h"
 #include "cx18-gpio.h"
 #include "cx18-av-core.h"
 #include "cx18-i2c.h"
-
-#include <media/ir-kbd-i2c.h>
+#include "cx18-irq.h"
 
 #define CX18_REG_I2C_1_WR   0xf15000
 #define CX18_REG_I2C_1_RD   0xf15008
@@ -80,6 +81,7 @@ static const char * const hw_devicenames[] = {
 
 int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	struct i2c_board_info info;
 	struct i2c_client *c;
 	u8 id, bus;
@@ -91,7 +93,12 @@ int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 	id = hw_driverids[idx];
 	bus = hw_bus[idx];
 	memset(&info, 0, sizeof(info));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
+	strlcpy(info.driver_name, hw_devicenames[idx],
+			sizeof(info.driver_name));
+#else
 	strlcpy(info.type, hw_devicenames[idx], sizeof(info.type));
+#endif
 	info.addr = hw_addrs[idx];
 	for (i = 0; i < I2C_CLIENTS_MAX; i++)
 		if (cx->i2c_clients[i] == NULL)
@@ -128,10 +135,27 @@ int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 	else if (c)
 		cx->i2c_clients[i++] = c;
 	return 0;
+#else
+	return 0;
+#endif
 }
 
 static int attach_inform(struct i2c_client *client)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+	struct cx18 *cx = (struct cx18 *)i2c_get_adapdata(client->adapter);
+	int i;
+
+	CX18_DEBUG_I2C("i2c client attach\n");
+	for (i = 0; i < I2C_CLIENTS_MAX; i++) {
+		if (cx->i2c_clients[i] == NULL) {
+			cx->i2c_clients[i] = client;
+			break;
+		}
+	}
+	if (i == I2C_CLIENTS_MAX)
+		CX18_ERR("Insufficient room for new I2C client\n");
+#endif
 	return 0;
 }
 
@@ -158,12 +182,12 @@ static void cx18_setscl(void *data, int state)
 	struct cx18 *cx = ((struct cx18_i2c_algo_callback_data *)data)->cx;
 	int bus_index = ((struct cx18_i2c_algo_callback_data *)data)->bus_index;
 	u32 addr = bus_index ? CX18_REG_I2C_2_WR : CX18_REG_I2C_1_WR;
-	u32 r = read_reg(addr);
+	u32 r = cx18_read_reg(cx, addr);
 
 	if (state)
-		write_reg_sync(r | SETSCL_BIT, addr);
+		cx18_write_reg(cx, r | SETSCL_BIT, addr);
 	else
-		write_reg_sync(r & ~SETSCL_BIT, addr);
+		cx18_write_reg(cx, r & ~SETSCL_BIT, addr);
 }
 
 static void cx18_setsda(void *data, int state)
@@ -171,12 +195,12 @@ static void cx18_setsda(void *data, int state)
 	struct cx18 *cx = ((struct cx18_i2c_algo_callback_data *)data)->cx;
 	int bus_index = ((struct cx18_i2c_algo_callback_data *)data)->bus_index;
 	u32 addr = bus_index ? CX18_REG_I2C_2_WR : CX18_REG_I2C_1_WR;
-	u32 r = read_reg(addr);
+	u32 r = cx18_read_reg(cx, addr);
 
 	if (state)
-		write_reg_sync(r | SETSDL_BIT, addr);
+		cx18_write_reg(cx, r | SETSDL_BIT, addr);
 	else
-		write_reg_sync(r & ~SETSDL_BIT, addr);
+		cx18_write_reg(cx, r & ~SETSDL_BIT, addr);
 }
 
 static int cx18_getscl(void *data)
@@ -185,7 +209,7 @@ static int cx18_getscl(void *data)
 	int bus_index = ((struct cx18_i2c_algo_callback_data *)data)->bus_index;
 	u32 addr = bus_index ? CX18_REG_I2C_2_RD : CX18_REG_I2C_1_RD;
 
-	return read_reg(addr) & GETSCL_BIT;
+	return cx18_read_reg(cx, addr) & GETSCL_BIT;
 }
 
 static int cx18_getsda(void *data)
@@ -194,7 +218,7 @@ static int cx18_getsda(void *data)
 	int bus_index = ((struct cx18_i2c_algo_callback_data *)data)->bus_index;
 	u32 addr = bus_index ? CX18_REG_I2C_2_RD : CX18_REG_I2C_1_RD;
 
-	return read_reg(addr) & GETSDL_BIT;
+	return cx18_read_reg(cx, addr) & GETSDL_BIT;
 }
 
 /* template for i2c-bit-algo */
@@ -206,6 +230,9 @@ static struct i2c_adapter cx18_i2c_adap_template = {
 	.client_register = attach_inform,
 	.client_unregister = detach_inform,
 	.owner = THIS_MODULE,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+	.class = I2C_CLASS_TV_ANALOG,
+#endif
 };
 
 #define CX18_SCL_PERIOD (10) /* usecs. 10 usec is period for a 100 KHz clock */
@@ -391,32 +418,41 @@ int init_cx18_i2c(struct cx18 *cx)
 		sprintf(cx->i2c_client[i].name +
 				strlen(cx->i2c_client[i].name), "%d", i);
 		cx->i2c_client[i].adapter = &cx->i2c_adap[i];
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 		cx->i2c_adap[i].dev.parent = &cx->dev->dev;
+#endif
 	}
 
-	if (read_reg(CX18_REG_I2C_2_WR) != 0x0003c02f) {
+	if (cx18_read_reg(cx, CX18_REG_I2C_2_WR) != 0x0003c02f) {
 		/* Reset/Unreset I2C hardware block */
-		write_reg(0x10000000, 0xc71004); /* Clock select 220MHz */
-		write_reg_sync(0x10001000, 0xc71024); /* Clock Enable */
+		/* Clock select 220MHz */
+		cx18_write_reg_expect(cx, 0x10000000, 0xc71004,
+					  0x00000000, 0x10001000);
+		/* Clock Enable */
+		cx18_write_reg_expect(cx, 0x10001000, 0xc71024,
+					  0x00001000, 0x10001000);
 	}
 	/* courtesy of Steven Toth <stoth@hauppauge.com> */
-	write_reg_sync(0x00c00000, 0xc7001c);
+	cx18_write_reg_expect(cx, 0x00c00000, 0xc7001c, 0x00000000, 0x00c000c0);
 	mdelay(10);
-	write_reg_sync(0x00c000c0, 0xc7001c);
+	cx18_write_reg_expect(cx, 0x00c000c0, 0xc7001c, 0x000000c0, 0x00c000c0);
 	mdelay(10);
-	write_reg_sync(0x00c00000, 0xc7001c);
+	cx18_write_reg_expect(cx, 0x00c00000, 0xc7001c, 0x00000000, 0x00c000c0);
 	mdelay(10);
 
-	write_reg_sync(0x00c00000, 0xc730c8); /* Set to edge-triggered intrs. */
-	write_reg_sync(0x00c00000, 0xc730c4); /* Clear any stale intrs */
+	/* Set to edge-triggered intrs. */
+	cx18_write_reg(cx, 0x00c00000, 0xc730c8);
+	/* Clear any stale intrs */
+	cx18_write_reg_expect(cx, HW2_I2C1_INT|HW2_I2C2_INT, HW2_INT_CLR_STATUS,
+		       ~(HW2_I2C1_INT|HW2_I2C2_INT), HW2_I2C1_INT|HW2_I2C2_INT);
 
 	/* Hw I2C1 Clock Freq ~100kHz */
-	write_reg_sync(0x00021c0f & ~4, CX18_REG_I2C_1_WR);
+	cx18_write_reg(cx, 0x00021c0f & ~4, CX18_REG_I2C_1_WR);
 	cx18_setscl(&cx->i2c_algo_cb_data[0], 1);
 	cx18_setsda(&cx->i2c_algo_cb_data[0], 1);
 
 	/* Hw I2C2 Clock Freq ~100kHz */
-	write_reg_sync(0x00021c0f & ~4, CX18_REG_I2C_2_WR);
+	cx18_write_reg(cx, 0x00021c0f & ~4, CX18_REG_I2C_2_WR);
 	cx18_setscl(&cx->i2c_algo_cb_data[1], 1);
 	cx18_setsda(&cx->i2c_algo_cb_data[1], 1);
 
@@ -430,11 +466,17 @@ void exit_cx18_i2c(struct cx18 *cx)
 {
 	int i;
 	CX18_DEBUG_I2C("i2c exit\n");
-	write_reg(read_reg(CX18_REG_I2C_1_WR) | 4, CX18_REG_I2C_1_WR);
-	write_reg(read_reg(CX18_REG_I2C_2_WR) | 4, CX18_REG_I2C_2_WR);
+	cx18_write_reg(cx, cx18_read_reg(cx, CX18_REG_I2C_1_WR) | 4,
+							CX18_REG_I2C_1_WR);
+	cx18_write_reg(cx, cx18_read_reg(cx, CX18_REG_I2C_2_WR) | 4,
+							CX18_REG_I2C_2_WR);
 
 	for (i = 0; i < 2; i++) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 		i2c_del_adapter(&cx->i2c_adap[i]);
+#else
+		i2c_bit_del_bus(&cx->i2c_adap[i]);
+#endif
 	}
 }
 

@@ -49,6 +49,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include "compat.h"
 
 struct cpia_camera_ops
 {

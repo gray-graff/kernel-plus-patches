@@ -483,7 +483,24 @@ static const __u16 spca508_init_data[][3] =
 	/* 51740  2104 */ {0x007d, 0x8800},
 	/* 51763  2105 */ /* READ { 0, 0x0001, 0x8803 } -> 0000: 00  */
 
+#if 0
+	/* experimental.  dark version. */
+	{0xba, 0x8705},	/* total pixel clocks per hsync cycle (L) */
+	{0x00, 0x8706},	/* total pixel clocks per hsync cycle (H in 2:0) */
+	{0x5a, 0x8707},	/* total pixel clocks per hsync blank period (L) */
+#elif 0
+	/* experimental.  factory default. */
+	{0x8e, 0x8705},	/* total pixel clocks per hsync cycle (L) */
+	{0x03, 0x8706},	/* total pixel clocks per hsync cycle (H in 2:0) */
+	{0x5a, 0x8707},	/* total pixel clocks per hsync blank period (L) */
+#elif 0
+	/* experimental.  light. */
+	{0xba, 0x8705},	/* total pixel clocks per hsync cycle (L) */
+	{0x01, 0x8706},	/* total pixel clocks per hsync cycle (H in 2:0) */
+	{0x10, 0x8707},	/* total pixel clocks per hsync blank period (L) */
+#endif
 
+#if 1
 	/* This chunk is seemingly redundant with */
 	/* earlier commands (A11 Coef...), but if I disable it, */
 	/* the image appears too dark.  Maybe there was some kind of */
@@ -498,6 +515,7 @@ static const __u16 spca508_init_data[][3] =
 	/* 51964  2113 */ {0xffdc, 0x860f},
 	/* 51989  2114 */ {0x0039, 0x8610},
 	/* 52014  2115 */ {0x0018, 0x8657},
+#endif
 
 	/* 52039  2116 */ {0x0000, 0x8508},
 	/* Disable compression. */
@@ -561,9 +579,18 @@ static const __u16 spca508_init_data[][3] =
 	/* 52857  2149 */ {0x0001, 0x8602},
 	/* optical black level for user settning = 1 */
 
+#if 0
+	/* NOTE: Code like this case lets this driver (often) work */
+	/* in 352x288 resolution, apparently by slowing down the */
+	/* clock. */
+
+	/* 52464  2133 */ {0x002F, 0x8700},
+	/* Clock speed */
+#else
 	/* Original: */
 	/* 52882  2150 */ {0x0023, 0x8700},
 	/* Clock speed 48Mhz/(3+2)/4= 2.4 Mhz */
+#endif
 	/* 52907  2151 */ {0x000f, 0x8602},
 	/* optical black level for user settning = 15 */
 
@@ -589,6 +616,15 @@ static const __u16 spca508_init_data[][3] =
 	{}
 };
 
+#if 0
+/*
+ * Data to initialize the camera using the internal CCD
+ */
+static const __u16 spca508_open_data[][3] = {
+	/* line	bmRequest,value,index */
+	{}
+};
+#endif
 
 /*
  * Initialization data for Intel EasyPC Camera CS110
@@ -761,6 +797,7 @@ static const __u16 spca508_sightcam_init_data[][3] = {
 };
 
 static const __u16 spca508_sightcam2_init_data[][3] = {
+#if 1
 /* 35 */ {0x0020, 0x8112},
 
 /* 36 */ {0x000f, 0x8402},
@@ -1101,6 +1138,7 @@ static const __u16 spca508_sightcam2_init_data[][3] = {
 /* since it has been build into the driver */
 /* jfm: don't start now */
 /* 590  *  {0x0030, 0x8112}, */
+#endif
 	{}
 };
 
@@ -1528,7 +1566,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	return 0;
 }
 
-static void sd_start(struct gspca_dev *gspca_dev)
+static int sd_start(struct gspca_dev *gspca_dev)
 {
 	int mode;
 
@@ -1546,6 +1584,7 @@ static void sd_start(struct gspca_dev *gspca_dev)
 		break;
 	}
 	reg_write(gspca_dev->dev, 0x8112, 0x10 | 0x20);
+	return 0;
 }
 
 static void sd_stopN(struct gspca_dev *gspca_dev)

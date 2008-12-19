@@ -37,11 +37,17 @@
 #include <asm/atomic.h>
 #include <linux/delay.h>
 #include <linux/usb.h>
+#include "compat.h"
 #include <linux/mutex.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 #include <linux/firmware.h>
 #include <linux/ihex.h>
+#endif
 
 #include "dabusb.h"
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#include "dabfirmware.h"
+#endif
 
 /*
  * Version Information
@@ -166,7 +172,11 @@ static int dabusb_free_buffers (pdabusb_t s)
 	return 0;
 }
 /*-------------------------------------------------------------------*/
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void dabusb_iso_complete (struct urb *purb, struct pt_regs *regs)
+#else
 static void dabusb_iso_complete (struct urb *purb)
+#endif
 {
 	pbuff_t b = purb->context;
 	pdabusb_t s = b->s;
@@ -192,7 +202,7 @@ static void dabusb_iso_complete (struct urb *purb)
 					err("dabusb_iso_complete: invalid len %d", len);
 			}
 			else
-				warn("dabusb_iso_complete: corrupted packet status: %d", purb->iso_frame_desc[i].status);
+				dev_warn(&purb->dev->dev, "dabusb_iso_complete: corrupted packet status: %d\n", purb->iso_frame_desc[i].status);
 		if (dst != purb->actual_length)
 			err("dst!=purb->actual_length:%d!=%d", dst, purb->actual_length);
 	}
@@ -289,7 +299,7 @@ static int dabusb_bulk (pdabusb_t s, pbulk_transfer_t pb)
 	}
 
 	if( ret == -EPIPE ) {
-		warn("CLEAR_FEATURE request to remove STALL condition.");
+		dev_warn(&s->usbdev->dev, "CLEAR_FEATURE request to remove STALL condition.\n");
 		if(usb_clear_halt(s->usbdev, usb_pipeendpoint(pipe)))
 			err("request failed");
 	}
@@ -298,8 +308,12 @@ static int dabusb_bulk (pdabusb_t s, pbulk_transfer_t pb)
 	return ret;
 }
 /* --------------------------------------------------------------------- */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+static int dabusb_writemem (pdabusb_t s, int pos, unsigned char *data, int len)
+#else
 static int dabusb_writemem (pdabusb_t s, int pos, const unsigned char *data,
 			    int len)
+#endif
 {
 	int ret;
 	unsigned char *transfer_buffer =  kmalloc (len, GFP_KERNEL);
@@ -326,35 +340,63 @@ static int dabusb_8051_reset (pdabusb_t s, unsigned char reset_bit)
 static int dabusb_loadmem (pdabusb_t s, const char *fname)
 {
 	int ret;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	PINTEL_HEX_RECORD ptr = firmware;
+#else
 	const struct ihex_binrec *rec;
 	const struct firmware *fw;
+#endif
 
 	dbg("Enter dabusb_loadmem (internal)");
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	ret = request_ihex_firmware(&fw, "dabusb/firmware.fw", &s->usbdev->dev);
 	if (ret) {
 		err("Failed to load \"dabusb/firmware.fw\": %d\n", ret);
 		goto out;
 	}
+#endif
 	ret = dabusb_8051_reset (s, 1);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	while (ptr->Type == 0) {
+#endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+		dbg("dabusb_writemem: %04X %p %d)", ptr->Address, ptr->Data, ptr->Length);
+#else
 	for (rec = (const struct ihex_binrec *)fw->data; rec;
 	     rec = ihex_next_binrec(rec)) {
 		dbg("dabusb_writemem: %04X %p %d)", be32_to_cpu(rec->addr),
 		    rec->data, be16_to_cpu(rec->len));
+#endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+		ret = dabusb_writemem (s, ptr->Address, ptr->Data, ptr->Length);
+#else
 		ret = dabusb_writemem(s, be32_to_cpu(rec->addr), rec->data,
 				       be16_to_cpu(rec->len));
+#endif
 		if (ret < 0) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+			err("dabusb_writemem failed (%d %04X %p %d)", ret, ptr->Address, ptr->Data, ptr->Length);
+#else
 			err("dabusb_writemem failed (%d %04X %p %d)", ret,
 			    be32_to_cpu(rec->addr), rec->data,
 			    be16_to_cpu(rec->len));
+#endif
 			break;
 		}
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+		ptr++;
+#endif
 	}
 	ret = dabusb_8051_reset (s, 0);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+
+#else
 	release_firmware(fw);
  out:
+#endif
 	dbg("dabusb_loadmem: exit");
 
 	return ret;
@@ -389,9 +431,14 @@ static int dabusb_fpga_init (pdabusb_t s, pbulk_transfer_t b)
 static int dabusb_fpga_download (pdabusb_t s, const char *fname)
 {
 	pbulk_transfer_t b = kmalloc (sizeof (bulk_transfer_t), GFP_KERNEL);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	const struct firmware *fw;
+#endif
 	unsigned int blen, n;
 	int ret;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	unsigned char *buf = bitstream;
+#endif
 
 	dbg("Enter dabusb_fpga_download (internal)");
 
@@ -400,6 +447,7 @@ static int dabusb_fpga_download (pdabusb_t s, const char *fname)
 		return -ENOMEM;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	ret = request_firmware(&fw, "dabusb/bitstream.bin", &s->usbdev->dev);
 	if (ret) {
 		err("Failed to load \"dabusb/bitstream.bin\": %d\n", ret);
@@ -407,10 +455,15 @@ static int dabusb_fpga_download (pdabusb_t s, const char *fname)
 		return ret;
 	}
 
+#endif
 	b->pipe = 1;
 	ret = dabusb_fpga_clear (s, b);
 	mdelay (10);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	blen = buf[73] + (buf[72] << 8);
+#else
 	blen = fw->data[73] + (fw->data[72] << 8);
+#endif
 
 	dbg("Bitstream len: %i", blen);
 
@@ -422,7 +475,11 @@ static int dabusb_fpga_download (pdabusb_t s, const char *fname)
 	for (n = 0; n <= blen + 60; n += 60) {
 		// some cclks for startup
 		b->size = 64;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+		memcpy (b->data + 4, buf + 74 + n, 60);
+#else
 		memcpy (b->data + 4, fw->data + 74 + n, 60);
+#endif
 		ret = dabusb_bulk (s, b);
 		if (ret < 0) {
 			err("dabusb_bulk failed.");
@@ -433,7 +490,9 @@ static int dabusb_fpga_download (pdabusb_t s, const char *fname)
 
 	ret = dabusb_fpga_init (s, b);
 	kfree (b);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	release_firmware(fw);
+#endif
 
 	dbg("exit dabusb_fpga_download");
 
@@ -716,7 +775,11 @@ static int dabusb_ioctl (struct inode *inode, struct file *file, unsigned int cm
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 17)
 static const struct file_operations dabusb_fops =
+#else
+static struct file_operations dabusb_fops =
+#endif
 {
 	.owner =	THIS_MODULE,
 	.llseek =	no_llseek,
@@ -866,7 +929,8 @@ static int __init dabusb_init (void)
 
 	dbg("dabusb_init: driver registered");
 
-	info(DRIVER_VERSION ":" DRIVER_DESC);
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
 
 out:
 	return retval;

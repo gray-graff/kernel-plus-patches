@@ -134,34 +134,56 @@ static int reg_clear(struct soc_camera_device *icd, const u8 reg,
 static int mt9v022_init(struct soc_camera_device *icd)
 {
 	struct mt9v022 *mt9v022 = container_of(icd, struct mt9v022, icd);
+	struct soc_camera_link *icl = mt9v022->client->dev.platform_data;
 	int ret;
+
+	if (icl->power) {
+		ret = icl->power(&mt9v022->client->dev, 1);
+		if (ret < 0) {
+			dev_err(icd->vdev->parent,
+				"Platform failed to power-on the camera.\n");
+			return ret;
+		}
+	}
+
+	/*
+	 * The camera could have been already on, we hard-reset it additionally,
+	 * if available. Soft reset is done in video_probe().
+	 */
+	if (icl->reset)
+		icl->reset(&mt9v022->client->dev);
 
 	/* Almost the default mode: master, parallel, simultaneous, and an
 	 * undocumented bit 0x200, which is present in table 7, but not in 8,
 	 * plus snapshot mode to disable scan for now */
 	mt9v022->chip_control |= 0x10;
 	ret = reg_write(icd, MT9V022_CHIP_CONTROL, mt9v022->chip_control);
-	if (ret >= 0)
-		reg_write(icd, MT9V022_READ_MODE, 0x300);
+	if (!ret)
+		ret = reg_write(icd, MT9V022_READ_MODE, 0x300);
 
 	/* All defaults */
-	if (ret >= 0)
+	if (!ret)
 		/* AEC, AGC on */
 		ret = reg_set(icd, MT9V022_AEC_AGC_ENABLE, 0x3);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_MAX_TOTAL_SHUTTER_WIDTH, 480);
-	if (ret >= 0)
+	if (!ret)
 		/* default - auto */
 		ret = reg_clear(icd, MT9V022_BLACK_LEVEL_CALIB_CTRL, 1);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_DIGITAL_TEST_PATTERN, 0);
 
-	return ret >= 0 ? 0 : -EIO;
+	return ret;
 }
 
 static int mt9v022_release(struct soc_camera_device *icd)
 {
-	/* Nothing? */
+	struct mt9v022 *mt9v022 = container_of(icd, struct mt9v022, icd);
+	struct soc_camera_link *icl = mt9v022->client->dev.platform_data;
+
+	if (icl->power)
+		icl->power(&mt9v022->client->dev, 0);
+
 	return 0;
 }
 
@@ -315,14 +337,14 @@ static unsigned long mt9v022_query_bus_param(struct soc_camera_device *icd)
 		width_flag;
 }
 
-static int mt9v022_set_fmt_cap(struct soc_camera_device *icd,
-		__u32 pixfmt, struct v4l2_rect *rect)
+static int mt9v022_set_fmt(struct soc_camera_device *icd,
+			   __u32 pixfmt, struct v4l2_rect *rect)
 {
 	struct mt9v022 *mt9v022 = container_of(icd, struct mt9v022, icd);
 	int ret;
 
 	/* The caller provides a supported format, as verified per call to
-	 * icd->try_fmt_cap(), datawidth is from our supported format list */
+	 * icd->try_fmt(), datawidth is from our supported format list */
 	switch (pixfmt) {
 	case V4L2_PIX_FMT_GREY:
 	case V4L2_PIX_FMT_Y16:
@@ -352,21 +374,21 @@ static int mt9v022_set_fmt_cap(struct soc_camera_device *icd,
 					rect->height + icd->y_skip_top + 43);
 	}
 	/* Setup frame format: defaults apart from width and height */
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_COLUMN_START, rect->left);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_ROW_START, rect->top);
-	if (ret >= 0)
+	if (!ret)
 		/* Default 94, Phytec driver says:
 		 * "width + horizontal blank >= 660" */
 		ret = reg_write(icd, MT9V022_HORIZONTAL_BLANKING,
 				rect->width > 660 - 43 ? 43 :
 				660 - rect->width);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_VERTICAL_BLANKING, 45);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_WINDOW_WIDTH, rect->width);
-	if (ret >= 0)
+	if (!ret)
 		ret = reg_write(icd, MT9V022_WINDOW_HEIGHT,
 				rect->height + icd->y_skip_top);
 
@@ -378,8 +400,8 @@ static int mt9v022_set_fmt_cap(struct soc_camera_device *icd,
 	return 0;
 }
 
-static int mt9v022_try_fmt_cap(struct soc_camera_device *icd,
-			       struct v4l2_format *f)
+static int mt9v022_try_fmt(struct soc_camera_device *icd,
+			   struct v4l2_format *f)
 {
 	if (f->fmt.pix.height < 32 + icd->y_skip_top)
 		f->fmt.pix.height = 32 + icd->y_skip_top;
@@ -516,8 +538,8 @@ static struct soc_camera_ops mt9v022_ops = {
 	.release		= mt9v022_release,
 	.start_capture		= mt9v022_start_capture,
 	.stop_capture		= mt9v022_stop_capture,
-	.set_fmt_cap		= mt9v022_set_fmt_cap,
-	.try_fmt_cap		= mt9v022_try_fmt_cap,
+	.set_fmt		= mt9v022_set_fmt,
+	.try_fmt		= mt9v022_try_fmt,
 	.set_bus_param		= mt9v022_set_bus_param,
 	.query_bus_param	= mt9v022_query_bus_param,
 	.controls		= mt9v022_controls,
@@ -717,7 +739,7 @@ static int mt9v022_video_probe(struct soc_camera_device *icd)
 			icd->num_formats = 1;
 	}
 
-	if (ret >= 0)
+	if (!ret)
 		ret = soc_camera_video_start(icd);
 	if (ret < 0)
 		goto eisis;
@@ -815,11 +837,13 @@ static int mt9v022_remove(struct i2c_client *client)
 
 	return 0;
 }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id mt9v022_id[] = {
 	{ "mt9v022", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, mt9v022_id);
+#endif
 
 static struct i2c_driver mt9v022_i2c_driver = {
 	.driver = {
@@ -827,7 +851,9 @@ static struct i2c_driver mt9v022_i2c_driver = {
 	},
 	.probe		= mt9v022_probe,
 	.remove		= mt9v022_remove,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table	= mt9v022_id,
+#endif
 };
 
 static int __init mt9v022_mod_init(void)

@@ -252,9 +252,6 @@ static int uvc_v4l2_set_format(struct uvc_video_device *video,
 	if (ret < 0)
 		return ret;
 
-	if ((ret = uvc_set_video_ctrl(video, &probe, 0)) < 0)
-		return ret;
-
 	memcpy(&video->streaming->ctrl, &probe, sizeof probe);
 	video->streaming->cur_format = format;
 	video->streaming->cur_frame = frame;
@@ -313,10 +310,6 @@ static int uvc_v4l2_set_streamparm(struct uvc_video_device *video,
 
 	/* Probe the device with the new settings. */
 	if ((ret = uvc_probe_video(video, &probe)) < 0)
-		return ret;
-
-	/* Commit the new settings. */
-	if ((ret = uvc_set_video_ctrl(video, &probe, 0)) < 0)
 		return ret;
 
 	memcpy(&video->streaming->ctrl, &probe, sizeof probe);
@@ -400,29 +393,31 @@ static int uvc_has_privileges(struct uvc_fh *handle)
 
 static int uvc_v4l2_open(struct inode *inode, struct file *file)
 {
-	struct video_device *vdev;
 	struct uvc_video_device *video;
 	struct uvc_fh *handle;
 	int ret = 0;
 
 	uvc_trace(UVC_TRACE_CALLS, "uvc_v4l2_open\n");
 	mutex_lock(&uvc_driver.open_mutex);
-	vdev = video_devdata(file);
-	video = video_get_drvdata(vdev);
+	video = video_drvdata(file);
 
 	if (video->dev->state & UVC_DEV_DISCONNECTED) {
 		ret = -ENODEV;
 		goto done;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 	ret = usb_autopm_get_interface(video->dev->intf);
 	if (ret < 0)
 		goto done;
+#endif
 
 	/* Create the device handle. */
 	handle = kzalloc(sizeof *handle, GFP_KERNEL);
 	if (handle == NULL) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 		usb_autopm_put_interface(video->dev->intf);
+#endif
 		ret = -ENOMEM;
 		goto done;
 	}
@@ -440,8 +435,7 @@ done:
 
 static int uvc_v4l2_release(struct inode *inode, struct file *file)
 {
-	struct video_device *vdev = video_devdata(file);
-	struct uvc_video_device *video = video_get_drvdata(vdev);
+	struct uvc_video_device *video = video_drvdata(file);
 	struct uvc_fh *handle = (struct uvc_fh *)file->private_data;
 
 	uvc_trace(UVC_TRACE_CALLS, "uvc_v4l2_release\n");
@@ -462,21 +456,19 @@ static int uvc_v4l2_release(struct inode *inode, struct file *file)
 	kfree(handle);
 	file->private_data = NULL;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 	usb_autopm_put_interface(video->dev->intf);
+#endif
 	kref_put(&video->dev->kref, uvc_delete);
 	return 0;
 }
 
-static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
-		     unsigned int cmd, void *arg)
+static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_video_device *video = video_get_drvdata(vdev);
 	struct uvc_fh *handle = (struct uvc_fh *)file->private_data;
 	int ret = 0;
-
-	if (uvc_trace_param & UVC_TRACE_IOCTL)
-		v4l_printk_ioctl(cmd);
 
 	switch (cmd) {
 	/* Query capabilities */
@@ -845,10 +837,6 @@ static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
 		if (ret < 0)
 			return ret;
 
-		if (!(video->streaming->cur_format->flags &
-		    UVC_FMT_FLAG_COMPRESSED))
-			video->queue.flags |= UVC_QUEUE_DROP_INCOMPLETE;
-
 		rb->count = ret;
 		ret = 0;
 		break;
@@ -932,7 +920,7 @@ static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
-		info = kmalloc(sizeof *info, GFP_KERNEL);
+		info = kzalloc(sizeof *info, GFP_KERNEL);
 		if (info == NULL)
 			return -ENOMEM;
 
@@ -959,7 +947,7 @@ static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
-		map = kmalloc(sizeof *map, GFP_KERNEL);
+		map = kzalloc(sizeof *map, GFP_KERNEL);
 		if (map == NULL)
 			return -ENOMEM;
 
@@ -985,7 +973,7 @@ static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
 		return uvc_xu_ctrl_query(video, arg, 1);
 
 	default:
-		if ((ret = v4l_compat_translate_ioctl(inode, file, cmd, arg,
+		if ((ret = v4l_compat_translate_ioctl(file, cmd, arg,
 			uvc_v4l2_do_ioctl)) == -ENOIOCTLCMD)
 			uvc_trace(UVC_TRACE_IOCTL, "Unknown ioctl 0x%08x\n",
 				  cmd);
@@ -998,8 +986,13 @@ static int uvc_v4l2_do_ioctl(struct inode *inode, struct file *file,
 static int uvc_v4l2_ioctl(struct inode *inode, struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
-	uvc_trace(UVC_TRACE_CALLS, "uvc_v4l2_ioctl\n");
-	return video_usercopy(inode, file, cmd, arg, uvc_v4l2_do_ioctl);
+	if (uvc_trace_param & UVC_TRACE_IOCTL) {
+		uvc_printk(KERN_DEBUG, "uvc_v4l2_ioctl(");
+		v4l_printk_ioctl(cmd);
+		printk(")\n");
+	}
+
+	return video_usercopy(file, cmd, arg, uvc_v4l2_do_ioctl);
 }
 
 static ssize_t uvc_v4l2_read(struct file *file, char __user *data,
@@ -1031,8 +1024,7 @@ static struct vm_operations_struct uvc_vm_ops = {
 
 static int uvc_v4l2_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct video_device *vdev = video_devdata(file);
-	struct uvc_video_device *video = video_get_drvdata(vdev);
+	struct uvc_video_device *video = video_drvdata(file);
 	struct uvc_buffer *uninitialized_var(buffer);
 	struct page *page;
 	unsigned long addr, start, size;
@@ -1085,8 +1077,7 @@ done:
 
 static unsigned int uvc_v4l2_poll(struct file *file, poll_table *wait)
 {
-	struct video_device *vdev = video_devdata(file);
-	struct uvc_video_device *video = video_get_drvdata(vdev);
+	struct uvc_video_device *video = video_drvdata(file);
 
 	uvc_trace(UVC_TRACE_CALLS, "uvc_v4l2_poll\n");
 

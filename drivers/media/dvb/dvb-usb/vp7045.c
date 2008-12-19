@@ -150,6 +150,14 @@ static struct dvb_usb_rc_key vp7045_rc_keys[] = {
 	{ 0x00, 0x53, KEY_GREEN},
 	{ 0x00, 0x5e, KEY_YELLOW},
 	{ 0x00, 0x5f, KEY_BLUE}
+#if 0
+	/* not sure which linux key codes to use for the following buttons: */
+	{ 0x00, 0x46, ???}, /* Zoom- */
+	{ 0x00, 0x0e, ???}, /* Recall */
+	{ 0x00, 0x49, ???}, /* L/R */
+	{ 0x00, 0x47, ???}, /* PIP */
+	{ 0x00, 0x50, ???}, /* SAP */
+#endif
 };
 
 static int vp7045_rc_query(struct dvb_usb_device *d, u32 *event, int *state)

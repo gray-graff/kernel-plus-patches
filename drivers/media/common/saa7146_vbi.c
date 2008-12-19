@@ -1,4 +1,5 @@
 #include <media/saa7146_vv.h>
+#include "compat.h"
 
 static int vbi_pixel_to_capture = 720 * 2;
 

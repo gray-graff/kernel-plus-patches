@@ -23,6 +23,7 @@
 
 #include <linux/version.h>
 #include <linux/usb.h>
+#include "compat.h"
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <linux/device.h>

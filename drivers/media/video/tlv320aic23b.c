@@ -32,6 +32,7 @@
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
+#include "compat.h"
 
 MODULE_DESCRIPTION("tlv320aic23b driver");
 MODULE_AUTHOR("Scott Alfter, Ulf Eklund, Hans Verkuil");
@@ -167,11 +168,13 @@ static int tlv320aic23b_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id tlv320aic23b_id[] = {
 	{ "tlv320aic23b", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tlv320aic23b_id);
+#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "tlv320aic23b",
@@ -179,5 +182,7 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = tlv320aic23b_command,
 	.probe = tlv320aic23b_probe,
 	.remove = tlv320aic23b_remove,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = tlv320aic23b_id,
+#endif
 };

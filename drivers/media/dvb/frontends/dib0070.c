@@ -9,6 +9,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/i2c.h>
+#include "compat.h"
 
 #include "dvb_frontend.h"
 
@@ -527,7 +528,22 @@ static int dib0070_reset(struct dib0070_state *state)
 	else
 		dib0070_set_ctrl_lo5(state->fe, 4, 4, 2, 0);
 
+#if 0
+	/* BBFilter calib disabled until further notice */
+
+	dib0070_write_reg(state, 0x1e, 0x0010);
+	msleep(10);
+	r = dib0070_read_reg(state, 0x1e) >> 6;
+
+	if (r == 0)
+		r = 54;
+	else
+		r = (u16) (149 - (r * 3112) / state->cfg->clock_khz);
+
+	dib0070_write_reg(state, 0x01, (r << 9) | 0xc8);
+#else
 	dib0070_write_reg(state, 0x01, (54 << 9) | 0xc8);
+#endif
 	return 0;
 }
 

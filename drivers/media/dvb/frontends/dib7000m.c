@@ -10,6 +10,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/i2c.h>
+#include "compat.h"
 
 #include "dvb_frontend.h"
 
@@ -319,6 +320,40 @@ static int dib7000m_set_diversity_in(struct dvb_frontend *demod, int onoff)
 
 static int dib7000m_sad_calib(struct dib7000m_state *state)
 {
+#if 0
+	double ref,x;
+/* external */
+	dib7000m_write_word(state, 928, (1 << 14) | (3 << 12) | (524 << 0));
+	dib7000m_write_word(state, 929, (1 << 1) | (0 << 0));
+	dib7000m_write_word(state, 930, 4096);
+	msleep(1);
+
+	ref = dib7000m_read_word(state, 934);
+	x =  0.625/3.3 * (4096.0/ref);
+
+	dprintk( "ref: %g = %g (%x)", ref, x, (int) (x * 8192.0) / 2);
+
+	dib7000m_write_word(state, 930, (int) (x * 8192.0) / 2);
+
+	dib7000m_write_word(state, 928, (0 << 14) | (1 << 12) | (524 << 0));
+
+	msleep(1);
+
+	ref = dib7000m_read_word(state, 932);
+	dprintk( "wbd voltage: %g = %g", ref, ref/4096.0 * 3.3);
+	msleep(1);
+	ref = dib7000m_read_word(state, 932);
+	dprintk( "wbd voltage: %g = %g", ref, ref/4096.0 * 3.3);
+	msleep(1);
+	ref = dib7000m_read_word(state, 932);
+	dprintk( "wbd voltage: %g = %g", ref, ref/4096.0 * 3.3);
+	msleep(1);
+	ref = dib7000m_read_word(state, 932);
+	dprintk( "wbd voltage: %g = %g", ref, ref/4096.0 * 3.3);
+	msleep(1);
+	ref = dib7000m_read_word(state, 932);
+	dprintk( "wbd voltage: %g = %g", ref, ref/4096.0 * 3.3);
+#else
 
 /* internal */
 //	dib7000m_write_word(state, 928, (3 << 14) | (1 << 12) | (524 << 0)); // sampling clock of the SAD is writting in set_bandwidth
@@ -330,6 +365,7 @@ static int dib7000m_sad_calib(struct dib7000m_state *state)
 	dib7000m_write_word(state, 929, (0 << 0));
 
 	msleep(1);
+#endif
 
 	return 0;
 }
@@ -1284,7 +1320,10 @@ struct i2c_adapter * dib7000m_get_i2c_master(struct dvb_frontend *demod, enum di
 }
 EXPORT_SYMBOL(dib7000m_get_i2c_master);
 
-int dib7000m_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods, u8 default_addr, struct dib7000m_config cfg[])
+#if 0 /* keep */
+/* used with some prototype boards */
+int dib7000m_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods,
+		u8 default_addr, struct dib7000m_config cfg[])
 {
 	struct dib7000m_state st = { .i2c_adap = i2c };
 	int k = 0;
@@ -1329,6 +1368,7 @@ int dib7000m_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods, u8 defau
 	return 0;
 }
 EXPORT_SYMBOL(dib7000m_i2c_enumeration);
+#endif
 
 static struct dvb_frontend_ops dib7000m_ops;
 struct dvb_frontend * dib7000m_attach(struct i2c_adapter *i2c_adap, u8 i2c_addr, struct dib7000m_config *cfg)

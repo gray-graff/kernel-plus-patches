@@ -11,6 +11,7 @@
 #include <media/tuner.h>
 #include "tuner-i2c.h"
 #include "tda9887.h"
+#include "compat.h"
 
 
 /* Chips:
@@ -180,11 +181,10 @@ static struct tvnorm tvnorms[] = {
 	},{
 		.std   = V4L2_STD_SECAM_B | V4L2_STD_SECAM_G | V4L2_STD_SECAM_H,
 		.name  = "SECAM-BGH",
-		.b     = ( cPositiveAmTV  |
+		.b     = ( cNegativeFmTV  |
 			   cQSS           ),
 		.c     = ( cTopDefault),
-		.e     = ( cGating_36	  |
-			   cAudioIF_5_5   |
+		.e     = ( cAudioIF_5_5   |
 			   cVideoIF_38_90 ),
 	},{
 		.std   = V4L2_STD_SECAM_L,
@@ -686,7 +686,6 @@ struct dvb_frontend *tda9887_attach(struct dvb_frontend *fe,
 	case 0:
 		mutex_unlock(&tda9887_list_mutex);
 		return NULL;
-		break;
 	case 1:
 		fe->analog_demod_priv = priv;
 		priv->mode = T_STANDBY;

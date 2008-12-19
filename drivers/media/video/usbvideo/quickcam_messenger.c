@@ -33,10 +33,15 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/input.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
+#else
+#include <linux/usb_input.h>
+#endif
 
 #include "usbvideo.h"
 #include "quickcam_messenger.h"
+#include "compat.h"
 
 /*
  * Version Information
@@ -93,22 +98,27 @@ static void qcm_register_input(struct qcm *cam, struct usb_device *dev)
 
 	cam->input = input_dev = input_allocate_device();
 	if (!input_dev) {
-		warn("insufficient mem for cam input device");
+		dev_warn(&dev->dev, "insufficient mem for cam input device\n");
 		return;
 	}
 
 	input_dev->name = "QCM button";
 	input_dev->phys = cam->input_physname;
 	usb_to_input_id(dev, &input_dev->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->dev;
+#else
+	input_dev->cdev.dev = &dev->dev;
+#endif
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY);
 	input_dev->keybit[BIT_WORD(BTN_0)] = BIT_MASK(BTN_0);
 
 	error = input_register_device(cam->input);
 	if (error) {
-		warn("Failed to register camera's input device, err: %d\n",
-		     error);
+		dev_warn(&dev->dev,
+			 "Failed to register camera's input device, err: %d\n",
+			 error);
 		input_free_device(cam->input);
 		cam->input = NULL;
 	}
@@ -130,7 +140,11 @@ static void qcm_report_buttonstat(struct qcm *cam)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void qcm_int_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void qcm_int_irq(struct urb *urb)
+#endif
 {
 	int ret;
 	struct uvd *uvd = urb->context;
@@ -587,8 +601,9 @@ static int qcm_compress_iso(struct uvd *uvd, struct urb *dataurb)
 			dataurb->iso_frame_desc[i].offset;
 
 		if (st < 0) {
-			warn("Data error: packet=%d. len=%d. status=%d.",
-			      i, n, st);
+			dev_warn(&uvd->dev->dev,
+				 "Data error: packet=%d. len=%d. status=%d.\n",
+				 i, n, st);
 			uvd->stats.iso_err_count++;
 			continue;
 		}
@@ -610,7 +625,11 @@ static void resubmit_urb(struct uvd *uvd, struct urb *urb)
 		err("usb_submit_urb error (%d)", ret);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void qcm_isoc_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void qcm_isoc_irq(struct urb *urb)
+#endif
 {
 	int len;
 	struct uvd *uvd = urb->context;
@@ -699,7 +718,7 @@ static void qcm_stop_data(struct uvd *uvd)
 
 	ret = qcm_camera_off(uvd);
 	if (ret)
-		warn("couldn't turn the cam off.");
+		dev_warn(&uvd->dev->dev, "couldn't turn the cam off.\n");
 
 	uvd->streaming = 0;
 
@@ -1080,7 +1099,8 @@ static struct usbvideo_cb qcm_driver = {
 
 static int __init qcm_init(void)
 {
-	info(DRIVER_DESC " " DRIVER_VERSION);
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
 
 	return usbvideo_register(
 		&cams,

@@ -6,17 +6,29 @@
  * This file contains functions for initializing the input-device and for handling remote-control-queries.
  */
 #include "dvb-usb-common.h"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
+#else
+#include <linux/usb_input.h>
+#endif
 
 /* Remote-control poll function - called every dib->rc_query_interval ms to see
  * whether the remote control has received anything.
  *
  * TODO: Fix the repeat rate of the input device.
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void dvb_usb_read_remote_control(void *data)
+#else
 static void dvb_usb_read_remote_control(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct dvb_usb_device *d = data;
+#else
 	struct dvb_usb_device *d =
 		container_of(work, struct dvb_usb_device, rc_query_work.work);
+#endif
 	u32 event;
 	int state;
 
@@ -110,7 +122,11 @@ int dvb_usb_remote_init(struct dvb_usb_device *d)
 	input_dev->name = "IR-receiver inside an USB DVB receiver";
 	input_dev->phys = d->rc_phys;
 	usb_to_input_id(d->udev, &input_dev->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &d->udev->dev;
+#else
+	input_dev->cdev.dev = &d->udev->dev;
+#endif
 
 	/* set the bits for the keys */
 	deb_rc("key map size: %d\n", d->props.rc_key_map_size);
@@ -136,7 +152,11 @@ int dvb_usb_remote_init(struct dvb_usb_device *d)
 
 	d->rc_input_dev = input_dev;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&d->rc_query_work, dvb_usb_read_remote_control, d);
+#else
 	INIT_DELAYED_WORK(&d->rc_query_work, dvb_usb_read_remote_control);
+#endif
 
 	info("schedule remote query interval to %d msecs.", d->props.rc_interval);
 	schedule_delayed_work(&d->rc_query_work,msecs_to_jiffies(d->props.rc_interval));

@@ -37,6 +37,7 @@
 #include "dvb_frontend.h"
 #include "s5h1420.h"
 #include "s5h1420_priv.h"
+#include "compat.h"
 
 #define TONE_FREQ 22000
 
@@ -410,6 +411,10 @@ static int s5h1420_read_status(struct dvb_frontend* fe, fe_status_t* status)
 		s5h1420_writereg(state, QPSK01, val);
 
 		/* DC freeze TODO it was never activated by default or it can stay activated */
+#if 0
+		val = s5h1420_readreg(state, 0x1f);
+		s5h1420_writereg(state, 0x1f, val | 0x01);
+#endif
 
 		if (s5h1420_getsymbolrate(state) >= 20000000) {
 			s5h1420_writereg(state, Loop04, 0x8a);
@@ -497,6 +502,33 @@ static void s5h1420_setsymbolrate(struct s5h1420_state* state,
 
 static u32 s5h1420_getsymbolrate(struct s5h1420_state* state)
 {
+#if 0
+	/* TODO getsymbolrate gives strange values - something is wrong with
+	 * configuring the read
+	 */
+
+	u64 val = 0;
+	u8 v;
+	int sampling = 2;
+
+	v = s5h1420_readreg(state, QPSK02);
+	s5h1420_writereg(state, QPSK02, v | 0x08);
+	val  = s5h1420_readreg(state, Tnco01) << 16;
+	val |= s5h1420_readreg(state, Tnco02) << 8;
+	val |= s5h1420_readreg(state, Tnco03);
+	s5h1420_writereg(state, QPSK02, v & 0xf7);
+
+	dprintk("get_symbolrate: raw: %x\n",  val);
+
+	val *= (state->fclk / 1000);
+	if (s5h1420_readreg(state, QPSK01) & 0x2)
+		do_div(val, 1 << 24);
+	else
+		do_div(val, 1 << 25);
+
+	dprintk("get_symbolrate: %d\n", (u32) (val * 1000ULL));
+	return (u32) (val * 1000ULL);
+#endif
 	return state->symbol_rate;
 }
 
@@ -873,6 +905,9 @@ static int s5h1420_tuner_i2c_tuner_xfer(struct i2c_adapter *i2c_adap, struct i2c
 static struct i2c_algorithm s5h1420_tuner_i2c_algo = {
 	.master_xfer   = s5h1420_tuner_i2c_tuner_xfer,
 	.functionality = s5h1420_tuner_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 struct i2c_adapter *s5h1420_get_tuner_i2c_adapter(struct dvb_frontend *fe)

@@ -34,6 +34,7 @@
 #ifdef CONFIG_VIDEO_PVRUSB2_SYSFS
 #include "pvrusb2-sysfs.h"
 #endif /* CONFIG_VIDEO_PVRUSB2_SYSFS */
+#include "compat.h"
 
 #define DRIVER_AUTHOR "Mike Isely <isely@pobox.com>"
 #define DRIVER_DESC "Hauppauge WinTV-PVR-USB2 MPEG2 Encoder/Tuner"
@@ -137,9 +138,11 @@ static int __init pvr_init(void)
 	ret = usb_register(&pvr_driver);
 
 	if (ret == 0)
-		info(DRIVER_DESC " : " DRIVER_VERSION);
-	if (pvrusb2_debug) info("Debug mask is %d (0x%x)",
-				pvrusb2_debug,pvrusb2_debug);
+		printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+		       DRIVER_DESC "\n");
+	if (pvrusb2_debug)
+		printk(KERN_INFO KBUILD_MODNAME ": Debug mask is %d (0x%x)\n",
+		       pvrusb2_debug,pvrusb2_debug);
 
 	pvr2_trace(PVR2_TRACE_INIT,"pvr_init complete");
 

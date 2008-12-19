@@ -26,6 +26,7 @@
 #include "pvrusb2-hdw-internal.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
+#include "compat.h"
 
 
 
@@ -154,6 +155,27 @@ static int pvr2_encoder_cmd(void *ctxt,
 	u32 rdData[16];
 	struct pvr2_hdw *hdw = (struct pvr2_hdw *)ctxt;
 
+#if 0
+	{
+		char buf[150];
+		unsigned int ccnt,bcnt;
+
+		bcnt = scnprintf(buf,sizeof(buf),"Encoder Cmd %02x (",cmd);
+		for (idx = 0; idx < arg_cnt_send; idx++) {
+			if (idx) {
+				ccnt = scnprintf(buf+bcnt,
+						 sizeof(buf)-bcnt," ");
+				bcnt += ccnt;
+			}
+			ccnt = scnprintf(buf+bcnt,sizeof(buf)-bcnt,
+					 "0x%x",argp[idx]);
+			bcnt += ccnt;
+		}
+		ccnt = scnprintf(buf+bcnt,sizeof(buf)-bcnt,")");
+		bcnt += ccnt;
+		pvr2_trace(PVR2_TRACE_ENCODER,"%.*s",bcnt,buf);
+	}
+#endif
 
 	/*
 
@@ -298,6 +320,17 @@ static int pvr2_encoder_cmd(void *ctxt,
 			break;
 		}
 		wrData[0] = 0x7;
+#if 0
+		for (idx = 0; idx < args; idx++) {
+			if (rdData[idx] != wrData[idx]) {
+				pvr2_trace(
+					PVR2_TRACE_DEBUG,
+					"pvr2_encoder idx %02x mismatch exp:"
+					" %08x got: %08x",
+					idx,wrData[idx],rdData[idx]);
+			}
+		}
+#endif
 		for (idx = 0; idx < arg_cnt_recv; idx++) {
 			argp[idx] = rdData[idx+4];
 		}
@@ -346,7 +379,7 @@ static int pvr2_encoder_prep_config(struct pvr2_hdw *hdw)
 	int ret = 0;
 	int encMisc3Arg = 0;
 
-#if 0
+#if 0 /* keep */
 	/* This inexplicable bit happens in the Hauppage windows
 	   driver (for both 24xxx and 29xxx devices).  However I
 	   currently see no difference in behavior with or without
@@ -368,7 +401,7 @@ static int pvr2_encoder_prep_config(struct pvr2_hdw *hdw)
 	   breaks up for a moment (like when switching channels). */
 
 
-#if 0
+#if 0 /* keep */
 	/* This ENC_MISC(5,0) command seems to hurt 29xxx sync
 	   performance on channel changes, but is not a problem on
 	   24xxx devices. */
@@ -390,7 +423,7 @@ static int pvr2_encoder_prep_config(struct pvr2_hdw *hdw)
 
 	ret |= pvr2_encoder_vcmd(hdw, CX2341X_ENC_MISC,4, 8,0,0,0);
 
-#if 0
+#if 0 /* keep */
 	/* This ENC_MISC(4,1) command is poisonous, so it is commented
 	   out.  But I'm leaving it here anyway to document its
 	   existence in the Windows driver.  The effect of this
@@ -401,6 +434,10 @@ static int pvr2_encoder_prep_config(struct pvr2_hdw *hdw)
 
 	ret |= pvr2_encoder_vcmd(hdw, CX2341X_ENC_MISC,4, 0,3,0,0);
 	ret |= pvr2_encoder_vcmd(hdw, CX2341X_ENC_MISC,4,15,0,0,0);
+
+	/* prevent the PTSs from slowly drifting away in the generated
+	   MPEG stream */
+	ret |= pvr2_encoder_vcmd(hdw, CX2341X_ENC_MISC, 2, 4, 1);
 
 	return ret;
 }

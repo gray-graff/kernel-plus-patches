@@ -35,6 +35,7 @@
 #include "pvrusb2-encoder.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
+#include "compat.h"
 
 #define TV_MIN_FREQ     55250000L
 #define TV_MAX_FREQ    850000000L
@@ -60,7 +61,6 @@ static struct pvr2_hdw *unit_pointers[PVR_NUM] = {[ 0 ... PVR_NUM-1 ] = NULL};
 static DEFINE_MUTEX(pvr2_unit_mtx);
 
 static int ctlchg;
-static int initusbreset = 1;
 static int procreload;
 static int tuner[PVR_NUM] = { [0 ... PVR_NUM-1] = -1 };
 static int tolerance[PVR_NUM] = { [0 ... PVR_NUM-1] = 0 };
@@ -71,8 +71,6 @@ module_param(ctlchg, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(ctlchg, "0=optimize ctl change 1=always accept new ctl value");
 module_param(init_pause_msec, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(init_pause_msec, "hardware initialization settling delay");
-module_param(initusbreset, int, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(initusbreset, "Do USB reset device on probe");
 module_param(procreload, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(procreload,
 		 "Attempt init failure recovery with firmware reload");
@@ -298,6 +296,7 @@ static int pvr2_send_request_ex(struct pvr2_hdw *hdw,
 				unsigned int timeout,int probe_fl,
 				void *write_data,unsigned int write_len,
 				void *read_data,unsigned int read_len);
+static int pvr2_hdw_check_cropcap(struct pvr2_hdw *hdw);
 
 
 static void trace_stbit(const char *name,int val)
@@ -399,6 +398,194 @@ static void ctrl_freq_clear_dirty(struct pvr2_ctrl *cptr)
 static int ctrl_freq_set(struct pvr2_ctrl *cptr,int m,int v)
 {
 	pvr2_hdw_set_cur_freq(cptr->hdw,v);
+	return 0;
+}
+
+static int ctrl_cropl_min_get(struct pvr2_ctrl *cptr, int *left)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*left = cap->bounds.left;
+	return 0;
+}
+
+static int ctrl_cropl_max_get(struct pvr2_ctrl *cptr, int *left)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*left = cap->bounds.left;
+	if (cap->bounds.width > cptr->hdw->cropw_val) {
+		*left += cap->bounds.width - cptr->hdw->cropw_val;
+	}
+	return 0;
+}
+
+static int ctrl_cropt_min_get(struct pvr2_ctrl *cptr, int *top)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*top = cap->bounds.top;
+	return 0;
+}
+
+static int ctrl_cropt_max_get(struct pvr2_ctrl *cptr, int *top)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*top = cap->bounds.top;
+	if (cap->bounds.height > cptr->hdw->croph_val) {
+		*top += cap->bounds.height - cptr->hdw->croph_val;
+	}
+	return 0;
+}
+
+static int ctrl_cropw_max_get(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = 0;
+	if (cap->bounds.width > cptr->hdw->cropl_val) {
+		*val = cap->bounds.width - cptr->hdw->cropl_val;
+	}
+	return 0;
+}
+
+static int ctrl_croph_max_get(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = 0;
+	if (cap->bounds.height > cptr->hdw->cropt_val) {
+		*val = cap->bounds.height - cptr->hdw->cropt_val;
+	}
+	return 0;
+}
+
+static int ctrl_get_cropcapbl(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->bounds.left;
+	return 0;
+}
+
+static int ctrl_get_cropcapbt(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->bounds.top;
+	return 0;
+}
+
+static int ctrl_get_cropcapbw(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->bounds.width;
+	return 0;
+}
+
+static int ctrl_get_cropcapbh(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->bounds.height;
+	return 0;
+}
+
+static int ctrl_get_cropcapdl(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->defrect.left;
+	return 0;
+}
+
+static int ctrl_get_cropcapdt(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->defrect.top;
+	return 0;
+}
+
+static int ctrl_get_cropcapdw(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->defrect.width;
+	return 0;
+}
+
+static int ctrl_get_cropcapdh(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->defrect.height;
+	return 0;
+}
+
+static int ctrl_get_cropcappan(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->pixelaspect.numerator;
+	return 0;
+}
+
+static int ctrl_get_cropcappad(struct pvr2_ctrl *cptr, int *val)
+{
+	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	if (stat != 0) {
+		return stat;
+	}
+	*val = cap->pixelaspect.denominator;
 	return 0;
 }
 
@@ -779,6 +966,10 @@ VCREATE_FUNCS(balance)
 VCREATE_FUNCS(bass)
 VCREATE_FUNCS(treble)
 VCREATE_FUNCS(mute)
+VCREATE_FUNCS(cropl)
+VCREATE_FUNCS(cropt)
+VCREATE_FUNCS(cropw)
+VCREATE_FUNCS(croph)
 VCREATE_FUNCS(audiomode)
 VCREATE_FUNCS(res_hor)
 VCREATE_FUNCS(res_ver)
@@ -849,6 +1040,72 @@ static const struct pvr2_ctl_info control_defs[] = {
 		.default_value = 0,
 		DEFREF(mute),
 		DEFBOOL,
+	}, {
+		.desc = "Capture crop left margin",
+		.name = "crop_left",
+		.internal_id = PVR2_CID_CROPL,
+		.default_value = 0,
+		DEFREF(cropl),
+		DEFINT(-129, 340),
+		.get_min_value = ctrl_cropl_min_get,
+		.get_max_value = ctrl_cropl_max_get,
+		.get_def_value = ctrl_get_cropcapdl,
+	}, {
+		.desc = "Capture crop top margin",
+		.name = "crop_top",
+		.internal_id = PVR2_CID_CROPT,
+		.default_value = 0,
+		DEFREF(cropt),
+		DEFINT(-35, 544),
+		.get_min_value = ctrl_cropt_min_get,
+		.get_max_value = ctrl_cropt_max_get,
+		.get_def_value = ctrl_get_cropcapdt,
+	}, {
+		.desc = "Capture crop width",
+		.name = "crop_width",
+		.internal_id = PVR2_CID_CROPW,
+		.default_value = 720,
+		DEFREF(cropw),
+		.get_max_value = ctrl_cropw_max_get,
+		.get_def_value = ctrl_get_cropcapdw,
+	}, {
+		.desc = "Capture crop height",
+		.name = "crop_height",
+		.internal_id = PVR2_CID_CROPH,
+		.default_value = 480,
+		DEFREF(croph),
+		.get_max_value = ctrl_croph_max_get,
+		.get_def_value = ctrl_get_cropcapdh,
+	}, {
+		.desc = "Capture capability pixel aspect numerator",
+		.name = "cropcap_pixel_numerator",
+		.internal_id = PVR2_CID_CROPCAPPAN,
+		.get_value = ctrl_get_cropcappan,
+	}, {
+		.desc = "Capture capability pixel aspect denominator",
+		.name = "cropcap_pixel_denominator",
+		.internal_id = PVR2_CID_CROPCAPPAD,
+		.get_value = ctrl_get_cropcappad,
+	}, {
+		.desc = "Capture capability bounds top",
+		.name = "cropcap_bounds_top",
+		.internal_id = PVR2_CID_CROPCAPBT,
+		.get_value = ctrl_get_cropcapbt,
+	}, {
+		.desc = "Capture capability bounds left",
+		.name = "cropcap_bounds_left",
+		.internal_id = PVR2_CID_CROPCAPBL,
+		.get_value = ctrl_get_cropcapbl,
+	}, {
+		.desc = "Capture capability bounds width",
+		.name = "cropcap_bounds_width",
+		.internal_id = PVR2_CID_CROPCAPBW,
+		.get_value = ctrl_get_cropcapbw,
+	}, {
+		.desc = "Capture capability bounds height",
+		.name = "cropcap_bounds_height",
+		.internal_id = PVR2_CID_CROPCAPBH,
+		.get_value = ctrl_get_cropcapbh,
 	},{
 		.desc = "Video Source",
 		.name = "input",
@@ -1061,6 +1318,15 @@ static void pvr2_hdw_set_cur_freq(struct pvr2_hdw *hdw,unsigned long val)
 	}
 }
 
+#if 0
+struct pvr2_hdw *pvr2_hdw_find(int unit_number)
+{
+	if (unit_number < 0) return NULL;
+	if (unit_number >= PVR_NUM) return NULL;
+	return unit_pointers[unit_number];
+}
+
+#endif  /*  0  */
 int pvr2_hdw_get_unit_number(struct pvr2_hdw *hdw)
 {
 	return hdw->unit_number;
@@ -1313,9 +1579,19 @@ int pvr2_upload_firmware2(struct pvr2_hdw *hdw)
 		if (bcnt > FIRMWARE_CHUNK_SIZE) bcnt = FIRMWARE_CHUNK_SIZE;
 		memcpy(fw_ptr, fw_entry->data + fw_done, bcnt);
 		/* Usbsnoop log shows that we must swap bytes... */
+		/* Some background info: The data being swapped here is a
+		   firmware image destined for the mpeg encoder chip that
+		   lives at the other end of a USB endpoint.  The encoder
+		   chip always talks in 32 bit chunks and its storage is
+		   organized into 32 bit words.  However from the file
+		   system to the encoder chip everything is purely a byte
+		   stream.  The firmware file's contents are always 32 bit
+		   swapped from what the encoder expects.  Thus the need
+		   always exists to swap the bytes regardless of the endian
+		   type of the host processor and therefore swab32() makes
+		   the most sense. */
 		for (icnt = 0; icnt < bcnt/4 ; icnt++)
-			((u32 *)fw_ptr)[icnt] =
-				___swab32(((u32 *)fw_ptr)[icnt]);
+			((u32 *)fw_ptr)[icnt] = swab32(((u32 *)fw_ptr)[icnt]);
 
 		ret |= usb_bulk_msg(hdw->usb_dev, pipe, fw_ptr,bcnt,
 				    &actual_length, HZ);
@@ -1425,6 +1701,13 @@ int pvr2_hdw_untrip(struct pvr2_hdw *hdw)
 }
 
 
+#if 0
+const char *pvr2_hdw_get_state_name(unsigned int id)
+{
+	if (id >= ARRAY_SIZE(pvr2_state_names)) return NULL;
+	return pvr2_state_names[id];
+}
+#endif  /*  0  */
 
 
 int pvr2_hdw_get_streaming(struct pvr2_hdw *hdw)
@@ -1698,9 +1981,6 @@ static void pvr2_hdw_setup_low(struct pvr2_hdw *hdw)
 	}
 	hdw->fw1_state = FW1_STATE_OK;
 
-	if (initusbreset) {
-		pvr2_hdw_device_reset(hdw);
-	}
 	if (!pvr2_hdw_dev_ok(hdw)) return;
 
 	for (idx = 0; idx < hdw->hdw_desc->client_modules.cnt; idx++) {
@@ -1905,7 +2185,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 				 const struct usb_device_id *devid)
 {
 	unsigned int idx,cnt1,cnt2,m;
-	struct pvr2_hdw *hdw;
+	struct pvr2_hdw *hdw = NULL;
 	int valid_std_mask;
 	struct pvr2_ctrl *cptr;
 	const struct pvr2_device_desc *hdw_desc;
@@ -1914,6 +2194,16 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	struct pvr2_ctl_info *ciptr;
 
 	hdw_desc = (const struct pvr2_device_desc *)(devid->driver_info);
+
+	if (hdw_desc == NULL) {
+		pvr2_trace(PVR2_TRACE_INIT, "pvr2_hdw_create:"
+			   " No device description pointer,"
+			   " unable to continue.");
+		pvr2_trace(PVR2_TRACE_INIT, "If you have a new device type,"
+			   " please contact Mike Isely <isely@pobox.com>"
+			   " to get it included in the driver\n");
+		goto fail;
+	}
 
 	hdw = kzalloc(sizeof(*hdw),GFP_KERNEL);
 	pvr2_trace(PVR2_TRACE_INIT,"pvr2_hdw_create: hdw=%p, type \"%s\"",
@@ -2072,6 +2362,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 			valid_std_mask;
 	}
 
+	hdw->cropcap_stale = !0;
 	hdw->eeprom_addr = -1;
 	hdw->unit_number = -1;
 	hdw->v4l_minor_number_video = -1;
@@ -2107,8 +2398,15 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	hdw->name[cnt1] = 0;
 
 	hdw->workqueue = create_singlethread_workqueue(hdw->name);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&hdw->workpoll,(void (*)(void*))pvr2_hdw_worker_poll,
+		  &hdw->workpoll);
+	INIT_WORK(&hdw->worki2csync,(void (*)(void*))pvr2_hdw_worker_i2c,
+		  &hdw->worki2csync);
+#else
 	INIT_WORK(&hdw->workpoll,pvr2_hdw_worker_poll);
 	INIT_WORK(&hdw->worki2csync,pvr2_hdw_worker_i2c);
+#endif
 
 	pvr2_trace(PVR2_TRACE_INIT,"Driver unit number is %d, name is %s",
 		   hdw->unit_number,hdw->name);
@@ -2121,7 +2419,7 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 
 	scnprintf(hdw->bus_info,sizeof(hdw->bus_info),
 		  "usb %s address %d",
-		  hdw->usb_dev->dev.bus_id,
+		  dev_name(&hdw->usb_dev->dev),
 		  hdw->usb_dev->devnum);
 
 	ifnum = hdw->usb_intf->cur_altsetting->desc.bInterfaceNumber;
@@ -2508,6 +2806,28 @@ static int pvr2_hdw_commit_execute(struct pvr2_hdw *hdw)
 		/* Can't commit anything until pathway is ok. */
 		return 0;
 	}
+	/* The broadcast decoder can only scale down, so if
+	 * res_*_dirty && crop window < output format ==> enlarge crop.
+	 *
+	 * The mpeg encoder receives fields of res_hor_val dots and
+	 * res_ver_val halflines.  Limits: hor<=720, ver<=576.
+	 */
+	if (hdw->res_hor_dirty && hdw->cropw_val < hdw->res_hor_val) {
+		hdw->cropw_val = hdw->res_hor_val;
+		hdw->cropw_dirty = !0;
+	} else if (hdw->cropw_dirty) {
+		hdw->res_hor_dirty = !0;           /* must rescale */
+		hdw->res_hor_val = min(720, hdw->cropw_val);
+	}
+	if (hdw->res_ver_dirty && hdw->croph_val < hdw->res_ver_val) {
+		hdw->croph_val = hdw->res_ver_val;
+		hdw->croph_dirty = !0;
+	} else if (hdw->croph_dirty) {
+		int nvres = hdw->std_mask_cur & V4L2_STD_525_60 ? 480 : 576;
+		hdw->res_ver_dirty = !0;
+		hdw->res_ver_val = min(nvres, hdw->croph_val);
+	}
+
 	/* If any of the below has changed, then we can't do the update
 	   while the pipeline is running.  Pipeline must be paused first
 	   and decoder -> encoder connection be made quiescent before we
@@ -2518,6 +2838,8 @@ static int pvr2_hdw_commit_execute(struct pvr2_hdw *hdw)
 		 hdw->srate_dirty ||
 		 hdw->res_ver_dirty ||
 		 hdw->res_hor_dirty ||
+		 hdw->cropw_dirty ||
+		 hdw->croph_dirty ||
 		 hdw->input_dirty ||
 		 (hdw->active_stream_type != hdw->desired_stream_type));
 	if (disruptive_change && !hdw->state_pipeline_idle) {
@@ -2587,6 +2909,9 @@ static int pvr2_hdw_commit_execute(struct pvr2_hdw *hdw)
 	}
 
 	hdw->state_pipeline_config = !0;
+	/* Hardware state may have changed in a way to cause the cropping
+	   capabilities to have changed.  So mark it stale, which will
+	   cause a later re-fetch. */
 	trace_stbit("state_pipeline_config",hdw->state_pipeline_config);
 	return !0;
 }
@@ -2674,6 +2999,33 @@ void pvr2_hdw_execute_tuner_poll(struct pvr2_hdw *hdw)
 	LOCK_TAKE(hdw->big_lock); do {
 		pvr2_i2c_core_status_poll(hdw);
 	} while (0); LOCK_GIVE(hdw->big_lock);
+}
+
+
+static int pvr2_hdw_check_cropcap(struct pvr2_hdw *hdw)
+{
+	if (!hdw->cropcap_stale) {
+		return 0;
+	}
+	pvr2_i2c_core_status_poll(hdw);
+	if (hdw->cropcap_stale) {
+		return -EIO;
+	}
+	return 0;
+}
+
+
+/* Return information about cropping capabilities */
+int pvr2_hdw_get_cropcap(struct pvr2_hdw *hdw, struct v4l2_cropcap *pp)
+{
+	int stat = 0;
+	LOCK_TAKE(hdw->big_lock);
+	stat = pvr2_hdw_check_cropcap(hdw);
+	if (!stat) {
+		memcpy(pp, &hdw->cropcap_info, sizeof(hdw->cropcap_info));
+	}
+	LOCK_GIVE(hdw->big_lock);
+	return stat;
 }
 
 
@@ -2930,7 +3282,31 @@ void pvr2_hdw_v4l_store_minor_number(struct pvr2_hdw *hdw,
 }
 
 
+#if 0
+/* Attempt to recover from a USB foul-up (in practice I find that if you
+   have to do this, then it's already too late). */
+void pvr2_reset_ctl_endpoints(struct pvr2_hdw *hdw)
+{
+	if (!hdw->usb_dev) return;
+	usb_settoggle(hdw->usb_dev, PVR2_CTL_WRITE_ENDPOINT & 0xf,
+		      !(PVR2_CTL_WRITE_ENDPOINT & USB_DIR_IN), 0);
+	usb_settoggle(hdw->usb_dev, PVR2_CTL_READ_ENDPOINT & 0xf,
+		      !(PVR2_CTL_READ_ENDPOINT & USB_DIR_IN), 0);
+	usb_clear_halt(hdw->usb_dev,
+		       usb_rcvbulkpipe(hdw->usb_dev,
+				       PVR2_CTL_READ_ENDPOINT & 0x7f));
+	usb_clear_halt(hdw->usb_dev,
+		       usb_sndbulkpipe(hdw->usb_dev,
+				       PVR2_CTL_WRITE_ENDPOINT & 0x7f));
+}
+
+
+#endif  /*  0  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void pvr2_ctl_write_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void pvr2_ctl_write_complete(struct urb *urb)
+#endif
 {
 	struct pvr2_hdw *hdw = urb->context;
 	hdw->ctl_write_pend_flag = 0;
@@ -2939,7 +3315,11 @@ static void pvr2_ctl_write_complete(struct urb *urb)
 }
 
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void pvr2_ctl_read_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void pvr2_ctl_read_complete(struct urb *urb)
+#endif
 {
 	struct pvr2_hdw *hdw = urb->context;
 	hdw->ctl_read_pend_flag = 0;
@@ -3020,6 +3400,27 @@ static int pvr2_send_request_ex(struct pvr2_hdw *hdw,
 		return -EINVAL;
 	}
 
+#if 0
+	printk(KERN_INFO "pvrusb2: REQUEST BEGIN writeCnt=%u readCnt=%u",
+	       write_len,read_len);
+	if (probe_fl) {
+		printk(" <probe>");
+	}
+	for (idx = 0; idx < write_len; idx++) {
+		if (idx > 5) {
+			printk(" ...");
+			break;
+		}
+		if (idx) {
+			printk(" ");
+		} else {
+			printk(" [");
+		}
+		printk("%02x",((unsigned char *)write_data)[idx]);
+	}
+	if (write_len) printk("]");
+	printk("\n");
+#endif
 
 	hdw->cmd_debug_state = 1;
 	if (write_len) {
@@ -3184,6 +3585,25 @@ static int pvr2_send_request_ex(struct pvr2_hdw *hdw,
 	}
 
  done:
+#if 0
+	printk(KERN_INFO "pvrusb2: REQUEST END status=%d",status);
+	if (status >= 0) {
+		for (idx = 0; idx < read_len; idx++) {
+			if (idx > 5) {
+				printk(" ...");
+				break;
+			}
+			if (idx) {
+				printk(" ");
+			} else {
+				printk(" [");
+			}
+			printk("%02x",((unsigned char *)read_data)[idx]);
+		}
+		if (read_len) printk("]");
+	}
+	printk("\n");
+#endif
 
 	hdw->cmd_debug_state = 0;
 	if ((status < 0) && (!probe_fl)) {
@@ -4253,6 +4673,49 @@ static void pvr2_hdw_state_sched(struct pvr2_hdw *hdw)
 	queue_work(hdw->workqueue,&hdw->workpoll);
 }
 
+#if 0
+
+void pvr2_hdw_get_debug_info_unlocked(const struct pvr2_hdw *hdw,
+				      struct pvr2_hdw_debug_info *ptr)
+{
+	ptr->big_lock_held = hdw->big_lock_held;
+	ptr->ctl_lock_held = hdw->ctl_lock_held;
+	ptr->flag_disconnected = hdw->flag_disconnected;
+	ptr->flag_init_ok = hdw->flag_init_ok;
+	ptr->flag_ok = hdw->flag_ok;
+	ptr->fw1_state = hdw->fw1_state;
+	ptr->flag_decoder_missed = hdw->flag_decoder_missed;
+	ptr->flag_tripped = hdw->flag_tripped;
+	ptr->state_encoder_ok = hdw->state_encoder_ok;
+	ptr->state_encoder_run = hdw->state_encoder_run;
+	ptr->state_decoder_run = hdw->state_decoder_run;
+	ptr->state_usbstream_run = hdw->state_usbstream_run;
+	ptr->state_decoder_quiescent = hdw->state_decoder_quiescent;
+	ptr->state_pipeline_config = hdw->state_pipeline_config;
+	ptr->state_pipeline_req = hdw->state_pipeline_req;
+	ptr->state_pipeline_pause = hdw->state_pipeline_pause;
+	ptr->state_pipeline_idle = hdw->state_pipeline_idle;
+	ptr->cmd_debug_state = hdw->cmd_debug_state;
+	ptr->cmd_code = hdw->cmd_debug_code;
+	ptr->cmd_debug_write_len = hdw->cmd_debug_write_len;
+	ptr->cmd_debug_read_len = hdw->cmd_debug_read_len;
+	ptr->cmd_debug_timeout = hdw->ctl_timeout_flag;
+	ptr->cmd_debug_write_pend = hdw->ctl_write_pend_flag;
+	ptr->cmd_debug_read_pend = hdw->ctl_read_pend_flag;
+	ptr->cmd_debug_rstatus = hdw->ctl_read_urb->status;
+	ptr->cmd_debug_wstatus = hdw->ctl_read_urb->status;
+}
+
+
+void pvr2_hdw_get_debug_info_locked(struct pvr2_hdw *hdw,
+				    struct pvr2_hdw_debug_info *ptr)
+{
+	LOCK_TAKE(hdw->ctl_lock); do {
+		pvr2_hdw_get_debug_info_unlocked(hdw,ptr);
+	} while(0); LOCK_GIVE(hdw->ctl_lock);
+}
+
+#endif  /*  0  */
 
 int pvr2_hdw_gpio_get_dir(struct pvr2_hdw *hdw,u32 *dp)
 {

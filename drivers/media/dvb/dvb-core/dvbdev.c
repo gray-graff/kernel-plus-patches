@@ -31,6 +31,7 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
+#include "compat.h"
 #include <linux/mutex.h>
 #include <linux/smp_lock.h>
 #include "dvbdev.h"
@@ -50,37 +51,35 @@ static const char * const dnames[] = {
 	"net", "osd"
 };
 
+#ifdef CONFIG_DVB_DYNAMIC_MINORS
+#define MAX_DVB_MINORS		256
+#define DVB_MAX_IDS		MAX_DVB_MINORS
+#else
 #define DVB_MAX_IDS		4
 #define nums2minor(num,type,id)	((num << 6) | (id << 4) | type)
 #define MAX_DVB_MINORS		(DVB_MAX_ADAPTERS*64)
+#endif
 
 static struct class *dvb_class;
 
-static struct dvb_device* dvbdev_find_device (int minor)
-{
-	struct dvb_adapter *adap;
-
-	list_for_each_entry(adap, &dvb_adapter_list, list_head) {
-		struct dvb_device *dev;
-		list_for_each_entry(dev, &adap->device_list, list_head)
-			if (nums2minor(adap->num, dev->type, dev->id) == minor)
-				return dev;
-	}
-
-	return NULL;
-}
-
+static struct dvb_device *dvb_minors[MAX_DVB_MINORS];
+static DECLARE_RWSEM(minor_rwsem);
 
 static int dvb_device_open(struct inode *inode, struct file *file)
 {
 	struct dvb_device *dvbdev;
 
 	lock_kernel();
-	dvbdev = dvbdev_find_device (iminor(inode));
+	down_read(&minor_rwsem);
+	dvbdev = dvb_minors[iminor(inode)];
 
 	if (dvbdev && dvbdev->fops) {
 		int err = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,17)
 		const struct file_operations *old_fops;
+#else
+		struct file_operations *old_fops;
+#endif
 
 		file->private_data = dvbdev;
 		old_fops = file->f_op;
@@ -92,9 +91,11 @@ static int dvb_device_open(struct inode *inode, struct file *file)
 			file->f_op = fops_get(old_fops);
 		}
 		fops_put(old_fops);
+		up_read(&minor_rwsem);
 		unlock_kernel();
 		return err;
 	}
+	up_read(&minor_rwsem);
 	unlock_kernel();
 	return -ENODEV;
 }
@@ -191,7 +192,12 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 {
 	struct dvb_device *dvbdev;
 	struct file_operations *dvbdevfops;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 	struct device *clsdev;
+#else
+	struct class_device *clsdev;
+#endif
+	int minor;
 	int id;
 
 	mutex_lock(&dvbdev_register_lock);
@@ -231,11 +237,41 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 
 	list_add_tail (&dvbdev->list_head, &adap->device_list);
 
+	down_write(&minor_rwsem);
+#ifdef CONFIG_DVB_DYNAMIC_MINORS
+	for (minor = 0; minor < MAX_DVB_MINORS; minor++)
+		if (dvb_minors[minor] == NULL)
+			break;
+
+	if (minor == MAX_DVB_MINORS) {
+		kfree(dvbdevfops);
+		kfree(dvbdev);
+		mutex_unlock(&dvbdev_register_lock);
+		return -EINVAL;
+	}
+#else
+	minor = nums2minor(adap->num, type, id);
+#endif
+
+	dvbdev->minor = minor;
+	dvb_minors[minor] = dvbdev;
+	up_write(&minor_rwsem);
+
 	mutex_unlock(&dvbdev_register_lock);
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 27)
+	clsdev = device_create(dvb_class, adap->device,
+			       MKDEV(DVB_MAJOR, minor),
+			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
+#elif LINUX_VERSION_CODE == KERNEL_VERSION(2, 6, 27)
 	clsdev = device_create_drvdata(dvb_class, adap->device,
-			       MKDEV(DVB_MAJOR, nums2minor(adap->num, type, id)),
-			       NULL, "dvb%d.%s%d", adap->num, dnames[type], id);
+			       MKDEV(DVB_MAJOR, minor),
+			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
+#else
+	clsdev = device_create(dvb_class, adap->device,
+			       MKDEV(DVB_MAJOR, minor),
+			       "dvb%d.%s%d", adap->num, dnames[type], id);
+#endif
 	if (IS_ERR(clsdev)) {
 		printk(KERN_ERR "%s: failed to create device dvb%d.%s%d (%ld)\n",
 		       __func__, adap->num, dnames[type], id, PTR_ERR(clsdev));
@@ -243,8 +279,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 	}
 
 	dprintk(KERN_DEBUG "DVB: register adapter%d/%s%d @ minor: %i (0x%02x)\n",
-		adap->num, dnames[type], id, nums2minor(adap->num, type, id),
-		nums2minor(adap->num, type, id));
+		adap->num, dnames[type], id, minor, minor);
 
 	return 0;
 }
@@ -256,8 +291,11 @@ void dvb_unregister_device(struct dvb_device *dvbdev)
 	if (!dvbdev)
 		return;
 
-	device_destroy(dvb_class, MKDEV(DVB_MAJOR, nums2minor(dvbdev->adapter->num,
-		       dvbdev->type, dvbdev->id)));
+	down_write(&minor_rwsem);
+	dvb_minors[dvbdev->minor] = NULL;
+	up_write(&minor_rwsem);
+
+	device_destroy(dvb_class, MKDEV(DVB_MAJOR, dvbdev->minor));
 
 	list_del (&dvbdev->list_head);
 	kfree (dvbdev->fops);
@@ -326,6 +364,9 @@ int dvb_register_adapter(struct dvb_adapter *adap, const char *name,
 	adap->name = name;
 	adap->module = module;
 	adap->device = device;
+	adap->mfe_shared = 0;
+	adap->mfe_dvbdev = NULL;
+	mutex_init (&adap->mfe_lock);
 
 	list_add_tail (&adap->list_head, &dvb_adapter_list);
 
@@ -410,6 +451,17 @@ out:
 	return err;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)
+static int dvb_uevent(struct device *dev, struct kobj_uevent_env *env)
+{
+	struct dvb_device *dvbdev = dev_get_drvdata(dev);
+
+	add_uevent_var(env, "DVB_DEVICE_NUM=%d", dvbdev->id);
+	add_uevent_var(env, "DVB_ADAPTER_NUM=%d", dvbdev->adapter->num);
+	return 0;
+}
+#endif
+
 static int __init init_dvbdev(void)
 {
 	int retval;
@@ -420,7 +472,12 @@ static int __init init_dvbdev(void)
 		return retval;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 17)
 	cdev_init(&dvb_device_cdev, &dvb_device_fops);
+#else
+	cdev_init(&dvb_device_cdev,
+			(struct file_operations *)&dvb_device_fops);
+#endif
 	if ((retval = cdev_add(&dvb_device_cdev, dev, MAX_DVB_MINORS)) != 0) {
 		printk(KERN_ERR "dvb-core: unable register character device\n");
 		goto error;
@@ -431,6 +488,9 @@ static int __init init_dvbdev(void)
 		retval = PTR_ERR(dvb_class);
 		goto error;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)
+	dvb_class->dev_uevent = dvb_uevent;
+#endif
 	return 0;
 
 error:

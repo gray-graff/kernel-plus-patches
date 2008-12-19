@@ -19,6 +19,7 @@
 */
 
 #include <linux/delay.h>
+#include "compat.h"
 #include <linux/videodev2.h>
 #include "tda18271-priv.h"
 
@@ -875,7 +876,7 @@ static int tda18271_set_params(struct dvb_frontend *fe,
 			tda_warn("modulation not set!\n");
 			return -EINVAL;
 		}
-#if 0
+#if 0 /* keep */
 		/* userspace request is already center adjusted */
 		freq += 1750000; /* Adjust to center (+1.75MHZ) */
 #endif
@@ -1155,7 +1156,6 @@ struct dvb_frontend *tda18271_attach(struct dvb_frontend *fe, u8 addr,
 	switch (instance) {
 	case 0:
 		goto fail;
-		break;
 	case 1:
 		/* new tuner instance */
 		priv->gate = (cfg) ? cfg->gate : TDA18271_GATE_AUTO;

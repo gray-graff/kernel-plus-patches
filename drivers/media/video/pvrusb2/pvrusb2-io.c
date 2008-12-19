@@ -24,6 +24,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#include "compat.h"
 
 static const char *pvr2_buffer_state_decode(enum pvr2_buffer_state);
 
@@ -31,6 +32,17 @@ static const char *pvr2_buffer_state_decode(enum pvr2_buffer_state);
 
 // #define SANITY_CHECK_BUFFERS
 
+#if 0
+#define BUFFER_CHECK(bp) do { \
+	if ((bp)->signature != BUFFER_SIG) { \
+		pvr2_trace(PVR2_TRACE_ERROR_LEGS, \
+		"Buffer %p is bad at %s:%d", \
+		(bp),__FILE__,__LINE__); \
+		pvr2_buffer_describe(bp,"BadSig"); \
+		BUG(); \
+	} \
+} while (0)
+#endif
 
 #ifdef SANITY_CHECK_BUFFERS
 #define BUFFER_CHECK(bp) do { \
@@ -432,7 +444,11 @@ static void pvr2_stream_done(struct pvr2_stream *sp)
 	} while (0); mutex_unlock(&sp->mutex);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void buffer_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void buffer_complete(struct urb *urb)
+#endif
 {
 	struct pvr2_buffer *bp = urb->context;
 	struct pvr2_stream *sp;
@@ -586,6 +602,22 @@ int pvr2_stream_get_ready_count(struct pvr2_stream *sp)
 {
 	return sp->r_count;
 }
+#if 0
+
+int pvr2_stream_get_idle_count(struct pvr2_stream *sp)
+{
+	return sp->i_count;
+}
+#endif  /*  0  */
+#if 0
+
+void pvr2_stream_flush(struct pvr2_stream *sp)
+{
+	mutex_lock(&sp->mutex); do {
+		pvr2_stream_internal_flush(sp);
+	} while(0); mutex_unlock(&sp->mutex);
+}
+#endif  /*  0  */
 
 void pvr2_stream_kill(struct pvr2_stream *sp)
 {
@@ -640,6 +672,23 @@ int pvr2_buffer_queue(struct pvr2_buffer *bp)
 	return ret;
 }
 
+#if 0
+int pvr2_buffer_idle(struct pvr2_buffer *bp)
+{
+	struct pvr2_stream *sp;
+	if (!bp) return -EINVAL;
+	sp = bp->stream;
+	mutex_lock(&sp->mutex); do {
+		pvr2_buffer_wipe(bp);
+		pvr2_buffer_set_idle(bp);
+		if (sp->buffer_total_count != sp->buffer_target_count) {
+			pvr2_stream_achieve_buffer_count(sp);
+		}
+	} while(0); mutex_unlock(&sp->mutex);
+	return 0;
+}
+
+#endif  /*  0  */
 int pvr2_buffer_set_buffer(struct pvr2_buffer *bp,void *ptr,unsigned int cnt)
 {
 	int ret = 0;
@@ -678,6 +727,13 @@ int pvr2_buffer_get_status(struct pvr2_buffer *bp)
 	return bp->status;
 }
 
+#if 0
+enum pvr2_buffer_state pvr2_buffer_get_state(struct pvr2_buffer *bp)
+{
+	return bp->state;
+}
+
+#endif  /*  0  */
 int pvr2_buffer_get_id(struct pvr2_buffer *bp)
 {
 	return bp->id;

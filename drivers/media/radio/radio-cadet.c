@@ -23,7 +23,7 @@
  * 2002-01-17	Adam Belay <ambx1@neo.rr.com>
  *		Updated to latest pnp code
  *
- * 2003-01-31	Alan Cox <alan@redhat.com>
+ * 2003-01-31	Alan Cox <alan@lxorguk.ukuu.org.uk>
  *		Cleaned up locking, delay code, general odds and ends
  *
  * 2006-07-30	Hans J. Koch <koch@hjk-az.de>
@@ -37,6 +37,7 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <asm/io.h>		/* outb, outb_p			*/
 #include <asm/uaccess.h>	/* copy to/from user		*/
+#include "compat.h"
 #include <linux/videodev2.h>	/* V4L2 API defs		*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -89,6 +90,35 @@ static int cadet_probe(void);
  */
 static __u16 sigtable[2][4]={{5,10,30,150},{28,40,63,1000}};
 
+#if 0
+/*
+Note: cadet_getrds() is not used at the moment. It will be useful for future
+extensions, e.g. an ioctl to query RDS reception quality. - Hans J. Koch
+*/
+static int
+cadet_getrds(void)
+{
+	int rds_mbs_stat=0;
+
+	spin_lock(&cadet_io_lock);
+	outb(3,io);                 /* Select Decoder Control/Status */
+	outb(inb(io+1)&0x7f,io+1);  /* Reset RDS detection */
+	spin_unlock(&cadet_io_lock);
+
+	msleep(100);
+
+	spin_lock(&cadet_io_lock);
+	outb(3,io);                 /* Select Decoder Control/Status */
+	if((inb(io+1)&0x80)!=0) {
+		rds_mbs_stat |= RDS_RX_FLAG;
+	}
+	if((inb(io+1)&0x10)!=0) {
+		rds_mbs_stat |= MBS_RX_FLAG;
+	}
+	spin_unlock(&cadet_io_lock);
+	return rds_mbs_stat;
+}
+#endif
 
 static int
 cadet_getstereo(void)
@@ -589,6 +619,7 @@ static struct video_device cadet_radio = {
 	.name		= "Cadet radio",
 	.fops           = &cadet_fops,
 	.ioctl_ops 	= &cadet_ioctl_ops,
+	.release	= video_device_release_empty,
 };
 
 #ifdef CONFIG_PNP

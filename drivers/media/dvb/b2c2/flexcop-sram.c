@@ -73,7 +73,7 @@ void flexcop_sram_ctrl(struct flexcop_device *fc, int usb_wan, int sramdma, int 
 }
 EXPORT_SYMBOL(flexcop_sram_ctrl);
 
-#if 0
+#if 0 /* keep */
 static void flexcop_sram_write(struct adapter *adapter, u32 bank, u32 addr, u8 *buf, u32 len)
 {
 	int i, retries;

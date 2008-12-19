@@ -408,6 +408,20 @@ static void reg_w_buf(struct gspca_dev *gspca_dev,
 			500);
 }
 
+#if 0 /* not used */
+static __u8 reg_r(struct gspca_dev *gspca_dev,
+			     __u8 index)
+{
+	usb_control_msg(gspca_dev->dev,
+			usb_rcvctrlpipe(gspca_dev->dev, 0),
+			0,			/* request */
+			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+			0,			/* value */
+			index, gspca_dev->usb_buf, 1,
+			500);
+	return gspca_dev->usb_buf[0];
+}
+#endif
 
 static void reg_w(struct gspca_dev *gspca_dev,
 		  __u8 index,
@@ -675,7 +689,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	return 0;
 }
 
-static void sd_start(struct gspca_dev *gspca_dev)
+static int sd_start(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 
@@ -724,6 +738,7 @@ static void sd_start(struct gspca_dev *gspca_dev)
 		reg_w(gspca_dev, 0x78, 0x01);
 	else
 		reg_w(gspca_dev, 0x78, 0x05);
+	return 0;
 }
 
 static void sd_stopN(struct gspca_dev *gspca_dev)
@@ -748,10 +763,13 @@ static void sd_stopN(struct gspca_dev *gspca_dev)
 	reg_w(gspca_dev, 0x78, 0x44); /* Bit_0=start stream, Bit_6=LED */
 }
 
+/* called on streamoff with alt 0 and on disconnect */
 static void sd_stop0(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 
+	if (!gspca_dev->present)
+		return;
 	if (sd->sensor == SENSOR_PAC7302) {
 		reg_w(gspca_dev, 0xff, 0x01);
 		reg_w(gspca_dev, 0x78, 0x40);
@@ -1061,6 +1079,7 @@ static __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x093a, 0x260e), .driver_info = SENSOR_PAC7311},
 	{USB_DEVICE(0x093a, 0x260f), .driver_info = SENSOR_PAC7311},
 	{USB_DEVICE(0x093a, 0x2621), .driver_info = SENSOR_PAC7302},
+	{USB_DEVICE(0x093a, 0x2622), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2624), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2626), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x262a), .driver_info = SENSOR_PAC7302},

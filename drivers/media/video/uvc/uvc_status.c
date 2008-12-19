@@ -15,7 +15,11 @@
 #include <linux/version.h>
 #include <linux/input.h>
 #include <linux/usb.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 18)
+#include <linux/usb_input.h>
+#else
 #include <linux/usb/input.h>
+#endif
 
 #include "uvcvideo.h"
 
@@ -45,7 +49,11 @@ static int uvc_input_init(struct uvc_device *dev)
 	input->name = dev->name;
 	input->phys = phys;
 	usb_to_input_id(udev, &input->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	input->dev.parent = &dev->intf->dev;
+#else
+	input->cdev.dev = &dev->intf->dev;
+#endif
 
 	set_bit(EV_KEY, input->evbit);
 	set_bit(BTN_0, input->keybit);
@@ -118,7 +126,11 @@ static void uvc_event_control(struct uvc_device *dev, __u8 *data, int len)
 		data[1], data[3], attrs[data[4]], len);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+static void uvc_status_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void uvc_status_complete(struct urb *urb)
+#endif
 {
 	struct uvc_device *dev = urb->context;
 	int len, ret;
@@ -177,9 +189,15 @@ int uvc_status_init(struct uvc_device *dev)
 
 	uvc_input_init(dev);
 
-	dev->int_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (dev->int_urb == NULL)
+	dev->status = kzalloc(UVC_MAX_STATUS_SIZE, GFP_KERNEL);
+	if (dev->status == NULL)
 		return -ENOMEM;
+
+	dev->int_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (dev->int_urb == NULL) {
+		kfree(dev->status);
+		return -ENOMEM;
+	}
 
 	pipe = usb_rcvintpipe(dev->udev, ep->desc.bEndpointAddress);
 
@@ -192,7 +210,7 @@ int uvc_status_init(struct uvc_device *dev)
 		interval = fls(interval) - 1;
 
 	usb_fill_int_urb(dev->int_urb, dev->udev, pipe,
-		dev->status, sizeof dev->status, uvc_status_complete,
+		dev->status, UVC_MAX_STATUS_SIZE, uvc_status_complete,
 		dev, interval);
 
 	return usb_submit_urb(dev->int_urb, GFP_KERNEL);
@@ -202,6 +220,7 @@ void uvc_status_cleanup(struct uvc_device *dev)
 {
 	usb_kill_urb(dev->int_urb);
 	usb_free_urb(dev->int_urb);
+	kfree(dev->status);
 	uvc_input_cleanup(dev);
 }
 

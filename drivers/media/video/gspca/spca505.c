@@ -321,6 +321,75 @@ static const __u16 spca505_open_data_ccd[][3] = {
 	{}
 };
 
+#if 0
+/*
+ * Data to initialize the camera in external video mode
+ */
+static const __u16 spca505_open_data_ext[][3] = {
+	/* line	   bmRequest,value,index */
+	/* External video input dataset */
+	/* 0808 */ {0x3, 0x04, 0x01},
+	/* 0809 */ {0x3, 0x00, 0x01},
+
+	/* 0810 */ {0x4, 0x50, 0x01},
+	/* 0811 */ {0x4, 0x00, 0x04},
+	/* 0812 */ {0x4, 0x0a, 0x05},
+	/* 0813 */ {0x4, 0x20, 0x06},
+	/* 0814 */ {0x4, 0x20, 0x07},
+
+	/* 0815 */ {0x8, 0x4a, 0x00},
+
+	/* 0816 */ {0x5, 0x00, 0x10},
+	/* 0817 */ {0x5, 0x00, 0x11},
+
+	/* 0818 */ {0x3, 0x08, 0x03},
+	/* 0819 */ {0x3, 0x28, 0x03},
+	/* 0820 */ {0x3, 0x08, 0x01},
+	/* 0821 */ {0x3, 0x39, 0x00},
+
+	/* 0822 */ {0x5, 0x01, 0xc0},
+	/* 0823 */ {0x5, 0x10, 0xcb},
+	/* 0824 */ {0x5, 0x80, 0xc1},
+	/* 0825 */ {0x5, 0x05, 0xc2},
+	/* 0826 */ {0x5, 0x00, 0xca},
+	/* 0827 */ {0x5, 0x00, 0xc1},
+	/* 0828 */ {0x5, 0x01, 0xc2},
+	/* 0829 */ {0x5, 0x00, 0xca},
+	/* 0830 */ {0x5, 0x01, 0x10},
+	/* 0831 */ {0x5, 0x0f, 0x11},
+	{}
+};
+
+/*
+ * Additional data needed to initialze the camera in external mode
+ */
+static const __u16 spca505_open_data2[][3] = {
+	/* line	   bmRequest,value,index */
+	/* 1384 */ {0x3, 0x68, 0x03},
+	/* 1385 */ {0x3, 0x10, 0x01},
+	/* 1386 */ {0x8, 0x4a, 0x00},
+	/* 1387 */ {0x4, 0x00, 0x08},
+	/* was 1 COMPRESSION ENABLE ! */
+		/* 1388 */ {0x4, 0x12, 0x09},
+		/* Think these are the compression registers */
+	/* 1389 */ {0x4, 0x21, 0x0a},
+	/* 1390 */ {0x4, 0x10, 0x0b},
+	/* 1391 */ {0x4, 0x21, 0x0c},
+	/* 1392 */ {0x4, 0x05, 0x00},
+	/* This may be the picture type code (5=160x120 as YUV4:2:0) */
+	/* 1393 */ {0x4, 0x00, 0x01},
+	/* 1394 */ {0x6, 0x3f, 0x01},
+	/* 1395 */ {0x4, 0x00, 0x04},
+	/* 1396 */ {0x4, 0x0a, 0x05},
+		/* 1397 */ {0x4, 0x40, 0x06},
+		/* was 40 */
+		/* 1398 */ {0x4, 0x40, 0x07},
+		/* was 50 */
+	/* 1399 */ {0x4, 0x02, 0x05},
+	/* 1400 */ {0x4, 0x00, 0x04},
+	{}
+};
+#endif
 /*
    Made by Tomasz Zablocki (skalamandra@poczta.onet.pl)
  * SPCA505b chip based cameras initialization data
@@ -688,7 +757,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	return 0;
 }
 
-static void sd_start(struct gspca_dev *gspca_dev)
+static int sd_start(struct gspca_dev *gspca_dev)
 {
 	struct usb_device *dev = gspca_dev->dev;
 	int ret;
@@ -733,6 +802,7 @@ static void sd_start(struct gspca_dev *gspca_dev)
 /*	reg_write(dev, 0x5, 0x0, 0x0); */
 /*	reg_write(dev, 0x5, 0x0, 0x1); */
 /*	reg_write(dev, 0x5, 0x11, 0x2); */
+	return ret;
 }
 
 static void sd_stopN(struct gspca_dev *gspca_dev)
@@ -741,8 +811,12 @@ static void sd_stopN(struct gspca_dev *gspca_dev)
 	reg_write(gspca_dev->dev, 0x02, 0x00, 0x00);
 }
 
+/* called on streamoff with alt 0 and on disconnect */
 static void sd_stop0(struct gspca_dev *gspca_dev)
 {
+	if (!gspca_dev->present)
+		return;
+
 	/* This maybe reset or power control */
 	reg_write(gspca_dev->dev, 0x03, 0x03, 0x20);
 	reg_write(gspca_dev->dev, 0x03, 0x01, 0x0);

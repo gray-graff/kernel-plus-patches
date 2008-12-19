@@ -1,4 +1,5 @@
 #include <media/saa7146_vv.h>
+#include "compat.h"
 
 static u32 saa7146_i2c_func(struct i2c_adapter *adapter)
 {
@@ -405,6 +406,9 @@ static int saa7146_i2c_xfer(struct i2c_adapter* adapter, struct i2c_msg *msg, in
 static struct i2c_algorithm saa7146_algo = {
 	.master_xfer	= saa7146_i2c_xfer,
 	.functionality	= saa7146_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 int saa7146_i2c_adapter_prepare(struct saa7146_dev *dev, struct i2c_adapter *i2c_adapter, u32 bitrate)

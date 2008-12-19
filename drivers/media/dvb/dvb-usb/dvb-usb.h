@@ -13,6 +13,7 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 #include <linux/firmware.h>
+#include "compat.h"
 #include <linux/mutex.h>
 
 #include "dvb_frontend.h"
@@ -363,7 +364,11 @@ struct dvb_usb_device {
 	/* remote control */
 	struct input_dev *rc_input_dev;
 	char rc_phys[64];
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct work_struct rc_query_work;
+#else
 	struct delayed_work rc_query_work;
+#endif
 	u32 last_event;
 	int last_state;
 

@@ -21,6 +21,7 @@
 #include <linux/time.h>
 #include <linux/wait.h>
 #include <linux/module.h>
+#include "compat.h"
 #include <sound/core.h>
 #include <sound/control.h>
 #include <sound/pcm.h>
@@ -206,7 +207,11 @@ static void saa7134_irq_alsa_done(struct saa7134_dev *dev,
  *
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t saa7134_alsa_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t saa7134_alsa_irq(int irq, void *dev_id)
+#endif
 {
 	struct saa7134_dmasound *dmasound = dev_id;
 	struct saa7134_dev *dev = dmasound->priv_data;
@@ -488,10 +493,12 @@ static int snd_card_saa7134_hw_params(struct snd_pcm_substream * substream,
 	period_size = params_period_bytes(hw_params);
 	periods = params_periods(hw_params);
 
-	snd_assert(period_size >= 0x100 && period_size <= 0x10000,
-		   return -EINVAL);
-	snd_assert(periods >= 4, return -EINVAL);
-	snd_assert(period_size * periods <= 1024 * 1024, return -EINVAL);
+	if (period_size < 0x100 || period_size > 0x10000)
+		return -EINVAL;
+	if (periods < 4)
+		return -EINVAL;
+	if (period_size * periods > 1024 * 1024)
+		return -EINVAL;
 
 	dev = saa7134->dev;
 
@@ -942,7 +949,8 @@ static int snd_card_saa7134_new_mixer(snd_card_saa7134_t * chip)
 	unsigned int idx;
 	int err;
 
-	snd_assert(chip != NULL, return -EINVAL);
+	if (snd_BUG_ON(!chip))
+		return -EINVAL;
 	strcpy(card->mixername, "SAA7134 Mixer");
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_saa7134_controls); idx++) {

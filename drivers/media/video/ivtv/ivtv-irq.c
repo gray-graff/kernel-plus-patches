@@ -70,9 +70,15 @@ static void ivtv_pio_work_handler(struct ivtv *itv)
 	write_reg(IVTV_IRQ_ENC_PIO_COMPLETE, 0x44);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 void ivtv_irq_work_handler(struct work_struct *work)
 {
 	struct ivtv *itv = container_of(work, struct ivtv, irq_work_queue);
+#else
+void ivtv_irq_work_handler(void *arg)
+{
+	struct ivtv *itv = arg;
+#endif
 
 	DEFINE_WAIT(wait);
 
@@ -753,7 +759,7 @@ static void ivtv_irq_vsync(struct ivtv *itv)
 	 */
 	unsigned int frame = read_reg(0x28c0) & 1;
 	struct yuv_playback_info *yi = &itv->yuv_info;
-	int last_dma_frame = atomic_read(&itv->yuv_info.next_dma_frame);
+	int last_dma_frame = atomic_read(&yi->next_dma_frame);
 	struct yuv_frame_info *f = &yi->new_frame_info[last_dma_frame];
 
 	if (0) IVTV_DEBUG_IRQ("DEC VSYNC\n");
@@ -772,6 +778,7 @@ static void ivtv_irq_vsync(struct ivtv *itv)
 				next_dma_frame = (next_dma_frame + 1) % IVTV_YUV_BUFFERS;
 				atomic_set(&yi->next_dma_frame, next_dma_frame);
 				yi->fields_lapsed = -1;
+				yi->running = 1;
 			}
 		}
 	}
@@ -804,9 +811,11 @@ static void ivtv_irq_vsync(struct ivtv *itv)
 		}
 
 		/* Check if we need to update the yuv registers */
-		if ((yi->yuv_forced_update || f->update) && last_dma_frame != -1) {
+		if (yi->running && (yi->yuv_forced_update || f->update)) {
 			if (!f->update) {
-				last_dma_frame = (u8)(last_dma_frame - 1) % IVTV_YUV_BUFFERS;
+				last_dma_frame =
+					(u8)(atomic_read(&yi->next_dma_frame) -
+						 1) % IVTV_YUV_BUFFERS;
 				f = &yi->new_frame_info[last_dma_frame];
 			}
 
@@ -825,7 +834,11 @@ static void ivtv_irq_vsync(struct ivtv *itv)
 
 #define IVTV_IRQ_DMA (IVTV_IRQ_DMA_READ | IVTV_IRQ_ENC_DMA_COMPLETE | IVTV_IRQ_DMA_ERR | IVTV_IRQ_ENC_START_CAP | IVTV_IRQ_ENC_VBI_CAP | IVTV_IRQ_DEC_DATA_REQ | IVTV_IRQ_DEC_VBI_RE_INSERT)
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18)
+irqreturn_t ivtv_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
+#else
 irqreturn_t ivtv_irq_handler(int irq, void *dev_id)
+#endif
 {
 	struct ivtv *itv = (struct ivtv *)dev_id;
 	u32 combo;

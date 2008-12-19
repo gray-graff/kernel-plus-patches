@@ -184,7 +184,7 @@ static int flexcop_usb_get_mac_addr(struct flexcop_device *fc, int extended)
 			V8_MEMORY_PAGE_FLASH,0x1f010,1,fc->dvb_adapter.proposed_mac,6);
 }
 
-#if 0
+#if 0 /* keep */
 static int flexcop_usb_utility_req(struct flexcop_usb *fc_usb, int set,
 		flexcop_usb_utility_function_t func, u8 extra, u16 wIndex,
 		u16 buflen, u8 *pvBuffer)
@@ -331,7 +331,11 @@ static void flexcop_usb_process_frame(struct flexcop_usb *fc_usb, u8 *buffer, in
 	fc_usb->tmp_buffer_length = l;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void flexcop_usb_urb_complete(struct urb *urb, struct pt_regs *ptregs)
+#else
 static void flexcop_usb_urb_complete(struct urb *urb)
+#endif
 {
 	struct flexcop_usb *fc_usb = urb->context;
 	int i;

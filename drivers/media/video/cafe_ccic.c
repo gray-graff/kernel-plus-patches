@@ -25,6 +25,7 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/videodev2.h>
+#include "compat.h"
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-chip-ident.h>
@@ -488,6 +489,12 @@ static int cafe_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 	 * Refuse to talk to anything but OV cam chips.  We should
 	 * never even see an attempt to do so, but one never knows.
 	 */
+#if 0  /* client needs to talk during attach process */
+	if (! cam->sensor) {
+		cam_err(cam, "SMBUS xfer with no client\n");
+		return -EINVAL;
+	}
+#endif
 	if (cam->sensor && addr != cam->sensor->addr) {
 		cam_err(cam, "funky smbus addr %d\n", addr);
 		return -EINVAL;
@@ -2055,10 +2062,10 @@ static void cafe_dfs_cam_setup(struct cafe_camera *cam)
 
 	if (!cafe_dfs_root)
 		return;
-	sprintf(fname, "regs-%d", cam->v4ldev.minor);
+	sprintf(fname, "regs-%d", cam->v4ldev.num);
 	cam->dfs_regs = debugfs_create_file(fname, 0444, cafe_dfs_root,
 			cam, &cafe_dfs_reg_ops);
-	sprintf(fname, "cam-%d", cam->v4ldev.minor);
+	sprintf(fname, "cam-%d", cam->v4ldev.num);
 	cam->dfs_cam_regs = debugfs_create_file(fname, 0444, cafe_dfs_root,
 			cam, &cafe_dfs_cam_ops);
 }
@@ -2092,15 +2099,8 @@ static int cafe_pci_probe(struct pci_dev *pdev,
 		const struct pci_device_id *id)
 {
 	int ret;
-	u16 classword;
 	struct cafe_camera *cam;
-	/*
-	 * Make sure we have a camera here - we'll get calls for
-	 * the other cafe devices as well.
-	 */
-	pci_read_config_word(pdev, PCI_CLASS_DEVICE, &classword);
-	if (classword != PCI_CLASS_MULTIMEDIA_VIDEO)
-		return -ENODEV;
+
 	/*
 	 * Start putting together one of our big camera structures.
 	 */
@@ -2288,8 +2288,8 @@ static int cafe_pci_resume(struct pci_dev *pdev)
 
 
 static struct pci_device_id cafe_ids[] = {
-	{ PCI_DEVICE(0x11ab, 0x4100) }, /* Eventual real ID */
-	{ PCI_DEVICE(0x11ab, 0x4102) }, /* Really eventual real ID */
+	{ PCI_DEVICE(PCI_VENDOR_ID_MARVELL,
+		     PCI_DEVICE_ID_MARVELL_88ALP01_CCIC) },
 	{ 0, }
 };
 
