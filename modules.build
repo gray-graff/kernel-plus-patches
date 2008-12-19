@@ -31,8 +31,11 @@ kvm
 lirc
 subfs
 svgalib_helper
+
+#telephony drivers
 zaptel
 wanpipe 
+cronyx
 
 #network block devices and cluster filesystems
 dst
