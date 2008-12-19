@@ -107,6 +107,9 @@ struct tuner_params {
 	signed int default_top_secam_high:5;
 
 	u16 iffreq;
+#if 0
+	void (*setbw)(u8 *buf, u32 freq, int bandwidth);
+#endif
 
 	unsigned int count;
 	struct tuner_range *ranges;

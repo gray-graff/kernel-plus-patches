@@ -198,6 +198,10 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 	enum i2c_status status;
 	__u32 dword;
 
+#if 0
+	i2c_set_attr(dev,attr);
+	saa_writeb(SAA7134_I2C_DATA, data);
+#else
 	/* have to write both attr + data in one 32bit word */
 	dword  = saa_readl(SAA7134_I2C_ATTR_STATUS >> 2);
 	dword &= 0x0f;
@@ -207,6 +211,7 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 //	dword |= 0x40 << 16;  /* 400 kHz */
 	dword |= 0xf0 << 24;
 	saa_writel(SAA7134_I2C_ATTR_STATUS >> 2, dword);
+#endif
 	d2printk(KERN_DEBUG "%s: i2c data => 0x%x\n",dev->name,data);
 
 	if (!i2c_is_busy_wait(dev))
@@ -337,6 +342,7 @@ static int attach_inform(struct i2c_client *client)
 		case 0x47:
 		case 0x71:
 		case 0x2d:
+		case 0x30:
 		{
 			struct IR_i2c *ir = i2c_get_clientdata(client);
 			d1printk("%s i2c IR detected (%s).\n",
@@ -352,6 +358,9 @@ static int attach_inform(struct i2c_client *client)
 static struct i2c_algorithm saa7134_algo = {
 	.master_xfer   = saa7134_i2c_xfer,
 	.functionality = functionality,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 static struct i2c_adapter saa7134_adap_template = {
@@ -426,6 +435,16 @@ void saa7134_i2c_call_clients(struct saa7134_dev *dev,
 	BUG_ON(NULL == dev->i2c_adap.algo_data);
 	i2c_clients_command(&dev->i2c_adap, cmd, arg);
 }
+
+int saa7134_i2c_call_saa6752(struct saa7134_dev *dev,
+					      unsigned int cmd, void *arg)
+{
+	if (dev->mpeg_i2c_client == NULL)
+		return -EINVAL;
+	return dev->mpeg_i2c_client->driver->command(dev->mpeg_i2c_client,
+								cmd, arg);
+}
+EXPORT_SYMBOL_GPL(saa7134_i2c_call_saa6752);
 
 int saa7134_i2c_register(struct saa7134_dev *dev)
 {

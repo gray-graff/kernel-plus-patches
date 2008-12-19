@@ -39,6 +39,8 @@
 
 #include "bsru6.h"
 
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
 #define budget_patch budget
 
 static struct saa7146_extension budget_extension;
@@ -360,7 +362,7 @@ static void frontend_init(struct budget_patch* budget)
 	}
 
 	if (budget->dvb_frontend == NULL) {
-		printk("dvb-ttpci: A frontend driver was not found for device %04x/%04x subsystem %04x/%04x\n",
+		printk("dvb-ttpci: A frontend driver was not found for device [%04x:%04x] subsystem [%04x:%04x]\n",
 		       budget->dev->pci->vendor,
 		       budget->dev->pci->device,
 		       budget->dev->pci->subsystem_vendor,
@@ -431,7 +433,7 @@ static int budget_patch_attach (struct saa7146_dev* dev, struct saa7146_pci_exte
 	// test if GPIO3 will generate vertical blank signal
 	// in budget patch GPIO3 is connected to VSYNC_B
 	count = 0;
-#if 0
+#if 0 /* keep */
 	WRITE_RPS1(CMD_UPLOAD |
 	  MASK_10 | MASK_09 | MASK_08 | MASK_06 | MASK_05 | MASK_04 | MASK_03 | MASK_02 );
 #endif
@@ -592,8 +594,9 @@ static int budget_patch_attach (struct saa7146_dev* dev, struct saa7146_pci_exte
 
 	dprintk(2, "budget: %p\n", budget);
 
-	if ((err = ttpci_budget_init (budget, dev, info, THIS_MODULE))) {
-		kfree (budget);
+	err = ttpci_budget_init(budget, dev, info, THIS_MODULE, adapter_nr);
+	if (err) {
+		kfree(budget);
 		return err;
 	}
 

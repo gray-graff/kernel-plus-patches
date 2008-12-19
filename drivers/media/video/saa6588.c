@@ -32,6 +32,7 @@
 #include <asm/uaccess.h>
 
 #include <media/rds.h>
+#include "compat.h"
 
 /* Addresses to scan */
 static unsigned short normal_i2c[] = {
@@ -323,9 +324,17 @@ static void saa6588_timer(unsigned long data)
 	schedule_work(&s->work);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void saa6588_work(void *data)
+#else
 static void saa6588_work(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct saa6588 *s = (struct saa6588 *)data;
+#else
 	struct saa6588 *s = container_of(work, struct saa6588, work);
+#endif
 
 	saa6588_i2c_poll(s);
 	mod_timer(&s->timer, jiffies + msecs_to_jiffies(20));
@@ -419,7 +428,11 @@ static int saa6588_attach(struct i2c_adapter *adap, int addr, int kind)
 	saa6588_configure(s);
 
 	/* start polling via eventd */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&s->work, saa6588_work, s);
+#else
 	INIT_WORK(&s->work, saa6588_work);
+#endif
 	init_timer(&s->timer);
 	s->timer.function = saa6588_timer;
 	s->timer.data = (unsigned long)s;

@@ -31,6 +31,7 @@
 #include <linux/module.h>
 #include <linux/dvb/frontend.h>
 #include <asm/types.h>
+#include "compat.h"
 
 #include "tua6100.h"
 

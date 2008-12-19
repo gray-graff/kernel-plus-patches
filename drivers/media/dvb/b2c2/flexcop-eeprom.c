@@ -7,7 +7,7 @@
  */
 #include "flexcop.h"
 
-#if 0
+#if 0 /* keep */
 /*EEPROM (Skystar2 has one "24LC08B" chip on board) */
 static int eeprom_write(struct adapter *adapter, u16 addr, u8 *buf, u16 len)
 {

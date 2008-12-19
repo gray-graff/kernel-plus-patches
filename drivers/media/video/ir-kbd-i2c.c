@@ -12,6 +12,10 @@
  *      Markus Rechberger <mrechberger@gmail.com>
  * modified for DViCO Fusion HDTV 5 RT GOLD by
  *      Chaogui Zhang <czhang1974@gmail.com>
+ * modified for MSI TV@nywhere Plus by
+ *      Henry Wong <henry@stuffedcow.net>
+ *      Mark Schultz <n9xmj@yahoo.com>
+ *      Brian Rogers <brian_rogers@comcast.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -43,6 +47,7 @@
 
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
+#include "compat.h"
 
 /* ----------------------------------------------------------------------- */
 /* insmod parameters                                                       */
@@ -65,7 +70,7 @@ static int get_key_haup_common(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw,
 			       int size, int offset)
 {
 	unsigned char buf[6];
-	int start, range, toggle, dev, code;
+	int start, range, toggle, dev, code, ircode;
 
 	/* poll IR chip */
 	if (size != i2c_master_recv(&ir->c,buf,size))
@@ -85,6 +90,24 @@ static int get_key_haup_common(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw,
 	if (!start)
 		/* no key pressed */
 		return 0;
+	/*
+	 * Hauppauge remotes (black/silver) always use
+	 * specific device ids. If we do not filter the
+	 * device ids then messages destined for devices
+	 * such as TVs (id=0) will get through causing
+	 * mis-fired events.
+	 *
+	 * We also filter out invalid key presses which
+	 * produce annoying debug log entries.
+	 */
+	ircode= (start << 12) | (toggle << 11) | (dev << 6) | code;
+	if ((ircode & 0x1fff)==0x1fff)
+		/* invalid key press */
+		return 0;
+
+	if (dev!=0x1e && dev!=0x1f)
+		/* not a hauppauge remote */
+		return 0;
 
 	if (!range)
 		code += 64;
@@ -94,7 +117,7 @@ static int get_key_haup_common(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw,
 
 	/* return key */
 	*ir_key = code;
-	*ir_raw = (start << 12) | (toggle << 11) | (dev << 6) | code;
+	*ir_raw = ircode;
 	return 1;
 }
 
@@ -221,12 +244,26 @@ static void ir_timer(unsigned long data)
 	schedule_work(&ir->work);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void ir_work(void *data)
+#else
 static void ir_work(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct IR_i2c *ir = data;
+#else
 	struct IR_i2c *ir = container_of(work, struct IR_i2c, work);
+#endif
+	int polling_interval = 100;
+
+	/* MSI TV@nywhere Plus requires more frequent polling
+	   otherwise it will miss some keypresses */
+	if (ir->c.adapter->id == I2C_HW_SAA7134 && ir->c.addr == 0x30)
+		polling_interval = 50;
 
 	ir_key_poll(ir);
-	mod_timer(&ir->timer, jiffies + msecs_to_jiffies(100));
+	mod_timer(&ir->timer, jiffies + msecs_to_jiffies(polling_interval));
 }
 
 /* ----------------------------------------------------------------------- */
@@ -357,10 +394,10 @@ static int ir_attach(struct i2c_adapter *adap, int addr,
 		goto err_out_detach;
 	}
 
-	/* Phys addr can only be set after attaching (for ir->c.dev.bus_id) */
+	/* Phys addr can only be set after attaching (for ir->c.dev) */
 	snprintf(ir->phys, sizeof(ir->phys), "%s/%s/ir0",
-		 ir->c.adapter->dev.bus_id,
-		 ir->c.dev.bus_id);
+		 dev_name(&ir->c.adapter->dev),
+		 dev_name(&ir->c.dev));
 
 	/* init + register input device */
 	ir_input_init(input_dev, &ir->ir, ir_type, ir->ir_codes);
@@ -376,7 +413,11 @@ static int ir_attach(struct i2c_adapter *adap, int addr,
 	       ir->input->name, ir->input->phys, adap->name);
 
 	/* start polling via eventd */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&ir->work, ir_work, ir);
+#else
 	INIT_WORK(&ir->work, ir_work);
+#endif
 	init_timer(&ir->timer);
 	ir->timer.function = ir_timer;
 	ir->timer.data     = (unsigned long)ir;
@@ -465,9 +506,37 @@ static int ir_probe(struct i2c_adapter *adap)
 			(1 == rc) ? "yes" : "no");
 		if (1 == rc) {
 			ir_attach(adap, probe[i], 0, 0);
-			break;
+			return 0;
 		}
 	}
+
+	/* Special case for MSI TV@nywhere Plus remote */
+	if (adap->id == I2C_HW_SAA7134) {
+		u8 temp;
+
+		/* MSI TV@nywhere Plus controller doesn't seem to
+		   respond to probes unless we read something from
+		   an existing device. Weird... */
+
+		msg.addr = 0x50;
+		rc = i2c_transfer(adap, &msg, 1);
+			dprintk(1, "probe 0x%02x @ %s: %s\n",
+			msg.addr, adap->name,
+			(1 == rc) ? "yes" : "no");
+
+		/* Now do the probe. The controller does not respond
+		   to 0-byte reads, so we use a 1-byte read instead. */
+		msg.addr = 0x30;
+		msg.len = 1;
+		msg.buf = &temp;
+		rc = i2c_transfer(adap, &msg, 1);
+		dprintk(1, "probe 0x%02x @ %s: %s\n",
+			msg.addr, adap->name,
+			(1 == rc) ? "yes" : "no");
+		if (1 == rc)
+			ir_attach(adap, msg.addr, 0, 0);
+	}
+
 	return 0;
 }
 

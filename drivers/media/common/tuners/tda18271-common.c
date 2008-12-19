@@ -383,72 +383,137 @@ int tda18271_init_regs(struct dvb_frontend *fe)
 	msleep(5); /* pll locking */
 
 	/* launch detector */
+#if 0
+	regs[R_EP1] = 0xc6; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP1, 1);
 	msleep(5); /* wanted low measurement */
 
+#if 0
+	regs[R_EP3] = 0x1f; /* already set */
+	regs[R_EP4] = 0x66; /* already set */
+#endif
 	regs[R_EP5] = 0x85;
 	regs[R_CPD] = 0xcb;
 	regs[R_CD1] = 0x66;
 	regs[R_CD2] = 0x70;
+#if 0
+	regs[R_CD3] = 0x00; /* already set */
+#endif
 
 	tda18271_write_regs(fe, R_EP3, 7);
 	msleep(5); /* pll locking */
 
 	/* launch optimization algorithm */
+#if 0
+	regs[R_EP2] = 0xdf; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP2, 1);
 	msleep(30); /* image low optimization completion */
 
 	/* mid-band */
+#if 0
+	regs[R_EP3] = 0x1f; /* already set */
+	regs[R_EP4] = 0x66; /* already set */
+#endif
 	regs[R_EP5] = 0x82;
 	regs[R_CPD] = 0xa8;
+#if 0
+	regs[R_CD1] = 0x66; /* already set */
+#endif
 	regs[R_CD2] = 0x00;
+#if 0
+	regs[R_CD3] = 0x00; /* already set */
+#endif
 	regs[R_MPD] = 0xa9;
 	regs[R_MD1] = 0x73;
 	regs[R_MD2] = 0x1a;
+#if 0
+	regs[R_MD3] = 0x00; /* already set */
+#endif
 
 	tda18271_write_regs(fe, R_EP3, 11);
 	msleep(5); /* pll locking */
 
 	/* launch detector */
+#if 0
+	regs[R_EP1] = 0xc6; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP1, 1);
 	msleep(5); /* wanted mid measurement */
 
+#if 0
+	regs[R_EP3] = 0x1f; /* already set */
+	regs[R_EP4] = 0x66; /* already set */
+#endif
 	regs[R_EP5] = 0x86;
 	regs[R_CPD] = 0xa8;
 	regs[R_CD1] = 0x66;
 	regs[R_CD2] = 0xa0;
+#if 0
+	regs[R_CD3] = 0x00; /* already set */
+#endif
 
 	tda18271_write_regs(fe, R_EP3, 7);
 	msleep(5); /* pll locking */
 
 	/* launch optimization algorithm */
+#if 0
+	regs[R_EP2] = 0xdf; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP2, 1);
 	msleep(30); /* image mid optimization completion */
 
 	/* high-band */
+#if 0
+	regs[R_EP3] = 0x1f; /* already set */
+	regs[R_EP4] = 0x66; /* already set */
+#endif
 	regs[R_EP5] = 0x83;
 	regs[R_CPD] = 0x98;
 	regs[R_CD1] = 0x65;
 	regs[R_CD2] = 0x00;
+#if 0
+	regs[R_CD3] = 0x00; /* already set */
+#endif
 	regs[R_MPD] = 0x99;
 	regs[R_MD1] = 0x71;
 	regs[R_MD2] = 0xcd;
+#if 0
+	regs[R_MD3] = 0x00; /* already set */
+#endif
 
 	tda18271_write_regs(fe, R_EP3, 11);
 	msleep(5); /* pll locking */
 
 	/* launch detector */
+#if 0
+	regs[R_EP1] = 0xc6; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP1, 1);
 	msleep(5); /* wanted high measurement */
 
+#if 0
+	regs[R_EP3] = 0x1f; /* already set */
+	regs[R_EP4] = 0x66; /* already set */
+#endif
 	regs[R_EP5] = 0x87;
+#if 0
+	regs[R_CPD] = 0x98; /* already set */
+#endif
 	regs[R_CD1] = 0x65;
 	regs[R_CD2] = 0x50;
+#if 0
+	regs[R_CD3] = 0x00; /* already set */
+#endif
 
 	tda18271_write_regs(fe, R_EP3, 7);
 	msleep(5); /* pll locking */
 
 	/* launch optimization algorithm */
+#if 0
+	regs[R_EP2] = 0xdf; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP2, 1);
 	msleep(30); /* image high optimization completion */
 
@@ -457,6 +522,9 @@ int tda18271_init_regs(struct dvb_frontend *fe)
 	tda18271_write_regs(fe, R_EP4, 1);
 
 	/* synchronize */
+#if 0
+	regs[R_EP1] = 0xc6; /* already set */
+#endif
 	tda18271_write_regs(fe, R_EP1, 1);
 
 	return 0;

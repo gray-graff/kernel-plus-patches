@@ -846,8 +846,12 @@ static struct v4l2_int_device tcm825x_int_device = {
 	},
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
+static int tcm825x_probe(struct i2c_client *client)
+#else
 static int tcm825x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *did)
+#endif
 {
 	struct tcm825x_sensor *sensor = &tcm825x;
 	int rval;
@@ -891,11 +895,13 @@ static int __exit tcm825x_remove(struct i2c_client *client)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id tcm825x_id[] = {
 	{ "tcm825x", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tcm825x_id);
+#endif
 
 static struct i2c_driver tcm825x_i2c_driver = {
 	.driver	= {
@@ -903,7 +909,9 @@ static struct i2c_driver tcm825x_i2c_driver = {
 	},
 	.probe	= tcm825x_probe,
 	.remove	= __exit_p(tcm825x_remove),
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = tcm825x_id,
+#endif
 };
 
 static struct tcm825x_sensor tcm825x = {

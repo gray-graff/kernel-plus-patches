@@ -25,6 +25,7 @@
 #include <linux/delay.h>
 #include <asm/io.h>
 
+#include "compat.h"
 #include "cx23885.h"
 
 #include <media/v4l2-common.h>
@@ -131,7 +132,7 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 			printk(" >\n");
 	}
 
-	for (cnt = 1; cnt < msg->len; cnt++ ) {
+	for (cnt = 1; cnt < msg->len; cnt++) {
 		/* following bytes */
 		wdata = msg->buf[cnt];
 		ctrl = bus->i2c_period | (1 << 12) | (1 << 2);
@@ -151,9 +152,9 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 		if (retval == 0)
 			goto eio;
 		if (i2c_debug) {
-			printk(" %02x", msg->buf[cnt]);
+			dprintk(1, " %02x", msg->buf[cnt]);
 			if (!(ctrl & I2C_NOSTOP))
-				printk(" >\n");
+				dprintk(1, " >\n");
 		}
 	}
 	return msg->len;
@@ -162,7 +163,7 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 	retval = -EIO;
  err:
 	if (i2c_debug)
-		printk(" ERR: %d\n", retval);
+		printk(KERN_ERR " ERR: %d\n", retval);
 	return retval;
 }
 
@@ -194,12 +195,12 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 
 	if (i2c_debug) {
 		if (joined)
-			printk(" R");
+			dprintk(1, " R");
 		else
-			printk(" <R %02x", (msg->addr << 1) + 1);
+			dprintk(1, " <R %02x", (msg->addr << 1) + 1);
 	}
 
-	for(cnt = 0; cnt < msg->len; cnt++) {
+	for (cnt = 0; cnt < msg->len; cnt++) {
 
 		ctrl = bus->i2c_period | (1 << 12) | (1 << 2) | 1;
 
@@ -216,9 +217,9 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 			goto eio;
 		msg->buf[cnt] = cx_read(bus->reg_rdata) & 0xff;
 		if (i2c_debug) {
-			printk(" %02x", msg->buf[cnt]);
+			dprintk(1, " %02x", msg->buf[cnt]);
 			if (!(ctrl & I2C_NOSTOP))
-				printk(" >\n");
+				dprintk(1, " >\n");
 		}
 	}
 	return msg->len;
@@ -227,7 +228,7 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 	retval = -EIO;
  err:
 	if (i2c_debug)
-		printk(" ERR: %d\n", retval);
+		printk(KERN_ERR " ERR: %d\n", retval);
 	return retval;
 }
 
@@ -279,6 +280,24 @@ static int attach_inform(struct i2c_client *client)
 
 	if (!client->driver->command)
 		return 0;
+#if 0
+      if (dev->radio_type != UNSET) {
+
+		dprintk(1, "%s  (radio) i2c attach [addr=0x%x,client=%s]\n",
+			client->driver->driver.name, client->addr,
+			client->name);
+
+		if ((dev->radio_addr == ADDR_UNSET) ||
+			(dev->radio_addr == client->addr)) {
+			tun_setup.mode_mask = T_RADIO;
+			tun_setup.type = dev->radio_type;
+			tun_setup.addr = dev->radio_addr;
+
+			client->driver->command(client, TUNER_SET_TYPE_ADDR,
+				&tun_setup);
+		}
+	}
+#endif
 
 	if (dev->tuner_type != UNSET) {
 
@@ -334,6 +353,9 @@ static u32 cx23885_functionality(struct i2c_adapter *adap)
 static struct i2c_algorithm cx23885_i2c_algo_template = {
 	.master_xfer	= i2c_xfer,
 	.functionality	= cx23885_functionality,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* ----------------------------------------------------------------------- */
@@ -353,17 +375,17 @@ static struct i2c_client cx23885_i2c_client_template = {
 };
 
 static char *i2c_devs[128] = {
-	[0x10 >> 1]   = "tda10048",
-	[0x12 >> 1]   = "dib7000pc",
-	[ 0x1c >> 1 ] = "lgdt3303",
-	[ 0x86 >> 1 ] = "tda9887",
-	[ 0x32 >> 1 ] = "cx24227",
-	[ 0x88 >> 1 ] = "cx25837",
-	[ 0x84 >> 1 ] = "tda8295",
-	[ 0xa0 >> 1 ] = "eeprom",
-	[ 0xc0 >> 1 ] = "tuner/mt2131/tda8275",
+	[0x10 >> 1] = "tda10048",
+	[0x12 >> 1] = "dib7000pc",
+	[0x1c >> 1] = "lgdt3303",
+	[0x86 >> 1] = "tda9887",
+	[0x32 >> 1] = "cx24227",
+	[0x88 >> 1] = "cx25837",
+	[0x84 >> 1] = "tda8295",
+	[0xa0 >> 1] = "eeprom",
+	[0xc0 >> 1] = "tuner/mt2131/tda8275",
 	[0xc2 >> 1] = "tuner/mt2131/tda8275/xc5000/xc3028",
-	[0xc8 >> 1]   = "tuner/xc3028L",
+	[0xc8 >> 1] = "tuner/xc3028L",
 };
 
 static void do_i2c_scan(char *name, struct i2c_client *c)
@@ -376,7 +398,7 @@ static void do_i2c_scan(char *name, struct i2c_client *c)
 		rc = i2c_master_recv(c, &buf, 0);
 		if (rc < 0)
 			continue;
-		printk("%s: i2c scan: found device @ 0x%x  [%s]\n",
+		printk(KERN_INFO "%s: i2c scan: found device @ 0x%x  [%s]\n",
 		       name, i << 1, i2c_devs[i] ? i2c_devs[i] : "???");
 	}
 }
@@ -408,11 +430,12 @@ int cx23885_i2c_register(struct cx23885_i2c *bus)
 	bus->i2c_client.adapter = &bus->i2c_adap;
 
 	if (0 == bus->i2c_rc) {
-		printk("%s: i2c bus %d registered\n", dev->name, bus->nr);
+		dprintk(1, "%s: i2c bus %d registered\n", dev->name, bus->nr);
 		if (i2c_scan)
 			do_i2c_scan(dev->name, &bus->i2c_client);
 	} else
-		printk("%s: i2c bus %d register FAILED\n", dev->name, bus->nr);
+		printk(KERN_WARNING "%s: i2c bus %d register FAILED\n",
+			dev->name, bus->nr);
 
 	return bus->i2c_rc;
 }

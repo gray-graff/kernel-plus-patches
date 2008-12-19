@@ -63,7 +63,11 @@ struct flexcop_pci {
 
 	unsigned long last_irq;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct work_struct irq_check_work;
+#else
 	struct delayed_work irq_check_work;
+#endif
 
 	struct flexcop_device *fc_dev;
 };
@@ -97,10 +101,18 @@ static int flexcop_pci_write_ibi_reg(struct flexcop_device *fc, flexcop_ibi_regi
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void flexcop_pci_irq_check_work(void *data)
+#else
 static void flexcop_pci_irq_check_work(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct flexcop_pci *fc_pci = data;
+#else
 	struct flexcop_pci *fc_pci =
 		container_of(work, struct flexcop_pci, irq_check_work.work);
+#endif
 	struct flexcop_device *fc = fc_pci->fc_dev;
 
 	flexcop_ibi_value v = fc->read_ibi_reg(fc,sram_dest_reg_714);
@@ -123,7 +135,11 @@ static void flexcop_pci_irq_check_work(struct work_struct *work)
 /* When PID filtering is turned on, we use the timer IRQ, because small amounts
  * of data need to be passed to the user space instantly as well. When PID
  * filtering is turned off, we use the page-change-IRQ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t flexcop_pci_isr(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t flexcop_pci_isr(int irq, void *dev_id)
+#endif
 {
 	struct flexcop_pci *fc_pci = dev_id;
 	struct flexcop_device *fc = fc_pci->fc_dev;
@@ -373,7 +389,11 @@ static int flexcop_pci_probe(struct pci_dev *pdev, const struct pci_device_id *e
 	if ((ret = flexcop_pci_dma_init(fc_pci)) != 0)
 		goto err_fc_exit;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&fc_pci->irq_check_work, flexcop_pci_irq_check_work, fc_pci);
+#else
 	INIT_DELAYED_WORK(&fc_pci->irq_check_work, flexcop_pci_irq_check_work);
+#endif
 
 	return ret;
 

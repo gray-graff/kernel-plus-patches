@@ -109,7 +109,11 @@ static struct cpia_camera_ops cpia_usb_ops = {
 static LIST_HEAD(cam_list);
 static spinlock_t cam_list_lock_usb;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void cpia_usb_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void cpia_usb_complete(struct urb *urb)
+#endif
 {
 	int i;
 	char *cdata;

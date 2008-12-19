@@ -637,7 +637,7 @@ ov511_i2c_write_internal(struct usb_ov511 *ov,
 			rc = 0;
 			break;
 		}
-#if 0
+#if 0 /* keep */
 		/* I2C abort */
 		reg_w(ov, R511_I2C_CTL, 0x10);
 #endif
@@ -974,14 +974,14 @@ dump_i2c_range(struct usb_ov511 *ov, int reg1, int regn)
 
 	for (i = reg1; i <= regn; i++) {
 		rc = i2c_r(ov, i);
-		info("Sensor[0x%02X] = 0x%02X", i, rc);
+		dev_info(&ov->dev->dev, "Sensor[0x%02X] = 0x%02X\n", i, rc);
 	}
 }
 
 static void
 dump_i2c_regs(struct usb_ov511 *ov)
 {
-	info("I2C REGS");
+	dev_info(&ov->dev->dev, "I2C REGS\n");
 	dump_i2c_range(ov, 0x00, 0x7C);
 }
 
@@ -992,28 +992,28 @@ dump_reg_range(struct usb_ov511 *ov, int reg1, int regn)
 
 	for (i = reg1; i <= regn; i++) {
 		rc = reg_r(ov, i);
-		info("OV511[0x%02X] = 0x%02X", i, rc);
+		dev_info(&ov->dev->dev, "OV511[0x%02X] = 0x%02X\n", i, rc);
 	}
 }
 
 static void
 ov511_dump_regs(struct usb_ov511 *ov)
 {
-	info("CAMERA INTERFACE REGS");
+	dev_info(&ov->dev->dev, "CAMERA INTERFACE REGS\n");
 	dump_reg_range(ov, 0x10, 0x1f);
-	info("DRAM INTERFACE REGS");
+	dev_info(&ov->dev->dev, "DRAM INTERFACE REGS\n");
 	dump_reg_range(ov, 0x20, 0x23);
-	info("ISO FIFO REGS");
+	dev_info(&ov->dev->dev, "ISO FIFO REGS\n");
 	dump_reg_range(ov, 0x30, 0x31);
-	info("PIO REGS");
+	dev_info(&ov->dev->dev, "PIO REGS\n");
 	dump_reg_range(ov, 0x38, 0x39);
 	dump_reg_range(ov, 0x3e, 0x3e);
-	info("I2C REGS");
+	dev_info(&ov->dev->dev, "I2C REGS\n");
 	dump_reg_range(ov, 0x40, 0x49);
-	info("SYSTEM CONTROL REGS");
+	dev_info(&ov->dev->dev, "SYSTEM CONTROL REGS\n");
 	dump_reg_range(ov, 0x50, 0x55);
 	dump_reg_range(ov, 0x5e, 0x5f);
-	info("OmniCE REGS");
+	dev_info(&ov->dev->dev, "OmniCE REGS\n");
 	dump_reg_range(ov, 0x70, 0x79);
 	/* NOTE: Quantization tables are not readable. You will get the value
 	 * in reg. 0x79 for every table register */
@@ -1025,25 +1025,25 @@ ov511_dump_regs(struct usb_ov511 *ov)
 static void
 ov518_dump_regs(struct usb_ov511 *ov)
 {
-	info("VIDEO MODE REGS");
+	dev_info(&ov->dev->dev, "VIDEO MODE REGS\n");
 	dump_reg_range(ov, 0x20, 0x2f);
-	info("DATA PUMP AND SNAPSHOT REGS");
+	dev_info(&ov->dev->dev, "DATA PUMP AND SNAPSHOT REGS\n");
 	dump_reg_range(ov, 0x30, 0x3f);
-	info("I2C REGS");
+	dev_info(&ov->dev->dev, "I2C REGS\n");
 	dump_reg_range(ov, 0x40, 0x4f);
-	info("SYSTEM CONTROL AND VENDOR REGS");
+	dev_info(&ov->dev->dev, "SYSTEM CONTROL AND VENDOR REGS\n");
 	dump_reg_range(ov, 0x50, 0x5f);
-	info("60 - 6F");
+	dev_info(&ov->dev->dev, "60 - 6F\n");
 	dump_reg_range(ov, 0x60, 0x6f);
-	info("70 - 7F");
+	dev_info(&ov->dev->dev, "70 - 7F\n");
 	dump_reg_range(ov, 0x70, 0x7f);
-	info("Y QUANTIZATION TABLE");
+	dev_info(&ov->dev->dev, "Y QUANTIZATION TABLE\n");
 	dump_reg_range(ov, 0x80, 0x8f);
-	info("UV QUANTIZATION TABLE");
+	dev_info(&ov->dev->dev, "UV QUANTIZATION TABLE\n");
 	dump_reg_range(ov, 0x90, 0x9f);
-	info("A0 - BF");
+	dev_info(&ov->dev->dev, "A0 - BF\n");
 	dump_reg_range(ov, 0xa0, 0xbf);
-	info("CBR");
+	dev_info(&ov->dev->dev, "CBR\n");
 	dump_reg_range(ov, 0xc0, 0xcf);
 }
 #endif
@@ -1098,13 +1098,14 @@ ov51x_clear_snapshot(struct usb_ov511 *ov)
 		reg_w(ov, R51x_SYS_SNAP, 0x02);
 		reg_w(ov, R51x_SYS_SNAP, 0x00);
 	} else if (ov->bclass == BCL_OV518) {
-		warn("snapshot reset not supported yet on OV518(+)");
+		dev_warn(&ov->dev->dev,
+			 "snapshot reset not supported yet on OV518(+)\n");
 	} else {
-		err("clear snap: invalid bridge type");
+		dev_err(&ov->dev->dev, "clear snap: invalid bridge type\n");
 	}
 }
 
-#if 0
+#if 0 /* keep */
 /* Checks the status of the snapshot button. Returns 1 if it was pressed since
  * it was last cleared, and zero in all other cases (including errors) */
 static int
@@ -1115,14 +1116,16 @@ ov51x_check_snapshot(struct usb_ov511 *ov)
 	if (ov->bclass == BCL_OV511) {
 		ret = reg_r(ov, R51x_SYS_SNAP);
 		if (ret < 0) {
-			err("Error checking snspshot status (%d)", ret);
+			dev_err(&ov->dev->dev,
+				"Error checking snspshot status (%d)\n", ret);
 		} else if (ret & 0x08) {
 			status = 1;
 		}
 	} else if (ov->bclass == BCL_OV518) {
-		warn("snapshot check not supported yet on OV518(+)");
+		dev_warn(&ov->dev->dev,
+			 "snapshot check not supported yet on OV518(+)\n");
 	} else {
-		err("check snap: invalid bridge type");
+		dev_err(&ov->dev->dev, "clear snap: invalid bridge type\n");
 	}
 
 	return status;
@@ -1672,7 +1675,7 @@ sensor_set_hue(struct usb_ov511 *ov, unsigned short val)
 		break;
 	case SEN_OV7620:
 // Hue control is causing problems. I will enable it once it's fixed.
-#if 0
+#if 0 /* keep */
 		rc = i2c_w(ov, 0x7a, (unsigned char)(val >> 8) + 0xb);
 		if (rc < 0)
 			goto out;
@@ -1803,7 +1806,7 @@ sensor_get_picture(struct usb_ov511 *ov, struct video_picture *p)
 	return 0;
 }
 
-#if 0
+#if 0 /* keep */
 // FIXME: Exposure range is only 0x00-0x7f in interlace mode
 /* Sets current exposure for sensor. This only has an effect if auto-exposure
  * is off */
@@ -2170,7 +2173,7 @@ mode_init_ov_sensor_regs(struct usb_ov511 *ov, int width, int height,
 	case SEN_OV7610:
 		i2c_w(ov, 0x14, qvga?0x24:0x04);
 // FIXME: Does this improve the image quality or frame rate?
-#if 0
+#if 0 /* keep */
 		i2c_w_mask(ov, 0x28, qvga?0x00:0x20, 0x20);
 		i2c_w(ov, 0x24, 0x10);
 		i2c_w(ov, 0x25, qvga?0x40:0x8a);
@@ -2192,7 +2195,7 @@ mode_init_ov_sensor_regs(struct usb_ov511 *ov, int width, int height,
 //		i2c_w(ov, 0x2b, 0x00);
 		i2c_w(ov, 0x14, qvga?0xa4:0x84);
 // FIXME: Enable this once 7620AE uses 7620 initial settings
-#if 0
+#if 0 /* keep */
 		i2c_w_mask(ov, 0x28, qvga?0x00:0x20, 0x20);
 		i2c_w(ov, 0x24, qvga?0x20:0x3a);
 		i2c_w(ov, 0x25, qvga?0x30:0x60);
@@ -3205,9 +3208,10 @@ ov511_move_data(struct usb_ov511 *ov, unsigned char *in, int n)
 	 */
 
 	if (printph) {
-		info("ph(%3d): %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x",
-		     pnum, in[0], in[1], in[2], in[3], in[4], in[5], in[6],
-		     in[7], in[8], in[9], in[10], in[11]);
+		dev_info(&ov->dev->dev,
+			 "ph(%3d): %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x\n",
+			 pnum, in[0], in[1], in[2], in[3], in[4], in[5], in[6],
+			 in[7], in[8], in[9], in[10], in[11]);
 	}
 
 	/* Check for SOF/EOF packet */
@@ -3366,8 +3370,10 @@ ov518_move_data(struct usb_ov511 *ov, unsigned char *in, int n)
 	 * the definitive SOF/EOF format */
 	if ((!(in[0] | in[1] | in[2] | in[3] | in[5])) && in[6]) {
 		if (printph) {
-			info("ph: %2x %2x %2x %2x %2x %2x %2x %2x", in[0],
-			     in[1], in[2], in[3], in[4], in[5], in[6], in[7]);
+			dev_info(&ov->dev->dev,
+				 "ph: %2x %2x %2x %2x %2x %2x %2x %2x\n",
+				 in[0], in[1], in[2], in[3], in[4], in[5],
+				 in[6], in[7]);
 		}
 
 		if (frame->scanstate == STATE_LINES) {
@@ -3434,7 +3440,7 @@ sof:
 	PDEBUG(4, "Starting capture on frame %d", frame->framenum);
 
 // Snapshot not reverse-engineered yet.
-#if 0
+#if 0 /* keep */
 	/* Check to see if it's a snapshot frame */
 	/* FIXME?? Should the snapshot reset go here? Performance? */
 	if (in[8] & 0x02) {
@@ -3502,7 +3508,11 @@ check_middle:
 }
 
 static void
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+ov51x_isoc_irq(struct urb *urb, struct pt_regs *regs)
+#else
 ov51x_isoc_irq(struct urb *urb)
+#endif
 {
 	int i;
 	struct usb_ov511 *ov;
@@ -3646,14 +3656,16 @@ ov51x_init_isoc(struct usb_ov511 *ov)
 		if (packetsize == -1) {
 			ov518_set_packet_size(ov, 640);
 		} else {
-			info("Forcing packet size to %d", packetsize);
+			dev_info(&ov->dev->dev, "Forcing packet size to %d\n",
+				 packetsize);
 			ov518_set_packet_size(ov, packetsize);
 		}
 	} else {
 		if (packetsize == -1) {
 			ov511_set_packet_size(ov, size);
 		} else {
-			info("Forcing packet size to %d", packetsize);
+			dev_info(&ov->dev->dev, "Forcing packet size to %d\n",
+				 packetsize);
 			ov511_set_packet_size(ov, packetsize);
 		}
 	}
@@ -4003,8 +4015,7 @@ ov51x_v4l1_close(struct inode *inode, struct file *file)
 
 /* Do not call this function directly! */
 static int
-ov51x_v4l1_ioctl_internal(struct inode *inode, struct file *file,
-			  unsigned int cmd, void *arg)
+ov51x_v4l1_ioctl_internal(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = file->private_data;
 	struct usb_ov511 *ov = video_get_drvdata(vdev);
@@ -4121,7 +4132,7 @@ ov51x_v4l1_ioctl_internal(struct inode *inode, struct file *file,
 			return -EIO;
 
 		if (force_palette && p->palette != force_palette) {
-			info("Palette rejected (%s)",
+			dev_info(&ov->dev->dev, "Palette rejected (%s)\n",
 			     symbolic(v4l1_plist, p->palette));
 			return -EINVAL;
 		}
@@ -4194,7 +4205,7 @@ ov51x_v4l1_ioctl_internal(struct inode *inode, struct file *file,
 
 		PDEBUG(4, "VIDIOCSWIN: %dx%d", vw->width, vw->height);
 
-#if 0
+#if 0 /* keep */
 		if (vw->flags)
 			return -EINVAL;
 		if (vw->clipcount)
@@ -4307,7 +4318,7 @@ ov51x_v4l1_ioctl_internal(struct inode *inode, struct file *file,
 
 			rc = mode_init_regs(ov, vm->width, vm->height,
 				vm->format, ov->sub_flag);
-#if 0
+#if 0 /* keep */
 			if (rc < 0) {
 				PDEBUG(1, "Got error while initializing regs ");
 				return ret;
@@ -4453,7 +4464,7 @@ ov51x_v4l1_ioctl(struct inode *inode, struct file *file,
 	if (mutex_lock_interruptible(&ov->lock))
 		return -EINTR;
 
-	rc = video_usercopy(inode, file, cmd, arg, ov51x_v4l1_ioctl_internal);
+	rc = video_usercopy(file, cmd, arg, ov51x_v4l1_ioctl_internal);
 
 	mutex_unlock(&ov->lock);
 	return rc;
@@ -4849,26 +4860,27 @@ ov7xx0_configure(struct usb_ov511 *ov)
 		err("Error detecting sensor type");
 		return -1;
 	} else if ((rc & 3) == 3) {
-		info("Sensor is an OV7610");
+		dev_info(&ov->dev->dev, "Sensor is an OV7610\n");
 		ov->sensor = SEN_OV7610;
 	} else if ((rc & 3) == 1) {
 		/* I don't know what's different about the 76BE yet. */
 		if (i2c_r(ov, 0x15) & 1)
-			info("Sensor is an OV7620AE");
+			dev_info(&ov->dev->dev, "Sensor is an OV7620AE\n");
 		else
-			info("Sensor is an OV76BE");
+			dev_info(&ov->dev->dev, "Sensor is an OV76BE\n");
 
 		/* OV511+ will return all zero isoc data unless we
 		 * configure the sensor as a 7620. Someone needs to
 		 * find the exact reg. setting that causes this. */
 		if (ov->bridge == BRG_OV511PLUS) {
-			info("Enabling 511+/7620AE workaround");
+			dev_info(&ov->dev->dev,
+				 "Enabling 511+/7620AE workaround\n");
 			ov->sensor = SEN_OV7620;
 		} else {
 			ov->sensor = SEN_OV76BE;
 		}
 	} else if ((rc & 3) == 0) {
-		info("Sensor is an OV7620");
+		dev_info(&ov->dev->dev, "Sensor is an OV7620\n");
 		ov->sensor = SEN_OV7620;
 	} else {
 		err("Unknown image sensor version: %d", rc & 3);
@@ -5024,16 +5036,16 @@ ov6xx0_configure(struct usb_ov511 *ov)
 
 	if ((rc & 3) == 0) {
 		ov->sensor = SEN_OV6630;
-		info("Sensor is an OV6630");
+		dev_info(&ov->dev->dev, "Sensor is an OV6630\n");
 	} else if ((rc & 3) == 1) {
 		ov->sensor = SEN_OV6620;
-		info("Sensor is an OV6620");
+		dev_info(&ov->dev->dev, "Sensor is an OV6620\n");
 	} else if ((rc & 3) == 2) {
 		ov->sensor = SEN_OV6630;
-		info("Sensor is an OV6630AE");
+		dev_info(&ov->dev->dev, "Sensor is an OV6630AE\n");
 	} else if ((rc & 3) == 3) {
 		ov->sensor = SEN_OV6630;
-		info("Sensor is an OV6630AF");
+		dev_info(&ov->dev->dev, "Sensor is an OV6630AF\n");
 	}
 
 	/* Set sensor-specific vars */
@@ -5068,7 +5080,7 @@ ks0127_configure(struct usb_ov511 *ov)
 	int rc;
 
 // FIXME: I don't know how to sync or reset it yet
-#if 0
+#if 0 /* keep */
 	if (ov51x_init_ks_sensor(ov) < 0) {
 		err("Failed to initialize the KS0127");
 		return -1;
@@ -5088,10 +5100,10 @@ ks0127_configure(struct usb_ov511 *ov)
 			err("Error detecting sensor type");
 			return -1;
 		} else if ((rc & 0x0f) == 0) {
-			info("Sensor is a KS0127");
+			dev_info(&ov->dev->dev, "Sensor is a KS0127\n");
 			ov->sensor = SEN_KS0127;
 		} else if ((rc & 0x0f) == 9) {
-			info("Sensor is a KS0127B Rev. A");
+			dev_info(&ov->dev->dev, "Sensor is a KS0127B Rev. A\n");
 			ov->sensor = SEN_KS0127B;
 		}
 	} else {
@@ -5155,7 +5167,7 @@ saa7111a_configure(struct usb_ov511 *ov)
 	};
 
 // FIXME: I don't know how to sync or reset it yet
-#if 0
+#if 0 /* keep */
 	if (ov51x_init_saa_sensor(ov) < 0) {
 		err("Failed to initialize the SAA7111A");
 		return -1;
@@ -5200,7 +5212,8 @@ saa7111a_configure(struct usb_ov511 *ov)
 		err("Error detecting sensor version");
 		return -1;
 	} else {
-		info("Sensor is an SAA7111A (version 0x%x)", rc);
+		dev_info(&ov->dev->dev,
+			 "Sensor is an SAA7111A (version 0x%x)\n", rc);
 		ov->sensor = SEN_SAA7111A;
 	}
 
@@ -5210,7 +5223,8 @@ saa7111a_configure(struct usb_ov511 *ov)
 	if (ov->bclass == BCL_OV511)
 		reg_w(ov, 0x11, 0x00);
 	else
-		warn("SAA7111A not yet supported with OV518/OV518+");
+		dev_warn(&ov->dev->dev,
+			 "SAA7111A not yet supported with OV518/OV518+\n");
 
 	return 0;
 }
@@ -5262,7 +5276,7 @@ ov511_configure(struct usb_ov511 *ov)
 
 	PDEBUG (1, "CustomID = %d", ov->customid);
 	ov->desc = symbolic(camlist, ov->customid);
-	info("model: %s", ov->desc);
+	dev_info(&ov->dev->dev, "model: %s\n", ov->desc);
 
 	if (0 == strcmp(ov->desc, NOT_DEFINED_STR)) {
 		err("Camera type (%d) not recognized", ov->customid);
@@ -5426,7 +5440,8 @@ ov518_configure(struct usb_ov511 *ov)
 	PDEBUG(4, "");
 
 	/* First 5 bits of custom ID reg are a revision ID on OV518 */
-	info("Device revision %d", 0x1F & reg_r(ov, R511_SYS_CUST_ID));
+	dev_info(&ov->dev->dev, "Device revision %d\n",
+		 0x1F & reg_r(ov, R511_SYS_CUST_ID));
 
 	/* Give it the default description */
 	ov->desc = symbolic(camlist, 0);
@@ -5448,7 +5463,8 @@ ov518_configure(struct usb_ov511 *ov)
 	 * required. OV518 has no uncompressed mode, to save RAM. */
 	if (!dumppix && !ov->compress) {
 		ov->compress = 1;
-		warn("Compression required with OV518...enabling");
+		dev_warn(&ov->dev->dev,
+			 "Compression required with OV518...enabling\n");
 	}
 
 	if (ov->bridge == BRG_OV518) {
@@ -5773,7 +5789,8 @@ ov51x_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		goto error;
 	}
 
-	info("USB %s video device found", symbolic(brglist, ov->bridge));
+	dev_info(&intf->dev, "USB %s video device found\n",
+		 symbolic(brglist, ov->bridge));
 
 	init_waitqueue_head(&ov->wq);
 
@@ -5854,8 +5871,8 @@ ov51x_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		goto error;
 	}
 
-	info("Device at %s registered to minor %d", ov->usb_path,
-	     ov->vdev->minor);
+	dev_info(&intf->dev, "Device at %s registered to minor %d\n",
+		 ov->usb_path, ov->vdev->minor);
 
 	usb_set_intfdata(intf, ov);
 	if (ov_create_sysfs(ov->vdev)) {
@@ -5958,7 +5975,8 @@ usb_ov511_init(void)
 	if (retval)
 		goto out;
 
-	info(DRIVER_VERSION " : " DRIVER_DESC);
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
 
 out:
 	return retval;
@@ -5968,8 +5986,7 @@ static void __exit
 usb_ov511_exit(void)
 {
 	usb_deregister(&ov511_driver);
-	info("driver deregistered");
-
+	printk(KERN_INFO KBUILD_MODNAME ": driver deregistered\n");
 }
 
 module_init(usb_ov511_init);

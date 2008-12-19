@@ -44,7 +44,7 @@ struct tda10021_state {
 };
 
 
-#if 0
+#if 0 /* keep */
 #define dprintk(x...) printk(x)
 #else
 #define dprintk(x...)
@@ -449,7 +449,7 @@ static struct dvb_frontend_ops tda10021_ops = {
 		.frequency_max = 862000000,
 		.symbol_rate_min = (XIN/2)/64,     /* SACLK/64 == (XIN/2)/64 */
 		.symbol_rate_max = (XIN/2)/4,      /* SACLK/4 */
-	#if 0
+	#if 0 /* keep */
 		.frequency_tolerance = ???,
 		.symbol_rate_tolerance = ???,  /* ppm */  /* == 8% (spec p. 5) */
 	#endif

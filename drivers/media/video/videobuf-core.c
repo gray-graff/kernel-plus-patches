@@ -21,6 +21,7 @@
 #include <linux/interrupt.h>
 
 #include <media/videobuf-core.h>
+#include "compat.h"
 
 #define MAGIC_BUFFER 0x20070728
 #define MAGIC_CHECK(is, should) do {					   \

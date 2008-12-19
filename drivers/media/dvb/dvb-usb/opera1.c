@@ -48,6 +48,9 @@ MODULE_PARM_DESC(debug,
 
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
+#if 0
+struct mutex mymutex;
+#endif
 
 static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 			    u8 * data, u16 len, int flags)
@@ -60,6 +63,11 @@ static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 		usb_rcvctrlpipe(dev,0) : usb_sndctrlpipe(dev, 0);
 	u8 request_type = (flags == OPERA_READ_MSG) ? USB_DIR_IN : USB_DIR_OUT;
 
+#if 0
+	if (mutex_lock_interruptible(&mymutex)) {
+		return -EAGAIN;
+	}
+#endif
 	if (flags == OPERA_WRITE_MSG)
 		memcpy(u8buf, data, len);
 	ret =
@@ -74,6 +82,9 @@ static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 	}
 	if (flags == OPERA_READ_MSG)
 		memcpy(data, u8buf, len);
+#if 0
+	mutex_unlock(&mymutex);
+#endif
 	return ret;
 }
 
@@ -156,6 +167,9 @@ static u32 opera1_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm opera1_i2c_algo = {
 	.master_xfer = opera1_i2c_xfer,
 	.functionality = opera1_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 static int opera1_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
@@ -567,6 +581,9 @@ static struct usb_driver opera1_driver = {
 static int __init opera1_module_init(void)
 {
 	int result = 0;
+#if 0
+	mutex_init(&mymutex);
+#endif
 	if ((result = usb_register(&opera1_driver))) {
 		err("usb_register failed. Error number %d", result);
 	}

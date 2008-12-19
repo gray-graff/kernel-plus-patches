@@ -14,6 +14,7 @@
 #ifndef __LINUX_OVCAMCHIP_H
 #define __LINUX_OVCAMCHIP_H
 
+#include "compat.h"
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 

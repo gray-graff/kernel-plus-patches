@@ -28,11 +28,26 @@
 #include <linux/moduleparam.h>
 #include <linux/bitops.h>
 #include <asm/io.h>
+#ifdef NEED_SOUND_DRIVER_H
+#include <sound/driver.h>
+#endif
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/control.h>
 #include <sound/initval.h>
+#include "compat.h"
+#ifdef COMPAT_SND_CTL_BOOLEAN_MONO
+static int snd_ctl_boolean_mono_info(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+#endif
 
 MODULE_AUTHOR("Clemens Ladisch <clemens@ladisch.de>");
 MODULE_DESCRIPTION("Brooktree Bt87x audio driver");
@@ -121,8 +136,8 @@ MODULE_PARM_DESC(load_all, "Allow to load the non-whitelisted cards");
 /* RISC instruction bits */
 #define RISC_BYTES_ENABLE	(0xf << 12)	/* byte enable bits */
 #define RISC_RESYNC		(  1 << 15)	/* disable FDSR errors */
-#define RISC_SET_STATUS_SHIFT	        16	/* set status bits */
-#define RISC_RESET_STATUS_SHIFT	        20	/* clear status bits */
+#define RISC_SET_STATUS_SHIFT		16	/* set status bits */
+#define RISC_RESET_STATUS_SHIFT		20	/* clear status bits */
 #define RISC_IRQ		(  1 << 24)	/* interrupt */
 #define RISC_EOL		(  1 << 26)	/* end of line */
 #define RISC_SOL		(  1 << 27)	/* start of line */
@@ -225,11 +240,13 @@ static inline void snd_bt87x_writel(struct snd_bt87x *chip, u32 reg, u32 value)
 }
 
 static int snd_bt87x_create_risc(struct snd_bt87x *chip, struct snd_pcm_substream *substream,
-			       	 unsigned int periods, unsigned int period_bytes)
+				 unsigned int periods, unsigned int period_bytes)
 {
-	struct snd_sg_buf *sgbuf = snd_pcm_substream_sgbuf(substream);
 	unsigned int i, offset;
 	u32 *risc;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
+	struct snd_sg_buf *sgbuf = snd_pcm_substream_sgbuf(substream);
+#endif
 
 	if (chip->dma_risc.area == NULL) {
 		if (snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, snd_dma_pci_data(chip->pci),
@@ -246,6 +263,7 @@ static int snd_bt87x_create_risc(struct snd_bt87x *chip, struct snd_pcm_substrea
 		rest = period_bytes;
 		do {
 			u32 cmd, len;
+			unsigned int addr;
 
 			len = PAGE_SIZE - (offset % PAGE_SIZE);
 			if (len > rest)
@@ -260,7 +278,12 @@ static int snd_bt87x_create_risc(struct snd_bt87x *chip, struct snd_pcm_substrea
 			if (len == rest)
 				cmd |= RISC_EOL | RISC_IRQ;
 			*risc++ = cpu_to_le32(cmd);
-			*risc++ = cpu_to_le32((u32)snd_pcm_sgbuf_get_addr(sgbuf, offset));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
+			addr = snd_pcm_sgbuf_get_addr(sgbuf, offset);
+#else
+			addr = snd_pcm_sgbuf_get_addr(substream, offset);
+#endif
+			*risc++ = cpu_to_le32(addr);
 			offset += len;
 			rest -= len;
 		} while (rest > 0);
@@ -309,7 +332,11 @@ static void snd_bt87x_pci_error(struct snd_bt87x *chip, unsigned int status)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t snd_bt87x_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t snd_bt87x_interrupt(int irq, void *dev_id)
+#endif
 {
 	struct snd_bt87x *chip = dev_id;
 	unsigned int status, irq_status;
@@ -748,8 +775,7 @@ static int __devinit snd_bt87x_create(struct snd_card *card,
 		pci_disable_device(pci);
 		return err;
 	}
-	chip->mmio = ioremap_nocache(pci_resource_start(pci, 0),
-				     pci_resource_len(pci, 0));
+	chip->mmio = pci_ioremap_bar(pci, 0);
 	if (!chip->mmio) {
 		snd_printk(KERN_ERR "cannot remap io memory\n");
 		err = -ENOMEM;

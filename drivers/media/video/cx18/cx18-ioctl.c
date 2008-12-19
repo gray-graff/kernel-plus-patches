@@ -4,6 +4,7 @@
  *  Derived from ivtv-ioctl.c
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
+ *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -22,6 +23,7 @@
  */
 
 #include "cx18-driver.h"
+#include "cx18-io.h"
 #include "cx18-version.h"
 #include "cx18-mailbox.h"
 #include "cx18-i2c.h"
@@ -100,6 +102,21 @@ void cx18_expand_service_set(struct v4l2_sliced_vbi_format *fmt, int is_pal)
 	}
 }
 
+#if 0
+static int check_service_set(struct v4l2_sliced_vbi_format *fmt, int is_pal)
+{
+	int f, l;
+	u16 set = 0;
+
+	for (f = 0; f < 2; f++) {
+		for (l = 0; l < 24; l++) {
+			fmt->service_lines[f][l] = select_service_from_set(f, l, fmt->service_lines[f][l], is_pal);
+			set |= fmt->service_lines[f][l];
+		}
+	}
+	return set != 0;
+}
+#endif
 
 u16 cx18_get_service_set(struct v4l2_sliced_vbi_format *fmt)
 {
@@ -162,7 +179,22 @@ static int cx18_g_fmt_vbi_cap(struct file *file, void *fh,
 static int cx18_g_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
+#if 0
+	/* Supported by the cx23418 but not yet implemented. */
+	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
+	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
+
+	vbifmt->reserved[0] = 0;
+	vbifmt->reserved[1] = 0;
+	vbifmt->io_size = sizeof(struct v4l2_sliced_vbi_data) * 36;
+	memset(vbifmt->service_lines, 0, sizeof(vbifmt->service_lines));
+
+	cx18_av_cmd(cx, VIDIOC_G_FMT, fmt);
+	vbifmt->service_set = cx18_get_service_set(vbifmt);
+	return 0;
+#else
 	return -EINVAL;
+#endif
 }
 
 static int cx18_try_fmt_vid_cap(struct file *file, void *fh,
@@ -170,7 +202,6 @@ static int cx18_try_fmt_vid_cap(struct file *file, void *fh,
 {
 	struct cx18_open_id *id = fh;
 	struct cx18 *cx = id->cx;
-
 	int w = fmt->fmt.pix.width;
 	int h = fmt->fmt.pix.height;
 
@@ -193,7 +224,23 @@ static int cx18_try_fmt_vbi_cap(struct file *file, void *fh,
 static int cx18_try_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
+#if 0
+	/* Supported by the cx23418 but not yet implemented. */
+	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
+	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
+
+	vbifmt->io_size = sizeof(struct v4l2_sliced_vbi_data) * 36;
+	vbifmt->reserved[0] = 0;
+	vbifmt->reserved[1] = 0;
+
+	if (vbifmt->service_set)
+		cx18_expand_service_set(vbifmt, cx->is_50hz);
+	check_service_set(vbifmt, cx->is_50hz);
+	vbifmt->service_set = cx18_get_service_set(vbifmt);
+	return 0;
+#else
 	return -EINVAL;
+#endif
 }
 
 static int cx18_s_fmt_vid_cap(struct file *file, void *fh,
@@ -202,8 +249,7 @@ static int cx18_s_fmt_vid_cap(struct file *file, void *fh,
 	struct cx18_open_id *id = fh;
 	struct cx18 *cx = id->cx;
 	int ret;
-	int w = fmt->fmt.pix.width;
-	int h = fmt->fmt.pix.height;
+	int w, h;
 
 	ret = v4l2_prio_check(&cx->prio, &id->prio);
 	if (ret)
@@ -212,6 +258,8 @@ static int cx18_s_fmt_vid_cap(struct file *file, void *fh,
 	ret = cx18_try_fmt_vid_cap(file, fh, fmt);
 	if (ret)
 		return ret;
+	w = fmt->fmt.pix.width;
+	h = fmt->fmt.pix.height;
 
 	if (cx->params.width == w && cx->params.height == h)
 		return 0;
@@ -236,20 +284,45 @@ static int cx18_s_fmt_vbi_cap(struct file *file, void *fh,
 	if (ret)
 		return ret;
 
-	if (id->type == CX18_ENC_STREAM_TYPE_VBI &&
-			cx->vbi.sliced_in->service_set &&
-			atomic_read(&cx->ana_capturing) > 0)
+	if (!cx18_raw_vbi(cx) && atomic_read(&cx->ana_capturing) > 0)
 		return -EBUSY;
 
 	cx->vbi.sliced_in->service_set = 0;
-	cx18_av_cmd(cx, VIDIOC_S_FMT, &cx->vbi.in);
+	cx->vbi.in.type = V4L2_BUF_TYPE_VBI_CAPTURE;
+	cx18_av_cmd(cx, VIDIOC_S_FMT, fmt);
 	return cx18_g_fmt_vbi_cap(file, fh, fmt);
 }
 
 static int cx18_s_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
+#if 0
+	/* Supported by the cx23418 but not yet implemented. */
+	struct cx18_open_id *id = fh;
+	struct cx18 *cx = id->cx;
+	int ret;
+	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
+
+	ret = v4l2_prio_check(&cx->prio, &id->prio);
+	if (ret)
+		return ret;
+
+	ret = cx18_try_fmt_sliced_vbi_cap(file, fh, fmt);
+	if (ret)
+		return ret;
+
+	if (check_service_set(vbifmt, cx->is_50hz) == 0)
+		return -EINVAL;
+
+	if (cx18_raw_vbi(cx) && atomic_read(&cx->ana_capturing) > 0)
+		return -EBUSY;
+	cx->vbi.in.type =  V4L2_BUF_TYPE_SLICED_VBI_CAPTURE;
+	cx18_av_cmd(cx, VIDIOC_S_FMT, fmt);
+	memcpy(cx->vbi.sliced_in, vbifmt, sizeof(*cx->vbi.sliced_in));
+	return 0;
+#else
 	return -EINVAL;
+#endif
 }
 
 static int cx18_g_chip_ident(struct file *file, void *fh,
@@ -286,9 +359,9 @@ static int cx18_cxc(struct cx18 *cx, unsigned int cmd, void *arg)
 
 	spin_lock_irqsave(&cx18_cards_lock, flags);
 	if (cmd == VIDIOC_DBG_G_REGISTER)
-		regs->val = read_enc(regs->reg);
+		regs->val = cx18_read_enc(cx, regs->reg);
 	else
-		write_enc(regs->val, regs->reg);
+		cx18_write_enc(cx, regs->val, regs->reg);
 	spin_unlock_irqrestore(&cx18_cards_lock, flags);
 	return 0;
 }
@@ -345,7 +418,7 @@ static int cx18_querycap(struct file *file, void *fh,
 
 	strlcpy(vcap->driver, CX18_DRIVER_NAME, sizeof(vcap->driver));
 	strlcpy(vcap->card, cx->card_name, sizeof(vcap->card));
-	strlcpy(vcap->bus_info, pci_name(cx->dev), sizeof(vcap->bus_info));
+	snprintf(vcap->bus_info, sizeof(vcap->bus_info), "PCI:%s", pci_name(cx->dev));
 	vcap->version = CX18_DRIVER_VERSION; 	    /* version */
 	vcap->capabilities = cx->v4l2_cap; 	    /* capabilities */
 	return 0;
@@ -608,13 +681,46 @@ static int cx18_g_tuner(struct file *file, void *fh, struct v4l2_tuner *vt)
 static int cx18_g_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_sliced_vbi_cap *cap)
 {
+#if 0
+	/* Supported by the cx23418 but not yet implemented. */
+	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
+	int set = cx->is_50hz ? V4L2_SLICED_VBI_625 : V4L2_SLICED_VBI_525;
+	int f, l;
+
+	if (cap->type == V4L2_BUF_TYPE_SLICED_VBI_CAPTURE) {
+		for (f = 0; f < 2; f++) {
+			for (l = 0; l < 24; l++) {
+				if (valid_service_line(f, l, cx->is_50hz))
+					cap->service_lines[f][l] = set;
+			}
+		}
+		return 0;
+	}
+#endif
 	return -EINVAL;
 }
 
 static int cx18_g_enc_index(struct file *file, void *fh,
 				struct v4l2_enc_idx *idx)
 {
+#if 0
+	/* Supported by the cx23418 but not yet implemented. */
+	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
+	int i;
+
+	idx->entries = (cx->pgm_info_write_idx + CX18_MAX_PGM_INDEX
+			- cx->pgm_info_read_idx) % CX18_MAX_PGM_INDEX;
+	if (idx->entries > V4L2_ENC_IDX_ENTRIES)
+		idx->entries = V4L2_ENC_IDX_ENTRIES;
+	for (i = 0; i < idx->entries; i++)
+		idx->entry[i] = cx->pgm_info [(cx->pgm_info_read_idx + i)
+							% CX18_MAX_PGM_INDEX];
+	cx->pgm_info_read_idx =
+		(cx->pgm_info_read_idx + idx->entries) % CX18_MAX_PGM_INDEX;
+	return 0;
+#else
 	return -EINVAL;
+#endif
 }
 
 static int cx18_encoder_cmd(struct file *file, void *fh,
@@ -622,6 +728,7 @@ static int cx18_encoder_cmd(struct file *file, void *fh,
 {
 	struct cx18_open_id *id = fh;
 	struct cx18 *cx = id->cx;
+	u32 h;
 
 	switch (enc->cmd) {
 	case V4L2_ENC_CMD_START:
@@ -643,8 +750,14 @@ static int cx18_encoder_cmd(struct file *file, void *fh,
 			return -EPERM;
 		if (test_and_set_bit(CX18_F_I_ENC_PAUSED, &cx->i_flags))
 			return 0;
+		h = cx18_find_handle(cx);
+		if (h == CX18_INVALID_TASK_HANDLE) {
+			CX18_ERR("Can't find valid task handle for "
+				 "V4L2_ENC_CMD_PAUSE\n");
+			return -EBADFD;
+		}
 		cx18_mute(cx);
-		cx18_vapi(cx, CX18_CPU_CAPTURE_PAUSE, 1, cx18_find_handle(cx));
+		cx18_vapi(cx, CX18_CPU_CAPTURE_PAUSE, 1, h);
 		break;
 
 	case V4L2_ENC_CMD_RESUME:
@@ -654,7 +767,13 @@ static int cx18_encoder_cmd(struct file *file, void *fh,
 			return -EPERM;
 		if (!test_and_clear_bit(CX18_F_I_ENC_PAUSED, &cx->i_flags))
 			return 0;
-		cx18_vapi(cx, CX18_CPU_CAPTURE_RESUME, 1, cx18_find_handle(cx));
+		h = cx18_find_handle(cx);
+		if (h == CX18_INVALID_TASK_HANDLE) {
+			CX18_ERR("Can't find valid task handle for "
+				 "V4L2_ENC_CMD_RESUME\n");
+			return -EBADFD;
+		}
+		cx18_vapi(cx, CX18_CPU_CAPTURE_RESUME, 1, h);
 		cx18_unmute(cx);
 		break;
 
@@ -731,7 +850,7 @@ static int cx18_log_status(struct file *file, void *fh)
 			continue;
 		CX18_INFO("Stream %s: status 0x%04lx, %d%% of %d KiB (%d buffers) in use\n",
 			  s->name, s->s_flags,
-			  (s->buffers - s->q_free.buffers) * 100 / s->buffers,
+			  atomic_read(&s->q_full.buffers) * 100 / s->buffers,
 			  (s->buffers * s->buf_size) / 1024, s->buffers);
 	}
 	CX18_INFO("Read MPEG/VBI: %lld/%lld bytes\n",

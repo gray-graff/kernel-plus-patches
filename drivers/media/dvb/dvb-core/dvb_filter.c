@@ -3,7 +3,7 @@
 #include <linux/string.h>
 #include "dvb_filter.h"
 
-#if 0
+#if 0 /* keep */
 static unsigned int bitrates[3][16] =
 {{0,32,64,96,128,160,192,224,256,288,320,352,384,416,448,0},
  {0,32,48,56,64,80,96,112,128,160,192,224,256,320,384,0},
@@ -26,7 +26,7 @@ static u32 ac3_frames[3][32] =
 
 
 
-#if 0
+#if 0 /* keep */
 static void setup_ts2pes(ipack *pa, ipack *pv, u16 *pida, u16 *pidv,
 		  void (*pes_write)(u8 *buf, int count, void *data),
 		  void *priv)
@@ -40,7 +40,7 @@ static void setup_ts2pes(ipack *pa, ipack *pv, u16 *pida, u16 *pidv,
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 static void ts_to_pes(ipack *p, u8 *buf) // don't need count (=188)
 {
 	u8 off = 0;
@@ -65,7 +65,7 @@ static void ts_to_pes(ipack *p, u8 *buf) // don't need count (=188)
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 /* needs 5 byte input, returns picture coding type*/
 static int read_picture_header(u8 *headr, struct mpg_picture *pic, int field, int pr)
 {
@@ -111,7 +111,7 @@ static int read_picture_header(u8 *headr, struct mpg_picture *pic, int field, in
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 /* needs 4 byte input */
 static int read_gop_header(u8 *headr, struct mpg_picture *pic, int pr)
 {
@@ -142,7 +142,7 @@ static int read_gop_header(u8 *headr, struct mpg_picture *pic, int pr)
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 /* needs 8 byte input */
 static int read_sequence_header(u8 *headr, struct dvb_video_info *vi, int pr)
 {
@@ -257,7 +257,7 @@ static int read_sequence_header(u8 *headr, struct dvb_video_info *vi, int pr)
 #endif
 
 
-#if 0
+#if 0 /* keep */
 static int get_vinfo(u8 *mbuf, int count, struct dvb_video_info *vi, int pr)
 {
 	u8 *headr;
@@ -286,7 +286,7 @@ static int get_vinfo(u8 *mbuf, int count, struct dvb_video_info *vi, int pr)
 #endif
 
 
-#if 0
+#if 0 /* keep */
 static int get_ainfo(u8 *mbuf, int count, struct dvb_audio_info *ai, int pr)
 {
 	u8 *headr;
@@ -393,7 +393,7 @@ int dvb_filter_get_ac3info(u8 *mbuf, int count, struct dvb_audio_info *ai, int p
 EXPORT_SYMBOL(dvb_filter_get_ac3info);
 
 
-#if 0
+#if 0 /* keep */
 static u8 *skip_pes_header(u8 **bufp)
 {
 	u8 *inbuf = *bufp;
@@ -431,7 +431,7 @@ static u8 *skip_pes_header(u8 **bufp)
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 static void initialize_quant_matrix( u32 *matrix )
 {
 	int i;
@@ -458,7 +458,7 @@ static void initialize_quant_matrix( u32 *matrix )
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 static void initialize_mpg_picture(struct mpg_picture *pic)
 {
 	int i;
@@ -485,7 +485,7 @@ static void initialize_mpg_picture(struct mpg_picture *pic)
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 static void mpg_set_picture_parameter( int32_t field_type, struct mpg_picture *pic )
 {
 	int16_t last_h_offset;
@@ -523,7 +523,7 @@ static void mpg_set_picture_parameter( int32_t field_type, struct mpg_picture *p
 }
 #endif
 
-#if 0
+#if 0 /* keep */
 static void init_mpg_picture( struct mpg_picture *pic, int chan, int32_t field_type)
 {
 	pic->picture_header = 0;

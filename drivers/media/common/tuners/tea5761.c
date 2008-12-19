@@ -9,6 +9,7 @@
 
 #include <linux/i2c.h>
 #include <linux/delay.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include <media/tuner.h>
 #include "tuner-i2c.h"
@@ -281,6 +282,11 @@ static int tea5761_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 static struct dvb_tuner_ops tea5761_tuner_ops = {
 	.info = {
 		.name           = "tea5761", // Philips TEA5761HN FM Radio
+#if 0
+		.frequency_min  = ,
+		.frequency_max  = ,
+		.frequency_step = ,
+#endif
 	},
 	.set_analog_params = set_radio_freq,
 	.release           = tea5761_release,

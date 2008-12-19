@@ -26,6 +26,7 @@
 #include <linux/kernel.h>
 #include <linux/i2c.h>
 #include <linux/types.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -146,13 +147,25 @@ int bt832_init(struct i2c_client *i2c_client_s)
 
 	bt832_hexdump(i2c_client_s,buf);
 
+#if 0
+	// Full 30/25 Frame rate
+	v4l_err(i2c_client_s,"Full 30/25 Frame rate\n");
+	buf[0]=BT832_VP_CONTROL0; // Reg.39
+	buf[1]= 0x00;
+	if (2 != (rc = i2c_master_send(i2c_client_s,buf,2)))
+		v4l_err(i2c_client_s,"i2c i/o error FFR: rc == %d (should be 2)\n",rc);
 
+	bt832_hexdump(i2c_client_s,buf);
+#endif
+
+#if 1
 	// for testing (even works when no camera attached)
 	v4l_info(i2c_client_s,"*** Generate NTSC M Bars *****\n");
 	buf[0]=BT832_VP_TESTCONTROL0; // Reg. 42
 	buf[1]=3; // Generate NTSC System M bars, Generate Frame timing internally
 	if (2 != (rc = i2c_master_send(i2c_client_s,buf,2)))
 		v4l_info(i2c_client_s,"i2c i/o error MBAR: rc == %d (should be 2)\n",rc);
+#endif
 
 	v4l_info(i2c_client_s,"Camera Present: %s\n",
 		(buf[1+BT832_CAM_STATUS] & BT832_56_CAMERA_PRESENT) ? "yes":"no");

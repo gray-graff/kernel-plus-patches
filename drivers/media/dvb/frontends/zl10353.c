@@ -25,6 +25,7 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include "compat.h"
 #include <asm/div64.h>
 
 #include "dvb_frontend.h"
@@ -46,7 +47,9 @@ static int debug;
 		if (debug) printk(KERN_DEBUG "zl10353: " args); \
 	} while (0)
 
+#if 1
 static int debug_regs;
+#endif
 
 static int zl10353_single_write(struct dvb_frontend *fe, u8 reg, u8 val)
 {
@@ -95,6 +98,7 @@ static int zl10353_read_register(struct zl10353_state *state, u8 reg)
 	return b1[0];
 }
 
+#if 1
 static void zl10353_dump_regs(struct dvb_frontend *fe)
 {
 	struct zl10353_state *state = fe->demodulator_priv;
@@ -120,6 +124,7 @@ static void zl10353_dump_regs(struct dvb_frontend *fe)
 	}
 	printk(KERN_DEBUG "%s\n", buf);
 }
+#endif
 
 static void zl10353_calc_nominal_rate(struct dvb_frontend *fe,
 				      enum fe_bandwidth bandwidth,
@@ -220,15 +225,18 @@ static int zl10353_set_parameters(struct dvb_frontend *fe,
 		/* These are extrapolated from the 7 and 8MHz values */
 		zl10353_single_write(fe, MCLK_RATIO, 0x97);
 		zl10353_single_write(fe, 0x64, 0x34);
+		zl10353_single_write(fe, 0xcc, 0xdd);
 		break;
 	case BANDWIDTH_7_MHZ:
 		zl10353_single_write(fe, MCLK_RATIO, 0x86);
 		zl10353_single_write(fe, 0x64, 0x35);
+		zl10353_single_write(fe, 0xcc, 0x73);
 		break;
 	case BANDWIDTH_8_MHZ:
 	default:
 		zl10353_single_write(fe, MCLK_RATIO, 0x75);
 		zl10353_single_write(fe, 0x64, 0x36);
+		zl10353_single_write(fe, 0xcc, 0x73);
 	}
 
 	zl10353_calc_nominal_rate(fe, op->bandwidth, &nominal_rate);
@@ -529,8 +537,10 @@ static int zl10353_read_snr(struct dvb_frontend *fe, u16 *snr)
 	struct zl10353_state *state = fe->demodulator_priv;
 	u8 _snr;
 
+#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
+#endif
 
 	_snr = zl10353_read_register(state, SNR);
 	*snr = (_snr << 8) | _snr;
@@ -565,8 +575,10 @@ static int zl10353_init(struct dvb_frontend *fe)
 	u8 zl10353_reset_attach[6] = { 0x50, 0x03, 0x64, 0x46, 0x15, 0x0F };
 	int rc = 0;
 
+#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
+#endif
 	if (state->config.parallel_ts)
 		zl10353_reset_attach[2] &= ~0x20;
 
@@ -575,8 +587,10 @@ static int zl10353_init(struct dvb_frontend *fe)
 	    zl10353_read_register(state, 0x51) != zl10353_reset_attach[2]) {
 		rc = zl10353_write(fe, zl10353_reset_attach,
 				   sizeof(zl10353_reset_attach));
+#if 1
 		if (debug_regs)
 			zl10353_dump_regs(fe);
+#endif
 	}
 
 	return 0;
@@ -667,8 +681,10 @@ static struct dvb_frontend_ops zl10353_ops = {
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
 
+#if 1
 module_param(debug_regs, int, 0644);
 MODULE_PARM_DESC(debug_regs, "Turn on/off frontend register dumps (default:off).");
+#endif
 
 MODULE_DESCRIPTION("Zarlink ZL10353 DVB-T demodulator driver");
 MODULE_AUTHOR("Chris Pascoe");

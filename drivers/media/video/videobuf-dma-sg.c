@@ -32,6 +32,7 @@
 #include <asm/pgtable.h>
 
 #include <media/videobuf-dma-sg.h>
+#include "compat.h"
 
 #define MAGIC_DMABUF 0x19721112
 #define MAGIC_SG_MEM 0x17890714
@@ -355,6 +356,11 @@ videobuf_vm_close(struct vm_area_struct *vma)
 				continue;
 			mem=q->bufs[i]->priv;
 
+#if 0
+			/* FIXME: this seems to be a hack!!!  */
+			if (q->bufs[i])
+				;
+#endif
 			if (!mem)
 				continue;
 
@@ -378,6 +384,26 @@ videobuf_vm_close(struct vm_area_struct *vma)
  * now ...).  Bounce buffers don't work very well for the data rates
  * video capture has.
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
+static struct page*
+videobuf_vm_nopage(struct vm_area_struct *vma, unsigned long vaddr,
+		   int *type)
+{
+	struct page *page;
+
+	dprintk(3,"nopage: fault @ %08lx [vma %08lx-%08lx]\n",
+		vaddr,vma->vm_start,vma->vm_end);
+	if (vaddr > vma->vm_end)
+		return NOPAGE_SIGBUS;
+	page = alloc_page(GFP_USER | __GFP_DMA32);
+	if (!page)
+		return NOPAGE_OOM;
+	clear_user_page(page_address(page), vaddr, page);
+	if (type)
+		*type = VM_FAULT_MINOR;
+	return page;
+}
+#else
 static int
 videobuf_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
@@ -393,12 +419,17 @@ videobuf_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	vmf->page = page;
 	return 0;
 }
+#endif
 
 static struct vm_operations_struct videobuf_vm_ops =
 {
 	.open     = videobuf_vm_open,
 	.close    = videobuf_vm_close,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
+	.nopage   = videobuf_vm_nopage,
+#else
 	.fault    = videobuf_vm_fault,
+#endif
 };
 
 /* ---------------------------------------------------------------------

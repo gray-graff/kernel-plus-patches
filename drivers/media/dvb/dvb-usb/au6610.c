@@ -119,6 +119,9 @@ static u32 au6610_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm au6610_i2c_algo = {
 	.master_xfer   = au6610_i2c_xfer,
 	.functionality = au6610_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* Callbacks for DVB USB */

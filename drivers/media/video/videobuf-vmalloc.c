@@ -26,6 +26,7 @@
 #include <asm/pgtable.h>
 
 #include <media/videobuf-vmalloc.h>
+#include "compat.h"
 
 #define MAGIC_DMABUF   0x17760309
 #define MAGIC_VMAL_MEM 0x18221223
@@ -175,7 +176,7 @@ static int __videobuf_iolock (struct videobuf_queue* q,
 
 		dprintk(1, "%s memory method USERPTR\n", __func__);
 
-#if 1
+#if 1 /* keep */
 		if (vb->baddr) {
 			printk(KERN_ERR "USERPTR is currently not supported\n");
 			return -EINVAL;
@@ -194,7 +195,7 @@ static int __videobuf_iolock (struct videobuf_queue* q,
 		dprintk(1, "vmalloc is at addr %p (%d pages)\n",
 			mem->vmalloc, pages);
 
-#if 0
+#if 0 /* keep */
 		int rc;
 		/* Kernel userptr is used also by read() method. In this case,
 		   there's no need to remap, since data will be copied to user

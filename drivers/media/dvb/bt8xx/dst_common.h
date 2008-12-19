@@ -24,6 +24,7 @@
 
 #include <linux/dvb/frontend.h>
 #include <linux/device.h>
+#include "compat.h"
 #include <linux/mutex.h>
 #include "bt878.h"
 

@@ -33,6 +33,7 @@
 
 #include <asm/io.h>
 
+#include "compat.h"
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/tuner.h>
@@ -269,8 +270,15 @@ struct saa7134_format {
 #define SAA7134_BOARD_BEHOLD_M6_EXTRA    144
 #define SAA7134_BOARD_AVERMEDIA_M103    145
 #define SAA7134_BOARD_ASUSTeK_P7131_ANALOG 146
+#define SAA7134_BOARD_ASUSTeK_TIGER_3IN1   147
+#define SAA7134_BOARD_ENCORE_ENLTV_FM53 148
+#define SAA7134_BOARD_AVERMEDIA_M135A    149
+#define SAA7134_BOARD_REAL_ANGEL_220     150
+#define SAA7134_BOARD_ADS_INSTANT_HDTV_PCI  151
+#define SAA7134_BOARD_ASUSTeK_TIGER         152
+#define SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG 153
 
-#define SAA7134_MAXBOARDS 8
+#define SAA7134_MAXBOARDS 32
 #define SAA7134_INPUT_MAX 8
 
 /* ----------------------------------------------------------- */
@@ -442,7 +450,11 @@ struct saa7134_dmasound {
 	unsigned int               read_offset;
 	unsigned int               read_count;
 	void *			   priv_data;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,16)
+	snd_pcm_substream_t        *substream;
+#else
 	struct snd_pcm_substream   *substream;
+#endif
 };
 
 /* ts/mpeg status */
@@ -460,6 +472,12 @@ struct saa7134_mpeg_ops {
 	int                        (*init)(struct saa7134_dev *dev);
 	int                        (*fini)(struct saa7134_dev *dev);
 	void                       (*signal_change)(struct saa7134_dev *dev);
+};
+
+enum saa7134_ts_status {
+	SAA7134_TS_STOPPED,
+	SAA7134_TS_BUFF_DONE,
+	SAA7134_TS_STARTED,
 };
 
 /* global device status */
@@ -555,6 +573,8 @@ struct saa7134_dev {
 	/* SAA7134_MPEG_* */
 	struct saa7134_ts          ts;
 	struct saa7134_dmaqueue    ts_q;
+	enum saa7134_ts_status 	   ts_state;
+	unsigned int 		   buff_cnt;
 	struct saa7134_mpeg_ops    *mops;
 	struct i2c_client 	   *mpeg_i2c_client;
 
@@ -567,7 +587,7 @@ struct saa7134_dev {
 
 #if defined(CONFIG_VIDEO_SAA7134_DVB) || defined(CONFIG_VIDEO_SAA7134_DVB_MODULE)
 	/* SAA7134_MPEG_DVB only */
-	struct videobuf_dvb        dvb;
+	struct videobuf_dvb_frontends frontends;
 	int (*original_demod_sleep)(struct dvb_frontend *fe);
 	int (*original_set_voltage)(struct dvb_frontend *fe, fe_sec_voltage_t voltage);
 	int (*original_set_high_voltage)(struct dvb_frontend *fe, long arg);
@@ -644,7 +664,7 @@ extern struct pci_device_id __devinitdata saa7134_pci_tbl[];
 
 extern int saa7134_board_init1(struct saa7134_dev *dev);
 extern int saa7134_board_init2(struct saa7134_dev *dev);
-int saa7134_tuner_callback(void *priv, int command, int arg);
+int saa7134_tuner_callback(void *priv, int component, int command, int arg);
 
 
 /* ----------------------------------------------------------- */
@@ -653,6 +673,8 @@ int saa7134_tuner_callback(void *priv, int command, int arg);
 int saa7134_i2c_register(struct saa7134_dev *dev);
 int saa7134_i2c_unregister(struct saa7134_dev *dev);
 void saa7134_i2c_call_clients(struct saa7134_dev *dev,
+			      unsigned int cmd, void *arg);
+int saa7134_i2c_call_saa6752(struct saa7134_dev *dev,
 			      unsigned int cmd, void *arg);
 
 
@@ -666,6 +688,7 @@ extern struct video_device saa7134_radio_template;
 int saa7134_s_ctrl_internal(struct saa7134_dev *dev,  struct saa7134_fh *fh, struct v4l2_control *c);
 int saa7134_g_ctrl_internal(struct saa7134_dev *dev,  struct saa7134_fh *fh, struct v4l2_control *c);
 int saa7134_queryctrl(struct file *file, void *priv, struct v4l2_queryctrl *c);
+int saa7134_s_std_internal(struct saa7134_dev *dev,  struct saa7134_fh *fh, v4l2_std_id *id);
 
 int saa7134_videoport_init(struct saa7134_dev *dev);
 void saa7134_set_tvnorm_hw(struct saa7134_dev *dev);

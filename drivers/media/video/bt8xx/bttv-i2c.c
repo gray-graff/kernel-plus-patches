@@ -260,6 +260,9 @@ static int bttv_i2c_xfer(struct i2c_adapter *i2c_adap, struct i2c_msg *msgs, int
 static const struct i2c_algorithm bttv_algo = {
 	.master_xfer   = bttv_i2c_xfer,
 	.functionality = functionality,
+#ifdef NEED_ALGO_CONTROL
+	.algo_control = dummy_algo_control,
+#endif
 };
 
 /* ----------------------------------------------------------------------- */

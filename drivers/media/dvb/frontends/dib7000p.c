@@ -9,6 +9,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/i2c.h>
+#include "compat.h"
 
 #include "dvb_frontend.h"
 
@@ -206,6 +207,31 @@ static int dib7000p_set_power_mode(struct dib7000p_state *state, enum dib7000p_p
 			break;
 
 /* TODO following stuff is just converted from the dib7000-driver - check when is used what */
+#if 0
+		case DIB7000_POWER_LEVEL_INTERF_ANALOG_AGC:
+			/* dem, cfg, iqc, sad, agc */
+			reg_774  &= ~((1 << 15) | (1 << 14) | (1 << 11) | (1 << 10) | (1 << 9));
+			/* sdio, i2c, gpio */
+			reg_1280 &= ~((1 << 13) | (1 << 12) | (1 << 10));
+			break;
+		case DIB7000_POWER_LEVEL_DOWN_COR4_DINTLV_ICIRM_EQUAL_CFROD:
+			reg_774   = 0;
+			/* power down: cor4 dintlv equal */
+			reg_775   = (1 << 15) | (1 << 6) | (1 << 5);
+			reg_776   = 0;
+			reg_899   = 0;
+			reg_1280 &= 0x01ff;
+			break;
+		case DIB7000_POWER_LEVEL_DOWN_COR4_CRY_ESRAM_MOUT_NUD:
+			reg_774   = 0;
+			/* power down: cor4 */
+			reg_775   = (1 << 15);
+			/* nud */
+			reg_776   = (1 <<  0);
+			reg_899   = 0;
+			reg_1280 &= 0x01ff;
+			break;
+#endif
 	}
 
 	dib7000p_write_word(state,  774,  reg_774);
@@ -1333,7 +1359,8 @@ struct dvb_frontend * dib7000p_attach(struct i2c_adapter *i2c_adap, u8 i2c_addr,
 	/* Ensure the output mode remains at the previous default if it's
 	 * not specifically set by the caller.
 	 */
-	if (st->cfg.output_mode != OUTMODE_MPEG2_SERIAL)
+	if ((st->cfg.output_mode != OUTMODE_MPEG2_SERIAL) &&
+	    (st->cfg.output_mode != OUTMODE_MPEG2_PAR_GATED_CLK))
 		st->cfg.output_mode = OUTMODE_MPEG2_FIFO;
 
 	demod                   = &st->demod;

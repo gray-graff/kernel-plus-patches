@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
+#include "compat.h"
 #include <linux/mutex.h>
 
 #include "au0828.h"
@@ -91,7 +92,8 @@ static int send_control_msg(struct au0828_dev *dev, u16 request, u32 value,
 		status = usb_control_msg(dev->usbdev,
 				usb_sndctrlpipe(dev->usbdev, 0),
 				request,
-				USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+				USB_DIR_OUT | USB_TYPE_VENDOR |
+					USB_RECIP_DEVICE,
 				value, index,
 				cp, size, 1000);
 

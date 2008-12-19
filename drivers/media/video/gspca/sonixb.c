@@ -132,8 +132,6 @@ struct sensor_data {
    ignore atleast the 2 next frames for the new settings to come into effect
    before doing any other adjustments */
 #define AUTOGAIN_IGNORE_FRAMES 3
-#define AUTOGAIN_DEADZONE 1000
-#define DESIRED_AVG_LUM 7000
 
 /* V4L2 controls supported by the driver */
 static int sd_setbrightness(struct gspca_dev *gspca_dev, __s32 val);
@@ -299,10 +297,18 @@ static const __u8 hv7131_sensor_init[][8] = {
 	{0xa0, 0x11, 0x30, 0x10, 0x0e, 0x28, 0x00, 0x15},
 };
 static const __u8 initOv6650[] = {
+#if 1
 	0x44, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
 	0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x01, 0x01, 0x0a, 0x16, 0x12, 0x68, 0x8b,
 	0x10, 0x1d, 0x10, 0x02, 0x02, 0x09, 0x07
+#else
+/* old version? */
+	0x64, 0x44, 0x28, 0x00, 0x00, 0x00, 0x00, 0x10,
+	0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x01, 0x01, 0x0a, 0x14, 0x0f, 0x68, 0x8b,
+	0x10, 0x1d, 0x10, 0x01, 0x01, 0x07, 0x06
+#endif
 };
 static const __u8 ov6650_sensor_init[][8] =
 {
@@ -335,6 +341,24 @@ static const __u8 ov6650_sensor_init[][8] =
 	/* Some more unknown stuff */
 	{0xa0, 0x60, 0x68, 0x04, 0x68, 0xd8, 0xa4, 0x10},
 	{0xd0, 0x60, 0x17, 0x24, 0xd6, 0x04, 0x94, 0x10}, /* Clipreg */
+#if 0
+	/* HDG, don't change registers 0x2d, 0x32 & 0x33 from their reset
+	   defaults, doing so mucks up the framerate, where as the defaults
+	   seem to work good, the combinations below have been observed
+	   under windows and are kept for future reference */
+	{0xa0, 0x60, 0x2d, 0x0a, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x32, 0x00, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x33, 0x40, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x2d, 0x2a, 0x99, 0x04, 0x94, 0x15},
+	{0xa0, 0x60, 0x2d, 0x2b, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x32, 0x00, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x33, 0x00, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x2d, 0x2b, 0x99, 0x04, 0x94, 0x16},
+	{0xa0, 0x60, 0x32, 0x00, 0x99, 0x04, 0x94, 0x16},
+		/* Low Light (Enabled: 0x32 0x1 | Disabled: 0x32 0x00) */
+	{0xa0, 0x60, 0x33, 0x29, 0x99, 0x04, 0x94, 0x16},
+		/* Low Ligth (Enabled: 0x33 0x13 | Disabled: 0x33 0x29) */
+#endif
 };
 
 static const __u8 initOv7630[] = {
@@ -343,7 +367,11 @@ static const __u8 initOv7630[] = {
 	0x00, 0x01, 0x01, 0x0a,				/* r11 .. r14 */
 	0x28, 0x1e,			/* H & V sizes     r15 .. r16 */
 	0x68, COMP2, MCK_INIT1,				/* r17 .. r19 */
+#if 1
 	0x1d, 0x10, 0x02, 0x03, 0x0f, 0x0c		/* r1a .. r1f */
+#else /* jfm from win */
+	0x1d, 0x10, 0x06, 0x01, 0x00, 0x03		/* r1a .. r1f */
+#endif
 };
 static const __u8 initOv7630_3[] = {
 	0x44, 0x44, 0x00, 0x1a, 0x20, 0x20, 0x20, 0x80,	/* r01 .. r08 */
@@ -490,7 +518,7 @@ static const __u8 tas5130_sensor_init[][8] = {
 	{0x30, 0x11, 0x02, 0x20, 0x70, 0x00, 0x00, 0x10},
 };
 
-struct sensor_data sensor_data[] = {
+static struct sensor_data sensor_data[] = {
 SENS(initHv7131, NULL, hv7131_sensor_init, NULL, NULL, 0, NO_EXPO|NO_FREQ, 0),
 SENS(initOv6650, NULL, ov6650_sensor_init, NULL, NULL, F_GAIN|F_SIF, 0, 0x60),
 SENS(initOv7630, initOv7630_3, ov7630_sensor_init, NULL, ov7630_sensor_init_3,
@@ -827,18 +855,29 @@ static void setfreq(struct gspca_dev *gspca_dev)
 
 static void do_autogain(struct gspca_dev *gspca_dev)
 {
+	int deadzone, desired_avg_lum;
 	struct sd *sd = (struct sd *) gspca_dev;
 	int avg_lum = atomic_read(&sd->avg_lum);
 
 	if (avg_lum == -1)
 		return;
 
+	/* SIF / VGA sensors have a different autoexposure area and thus
+	   different avg_lum values for the same picture brightness */
+	if (sensor_data[sd->sensor].flags & F_SIF) {
+		deadzone = 1000;
+		desired_avg_lum = 7000;
+	} else {
+		deadzone = 3000;
+		desired_avg_lum = 23000;
+	}
+
 	if (sd->autogain_ignore_frames > 0)
 		sd->autogain_ignore_frames--;
 	else if (gspca_auto_gain_n_exposure(gspca_dev, avg_lum,
-			sd->brightness * DESIRED_AVG_LUM / 127,
-			AUTOGAIN_DEADZONE, GAIN_KNEE, EXPOSURE_KNEE)) {
-		PDEBUG(D_FRAM, "autogain: gain changed: gain: %d expo: %d\n",
+			sd->brightness * desired_avg_lum / 127,
+			deadzone, GAIN_KNEE, EXPOSURE_KNEE)) {
+		PDEBUG(D_FRAM, "autogain: gain changed: gain: %d expo: %d",
 			(int)sd->gain, (int)sd->exposure);
 		sd->autogain_ignore_frames = AUTOGAIN_IGNORE_FRAMES;
 	}
@@ -892,7 +931,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 }
 
 /* -- start the camera -- */
-static void sd_start(struct gspca_dev *gspca_dev)
+static int sd_start(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 	struct cam *cam = &gspca_dev->cam;
@@ -976,6 +1015,7 @@ static void sd_start(struct gspca_dev *gspca_dev)
 	sd->frames_to_drop = 0;
 	sd->autogain_ignore_frames = 0;
 	atomic_set(&sd->avg_lum, -1);
+	return 0;
 }
 
 static void sd_stopN(struct gspca_dev *gspca_dev)
@@ -1225,8 +1265,8 @@ static __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x0c45, 0x6025), SB(TAS5130CXX, 102)},
 	{USB_DEVICE(0x0c45, 0x6028), SB(PAS202, 102)},
 	{USB_DEVICE(0x0c45, 0x6029), SB(PAS106, 102)},
-	{USB_DEVICE(0x0c45, 0x602c), SB(OV7630, 102)},
 #endif
+	{USB_DEVICE(0x0c45, 0x602c), SB(OV7630, 102)},
 	{USB_DEVICE(0x0c45, 0x602d), SB(HV7131R, 102)},
 #if !defined CONFIG_USB_SN9C102 && !defined CONFIG_USB_SN9C102_MODULE
 	{USB_DEVICE(0x0c45, 0x602e), SB(OV7630, 102)},

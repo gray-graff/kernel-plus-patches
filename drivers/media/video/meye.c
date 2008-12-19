@@ -29,6 +29,7 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/init.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -744,7 +745,7 @@ static int mchip_compress_frame(u8 *buf, int bufsize)
 	return len;
 }
 
-#if 0
+#if 0 /* keep */
 /* uncompress one image into a buffer */
 static int mchip_uncompress_frame(u8 *img, int imgsize, u8 *buf, int bufsize)
 {
@@ -781,7 +782,11 @@ static void mchip_cont_compression_start(void)
 /* Interrupt handling                                                       */
 /****************************************************************************/
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t meye_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t meye_irq(int irq, void *dev_id)
+#endif
 {
 	u32 v;
 	int reqnr;
@@ -843,17 +848,16 @@ again:
 
 static int meye_open(struct inode *inode, struct file *file)
 {
-	int i, err;
+	int i;
 
-	err = video_exclusive_open(inode, file);
-	if (err < 0)
-		return err;
+	if (test_and_set_bit(0, &meye.in_use))
+		return -EBUSY;
 
 	mchip_hic_stop();
 
 	if (mchip_dma_alloc()) {
 		printk(KERN_ERR "meye: mchip framebuffer allocation failed\n");
-		video_exclusive_release(inode, file);
+		clear_bit(0, &meye.in_use);
 		return -ENOBUFS;
 	}
 
@@ -868,7 +872,7 @@ static int meye_release(struct inode *inode, struct file *file)
 {
 	mchip_hic_stop();
 	mchip_dma_free();
-	video_exclusive_release(inode, file);
+	clear_bit(0, &meye.in_use);
 	return 0;
 }
 
@@ -1774,6 +1778,7 @@ static int __devinit meye_probe(struct pci_dev *pcidev,
 		goto outnotdev;
 	}
 
+	ret = -ENOMEM;
 	meye.mchip_dev = pcidev;
 	meye.video_dev = video_device_alloc();
 	if (!meye.video_dev) {
@@ -1781,7 +1786,6 @@ static int __devinit meye_probe(struct pci_dev *pcidev,
 		goto outnotdev;
 	}
 
-	ret = -ENOMEM;
 	meye.grab_temp = vmalloc(MCHIP_NB_PAGES_MJPEG * PAGE_SIZE);
 	if (!meye.grab_temp) {
 		printk(KERN_ERR "meye: grab buffer allocation failed\n");
@@ -1895,8 +1899,13 @@ static int __devinit meye_probe(struct pci_dev *pcidev,
 
 	printk(KERN_INFO "meye: Motion Eye Camera Driver v%s.\n",
 	       MEYE_DRIVER_VERSION);
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,22)
 	printk(KERN_INFO "meye: mchip KL5A72002 rev. %d, base %lx, irq %d\n",
 	       meye.mchip_dev->revision, mchip_adr, meye.mchip_irq);
+#else
+	printk(KERN_INFO "meye: mchip KL5A72002 rev. %d, base %lx, irq %d\n",
+	       v4l_compat_pci_rev(meye.mchip_dev), mchip_adr, meye.mchip_irq);
+#endif
 
 	return 0;
 

@@ -50,6 +50,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/i2c-addr.h>
+#include "compat.h"
 
 #ifndef VIDEO_AUDIO_BALANCE
 # define VIDEO_AUDIO_BALANCE 32
@@ -240,6 +241,19 @@ static int tda7432_write(struct i2c_client *client, int subaddr, int val)
 }
 
 /* I don't think we ever actually _read_ the chip... */
+#if 0
+static int tda7432_read(struct i2c_client *client)
+{
+	unsigned char buffer;
+	v4l_dbg(2, debug,client,"In tda7432_read\n");
+	if (1 != i2c_master_recv(client,&buffer,1)) {
+		v4l_err(client,"I/O error, trying (read)\n");
+		return -1;
+	}
+	v4l_dbg(1, debug,client,"Read 0x%02x\n", buffer);
+	return buffer;
+}
+#endif
 
 static int tda7432_set(struct i2c_client *client)
 {

@@ -3,7 +3,7 @@
  *  Support for a cx23416 mpeg encoder via cx2388x host port.
  *  "blackbird" reference design.
  *
- *    (c) 2004 Jelle Foks <jelle@foks.8m.com>
+ *    (c) 2004 Jelle Foks <jelle@foks.us>
  *    (c) 2004 Gerd Knorr <kraxel@bytesex.org>
  *
  *    (c) 2005-2006 Mauro Carvalho Chehab <mchehab@infradead.org>
@@ -39,7 +39,7 @@
 #include "cx88.h"
 
 MODULE_DESCRIPTION("driver for cx2388x/cx23416 based mpeg encoder cards");
-MODULE_AUTHOR("Jelle Foks <jelle@foks.8m.com>, Gerd Knorr <kraxel@bytesex.org> [SuSE Labs]");
+MODULE_AUTHOR("Jelle Foks <jelle@foks.us>, Gerd Knorr <kraxel@bytesex.org> [SuSE Labs]");
 MODULE_LICENSE("GPL");
 
 static unsigned int mpegbufs = 32;
@@ -63,6 +63,9 @@ MODULE_PARM_DESC(debug,"enable debug messages [blackbird]");
 #define IVTV_CMD_HW_BLOCKS_RST 0xFFFFFFFF
 
 /* Firmware API commands */
+#if 0
+#define IVTV_API_STD_TIMEOUT 0x00010000 /* 65536, units?? */
+#endif
 #define IVTV_API_STD_TIMEOUT 500
 
 enum blackbird_capture_type {
@@ -650,6 +653,14 @@ static int bb_buf_setup(struct videobuf_queue *q,
 
 	*size = fh->dev->ts_packet_size * fh->dev->ts_packet_count;
 	*count = fh->dev->ts_packet_count;
+#if 0
+	if (0 == *count)
+		*count = mpegbufs;
+	if (*count < 2)
+		*count = 2;
+	if (*count > 32)
+		*count = 32;
+#endif
 	return 0;
 }
 
@@ -731,6 +742,10 @@ static int vidioc_querycap (struct file *file, void  *priv,
 	sprintf(cap->bus_info,"PCI:%s",pci_name(dev->pci));
 	cap->version = CX88_VERSION_CODE;
 	cap->capabilities =
+#if 0
+		V4L2_CAP_VBI_CAPTURE   |
+		V4L2_CAP_VIDEO_OVERLAY |
+#endif
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_READWRITE     |
 		V4L2_CAP_STREAMING;
@@ -798,12 +813,16 @@ static int vidioc_s_fmt_vid_cap (struct file *file, void *priv,
 	f->fmt.pix.bytesperline = 0;
 	f->fmt.pix.sizeimage    = dev->ts_packet_size * dev->ts_packet_count; /* 188 * 4 * 1024; */;
 	f->fmt.pix.colorspace   = 0;
+#if 1
 	dev->width              = f->fmt.pix.width;
 	dev->height             = f->fmt.pix.height;
 	fh->mpegq.field         = f->fmt.pix.field;
+#endif
+#if 1
 	cx88_set_scale(core, f->fmt.pix.width, f->fmt.pix.height, f->fmt.pix.field);
 	blackbird_api_cmd(dev, CX2341X_ENC_SET_FRAME_SIZE, 2, 0,
 				f->fmt.pix.height, f->fmt.pix.width);
+#endif
 	dprintk(0,"VIDIOC_S_FMT: w: %d, h: %d, f: %d\n",
 		f->fmt.pix.width, f->fmt.pix.height, f->fmt.pix.field );
 	return 0;
@@ -1057,12 +1076,15 @@ static int mpeg_open(struct inode *inode, struct file *file)
 	struct cx8802_driver *drv = NULL;
 	int err;
 
+	lock_kernel();
 	dev = cx8802_get_device(inode);
 
 	dprintk( 1, "%s\n", __func__);
 
-	if (dev == NULL)
+	if (dev == NULL) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	/* Make sure we can acquire the hardware */
 	drv = cx8802_get_driver(dev, CX88_MPEG_BLACKBIRD);
@@ -1070,13 +1092,15 @@ static int mpeg_open(struct inode *inode, struct file *file)
 		err = drv->request_acquire(drv);
 		if(err != 0) {
 			dprintk(1,"%s: Unable to acquire hardware, %d\n", __func__, err);
+			unlock_kernel();
 			return err;
 		}
 	}
 
-	if (blackbird_initialize_codec(dev) < 0) {
+	if (!atomic_read(&dev->core->mpeg_users) && blackbird_initialize_codec(dev) < 0) {
 		if (drv)
 			drv->request_release(drv);
+		unlock_kernel();
 		return -EINVAL;
 	}
 	dprintk(1,"open minor=%d\n",minor);
@@ -1086,6 +1110,7 @@ static int mpeg_open(struct inode *inode, struct file *file)
 	if (NULL == fh) {
 		if (drv)
 			drv->request_release(drv);
+		unlock_kernel();
 		return -ENOMEM;
 	}
 	file->private_data = fh;
@@ -1101,6 +1126,9 @@ static int mpeg_open(struct inode *inode, struct file *file)
 	/* FIXME: locking against other video device */
 	cx88_set_scale(dev->core, dev->width, dev->height,
 			fh->mpegq.field);
+	unlock_kernel();
+
+	atomic_inc(&dev->core->mpeg_users);
 
 	return 0;
 }
@@ -1111,7 +1139,7 @@ static int mpeg_release(struct inode *inode, struct file *file)
 	struct cx8802_dev *dev = fh->dev;
 	struct cx8802_driver *drv = NULL;
 
-	if (dev->mpeg_active)
+	if (dev->mpeg_active && atomic_read(&dev->core->mpeg_users) == 1)
 		blackbird_stop_codec(dev);
 
 	cx8802_cancel_buffers(fh->dev);
@@ -1130,6 +1158,8 @@ static int mpeg_release(struct inode *inode, struct file *file)
 	drv = cx8802_get_driver(dev, CX88_MPEG_BLACKBIRD);
 	if (drv)
 		drv->request_release(drv);
+
+	atomic_dec(&dev->core->mpeg_users);
 
 	return 0;
 }
@@ -1151,6 +1181,10 @@ static unsigned int
 mpeg_poll(struct file *file, struct poll_table_struct *wait)
 {
 	struct cx8802_fh *fh = file->private_data;
+	struct cx8802_dev *dev = fh->dev;
+
+	if (!dev->mpeg_active)
+		blackbird_start_codec(file, fh);
 
 	return videobuf_poll_stream(file, &fh->mpegq, wait);
 }
@@ -1229,8 +1263,16 @@ static int cx8802_blackbird_advise_acquire(struct cx8802_driver *drv)
 		 * We're being given access to re-arrange the GPIOs.
 		 * Take the bus off the cx22702 and put the cx23416 on it.
 		 */
-		cx_clear(MO_GP0_IO, 0x00000080); /* cx22702 in reset */
-		cx_set(MO_GP0_IO,   0x00000004); /* Disable the cx22702 */
+		/* Toggle reset on cx22702 leaving i2c active */
+		cx_set(MO_GP0_IO, 0x00000080);
+		udelay(1000);
+		cx_clear(MO_GP0_IO, 0x00000080);
+		udelay(50);
+		cx_set(MO_GP0_IO, 0x00000080);
+		udelay(1000);
+		/* tri-state the cx22702 pins */
+		cx_set(MO_GP0_IO, 0x00000004);
+		udelay(1000);
 		break;
 	default:
 		err = -ENODEV;
@@ -1247,6 +1289,9 @@ static int cx8802_blackbird_advise_release(struct cx8802_driver *drv)
 	switch (core->boardnr) {
 	case CX88_BOARD_HAUPPAUGE_HVR1300:
 		/* Exit leaving the cx23416 on the bus */
+#if 0
+		cx_clear(MO_GP0_IO, 0x00000020); /* Take down I2S */
+#endif
 		break;
 	default:
 		err = -ENODEV;
@@ -1278,7 +1323,7 @@ static int blackbird_register_video(struct cx8802_dev *dev)
 		return err;
 	}
 	printk(KERN_INFO "%s/2: registered device video%d [mpeg]\n",
-	       dev->core->name,dev->mpeg_dev->minor & 0x1f);
+	       dev->core->name, dev->mpeg_dev->num);
 	return 0;
 }
 
@@ -1323,11 +1368,13 @@ static int cx8802_blackbird_probe(struct cx8802_driver *drv)
 	blackbird_register_video(dev);
 
 	/* initial device configuration: needed ? */
+#if 1
 	mutex_lock(&dev->core->lock);
 //	init_controls(core);
 	cx88_set_tvnorm(core,core->tvnorm);
 	cx88_video_mux(core,0);
 	mutex_unlock(&dev->core->lock);
+#endif
 
 	return 0;
 

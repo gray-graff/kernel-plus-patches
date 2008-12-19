@@ -103,7 +103,7 @@ u32 av7110_debiread(struct av7110 *av7110, u32 config, int addr, int count)
 
 
 /* av7110 ARM core boot stuff */
-#if 0
+#if 0 /* keep */
 void av7110_reset_arm(struct av7110 *av7110)
 {
 	saa7146_setgpio(av7110->dev, RESET_LINE, SAA7146_GPIO_OUTLO);
@@ -520,7 +520,7 @@ int av7110_fw_cmd(struct av7110 *av7110, int type, int com, int num, ...)
 	return ret;
 }
 
-#if 0
+#if 0 /* keep */
 int av7110_send_ci_cmd(struct av7110 *av7110, u8 subcom, u8 *buf, u8 len)
 {
 	int i, ret;

@@ -29,6 +29,7 @@
 
 #include "dvb_frontend.h"
 #include "tda10086.h"
+#include "compat.h"
 
 #define SACLK 96000000
 

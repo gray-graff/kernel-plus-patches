@@ -36,15 +36,22 @@ static int __uvc_query_ctrl(struct uvc_device *dev, __u8 query, __u8 unit,
 {
 	__u8 type = USB_TYPE_CLASS | USB_RECIP_INTERFACE;
 	unsigned int pipe;
-	int ret;
 
 	pipe = (query & 0x80) ? usb_rcvctrlpipe(dev->udev, 0)
 			      : usb_sndctrlpipe(dev->udev, 0);
 	type |= (query & 0x80) ? USB_DIR_IN : USB_DIR_OUT;
 
-	ret = usb_control_msg(dev->udev, pipe, query, type, cs << 8,
+	return usb_control_msg(dev->udev, pipe, query, type, cs << 8,
 			unit << 8 | intfnum, data, size, timeout);
+}
 
+int uvc_query_ctrl(struct uvc_device *dev, __u8 query, __u8 unit,
+			__u8 intfnum, __u8 cs, void *data, __u16 size)
+{
+	int ret;
+
+	ret = __uvc_query_ctrl(dev, query, unit, intfnum, cs, data, size,
+				UVC_CTRL_CONTROL_TIMEOUT);
 	if (ret != size) {
 		uvc_printk(KERN_ERR, "Failed to query (%u) UVC control %u "
 			"(unit %u) : %d (exp. %u).\n", query, cs, unit, ret,
@@ -53,13 +60,6 @@ static int __uvc_query_ctrl(struct uvc_device *dev, __u8 query, __u8 unit,
 	}
 
 	return 0;
-}
-
-int uvc_query_ctrl(struct uvc_device *dev, __u8 query, __u8 unit,
-			__u8 intfnum, __u8 cs, void *data, __u16 size)
-{
-	return __uvc_query_ctrl(dev, query, unit, intfnum, cs, data, size,
-				UVC_CTRL_CONTROL_TIMEOUT);
 }
 
 static void uvc_fixup_buffer_size(struct uvc_video_device *video,
@@ -102,8 +102,36 @@ static int uvc_get_video_ctrl(struct uvc_video_device *video,
 	ret = __uvc_query_ctrl(video->dev, query, 0, video->streaming->intfnum,
 		probe ? VS_PROBE_CONTROL : VS_COMMIT_CONTROL, data, size,
 		UVC_CTRL_STREAMING_TIMEOUT);
-	if (ret < 0)
+
+	if ((query == GET_MIN || query == GET_MAX) && ret == 2) {
+		/* Some cameras, mostly based on Bison Electronics chipsets,
+		 * answer a GET_MIN or GET_MAX request with the wCompQuality
+		 * field only.
+		 */
+		uvc_warn_once(video->dev, UVC_WARN_MINMAX, "UVC non "
+			"compliance - GET_MIN/MAX(PROBE) incorrectly "
+			"supported. Enabling workaround.\n");
+		memset(ctrl, 0, sizeof ctrl);
+		ctrl->wCompQuality = le16_to_cpup((__le16 *)data);
+		ret = 0;
 		goto out;
+	} else if (query == GET_DEF && probe == 1) {
+		/* Many cameras don't support the GET_DEF request on their
+		 * video probe control. Warn once and return, the caller will
+		 * fall back to GET_CUR.
+		 */
+		uvc_warn_once(video->dev, UVC_WARN_PROBE_DEF, "UVC non "
+			"compliance - GET_DEF(PROBE) not supported. "
+			"Enabling workaround.\n");
+		ret = -EIO;
+		goto out;
+	} else if (ret != size) {
+		uvc_printk(KERN_ERR, "Failed to query (%u) UVC %s control : "
+			"%d (exp. %u).\n", query, probe ? "probe" : "commit",
+			ret, size);
+		ret = -EIO;
+		goto out;
+	}
 
 	ctrl->bmHint = le16_to_cpup((__le16 *)&data[0]);
 	ctrl->bFormatIndex = data[2];
@@ -114,14 +142,11 @@ static int uvc_get_video_ctrl(struct uvc_video_device *video,
 	ctrl->wCompQuality = le16_to_cpup((__le16 *)&data[12]);
 	ctrl->wCompWindowSize = le16_to_cpup((__le16 *)&data[14]);
 	ctrl->wDelay = le16_to_cpup((__le16 *)&data[16]);
-	ctrl->dwMaxVideoFrameSize =
-		le32_to_cpu(get_unaligned((__le32 *)&data[18]));
-	ctrl->dwMaxPayloadTransferSize =
-		le32_to_cpu(get_unaligned((__le32 *)&data[22]));
+	ctrl->dwMaxVideoFrameSize = get_unaligned_le32(&data[18]);
+	ctrl->dwMaxPayloadTransferSize = get_unaligned_le32(&data[22]);
 
 	if (size == 34) {
-		ctrl->dwClockFrequency =
-			le32_to_cpu(get_unaligned((__le32 *)&data[26]));
+		ctrl->dwClockFrequency = get_unaligned_le32(&data[26]);
 		ctrl->bmFramingInfo = data[30];
 		ctrl->bPreferedVersion = data[31];
 		ctrl->bMinVersion = data[32];
@@ -138,13 +163,14 @@ static int uvc_get_video_ctrl(struct uvc_video_device *video,
 	 * Try to get the value from the format and frame descriptor.
 	 */
 	uvc_fixup_buffer_size(video, ctrl);
+	ret = 0;
 
 out:
 	kfree(data);
 	return ret;
 }
 
-int uvc_set_video_ctrl(struct uvc_video_device *video,
+static int uvc_set_video_ctrl(struct uvc_video_device *video,
 	struct uvc_streaming_control *ctrl, int probe)
 {
 	__u8 *data;
@@ -168,14 +194,11 @@ int uvc_set_video_ctrl(struct uvc_video_device *video,
 	/* Note: Some of the fields below are not required for IN devices (see
 	 * UVC spec, 4.3.1.1), but we still copy them in case support for OUT
 	 * devices is added in the future. */
-	put_unaligned(cpu_to_le32(ctrl->dwMaxVideoFrameSize),
-		(__le32 *)&data[18]);
-	put_unaligned(cpu_to_le32(ctrl->dwMaxPayloadTransferSize),
-		(__le32 *)&data[22]);
+	put_unaligned_le32(ctrl->dwMaxVideoFrameSize, &data[18]);
+	put_unaligned_le32(ctrl->dwMaxPayloadTransferSize, &data[22]);
 
 	if (size == 34) {
-		put_unaligned(cpu_to_le32(ctrl->dwClockFrequency),
-			(__le32 *)&data[26]);
+		put_unaligned_le32(ctrl->dwClockFrequency, &data[26]);
 		data[30] = ctrl->bmFramingInfo;
 		data[31] = ctrl->bPreferedVersion;
 		data[32] = ctrl->bMinVersion;
@@ -186,6 +209,12 @@ int uvc_set_video_ctrl(struct uvc_video_device *video,
 		video->streaming->intfnum,
 		probe ? VS_PROBE_CONTROL : VS_COMMIT_CONTROL, data, size,
 		UVC_CTRL_STREAMING_TIMEOUT);
+	if (ret != size) {
+		uvc_printk(KERN_ERR, "Failed to set UVC %s control : "
+			"%d (exp. %u).\n", probe ? "probe" : "commit",
+			ret, size);
+		ret = -EIO;
+	}
 
 	kfree(data);
 	return ret;
@@ -250,6 +279,12 @@ int uvc_probe_video(struct uvc_video_device *video,
 done:
 	mutex_unlock(&video->streaming->mutex);
 	return ret;
+}
+
+int uvc_commit_video(struct uvc_video_device *video,
+	struct uvc_streaming_control *probe)
+{
+	return uvc_set_video_ctrl(video, probe, 0);
 }
 
 /* ------------------------------------------------------------------------
@@ -455,7 +490,8 @@ static void uvc_video_decode_isoc(struct urb *urb,
 			urb->iso_frame_desc[i].actual_length - ret);
 
 		/* Process the header again. */
-		uvc_video_decode_end(video, buf, mem, ret);
+		uvc_video_decode_end(video, buf, mem,
+			urb->iso_frame_desc[i].actual_length);
 
 		if (buf->state == UVC_BUF_STATE_DONE ||
 		    buf->state == UVC_BUF_STATE_ERROR)
@@ -512,7 +548,7 @@ static void uvc_video_decode_bulk(struct urb *urb,
 	    video->bulk.payload_size >= video->bulk.max_payload_size) {
 		if (!video->bulk.skip_payload && buf != NULL) {
 			uvc_video_decode_end(video, buf, video->bulk.header,
-				video->bulk.header_size);
+				video->bulk.payload_size);
 			if (buf->state == UVC_BUF_STATE_DONE ||
 			    buf->state == UVC_BUF_STATE_ERROR)
 				buf = uvc_queue_next_buffer(&video->queue, buf);
@@ -524,7 +560,11 @@ static void uvc_video_decode_bulk(struct urb *urb,
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+static void uvc_video_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void uvc_video_complete(struct urb *urb)
+#endif
 {
 	struct uvc_video_device *video = urb->context;
 	struct uvc_video_queue *queue = &video->queue;
@@ -655,7 +695,7 @@ static int uvc_init_video_isoc(struct uvc_video_device *video,
 	if (size > UVC_MAX_FRAME_SIZE)
 		return -EINVAL;
 
-	npackets = (size + psize - 1) / psize;
+	npackets = DIV_ROUND_UP(size, psize);
 	if (npackets > UVC_MAX_ISO_PACKETS)
 		npackets = UVC_MAX_ISO_PACKETS;
 
@@ -853,7 +893,7 @@ int uvc_video_resume(struct uvc_video_device *video)
 
 	video->frozen = 0;
 
-	if ((ret = uvc_set_video_ctrl(video, &video->streaming->ctrl, 0)) < 0) {
+	if ((ret = uvc_commit_video(video, &video->streaming->ctrl)) < 0) {
 		uvc_queue_enable(&video->queue, 0);
 		return ret;
 	}
@@ -934,11 +974,8 @@ int uvc_video_init(struct uvc_video_device *video)
 			break;
 	}
 
-	/* Commit the default settings. */
 	probe->bFormatIndex = format->index;
 	probe->bFrameIndex = frame->bFrameIndex;
-	if ((ret = uvc_set_video_ctrl(video, probe, 0)) < 0)
-		return ret;
 
 	video->streaming->cur_format = format;
 	video->streaming->cur_frame = frame;
@@ -970,7 +1007,17 @@ int uvc_video_enable(struct uvc_video_device *video, int enable)
 		return 0;
 	}
 
+	if ((video->streaming->cur_format->flags & UVC_FMT_FLAG_COMPRESSED) ||
+	    uvc_no_drop_param)
+		video->queue.flags &= ~UVC_QUEUE_DROP_INCOMPLETE;
+	else
+		video->queue.flags |= UVC_QUEUE_DROP_INCOMPLETE;
+
 	if ((ret = uvc_queue_enable(&video->queue, 1)) < 0)
+		return ret;
+
+	/* Commit the streaming parameters. */
+	if ((ret = uvc_commit_video(video, &video->streaming->ctrl)) < 0)
 		return ret;
 
 	return uvc_init_video(video, GFP_KERNEL);

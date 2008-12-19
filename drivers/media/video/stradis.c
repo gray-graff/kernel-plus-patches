@@ -50,6 +50,7 @@
 #include "ibmmpeg2.h"
 #include "saa7121.h"
 #include "cs8420.h"
+#include "compat.h"
 
 #define DEBUG(x)		/* debug driver */
 #undef  IDEBUG			/* debug irq handler */
@@ -407,7 +408,11 @@ static void send_osd_data(struct saa7146 *saa)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t saa7146_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t saa7146_irq(int irq, void *dev_id)
+#endif
 {
 	struct saa7146 *saa = dev_id;
 	u32 stat, astat;
@@ -456,7 +461,7 @@ static irqreturn_t saa7146_irq(int irq, void *dev_id)
 				saa->vidinfo.frame_count = 0;
 				saa->vidinfo.h_size = 704;
 				saa->vidinfo.v_size = 480;
-#if 0
+#if 0 /* keep */
 				if (saa->endmarkhead != saa->endmarktail) {
 					saa->audhead =
 						saa->endmark[saa->endmarkhead];
@@ -941,7 +946,7 @@ send_fpga_stuff:
 		if (NewCard)
 			set_genlock_offset(saa, 0);
 		debiwrite(saa, debNormal, IBM_MP2_FRNT_ATTEN, 0, 2);
-#if 0
+#if 0 /* keep */
 		/* enable genlock */
 		debiwrite(saa, debNormal, XILINX_CTL0, 0x8000, 2);
 #else
@@ -1044,7 +1049,7 @@ static int initialize_ibmmpeg2(struct video_code *microcode)
 		if (i != 0xa55a) {
 			printk(KERN_INFO "stradis%d: %04x != 0xa55a\n",
 				saa->nr, i);
-#if 0
+#if 0 /* keep */
 			return -1;
 #endif
 		}
@@ -1882,12 +1887,16 @@ static int saa_open(struct inode *inode, struct file *file)
 	struct video_device *vdev = video_devdata(file);
 	struct saa7146 *saa = container_of(vdev, struct saa7146, video_dev);
 
+	lock_kernel();
 	file->private_data = saa;
 
 	saa->user++;
-	if (saa->user > 1)
+	if (saa->user > 1) {
+		unlock_kernel();
 		return 0;	/* device open already, don't reset */
+	}
 	saa->writemode = VID_WRITE_MPEG_VID;	/* default to video */
+	unlock_kernel();
 	return 0;
 }
 
@@ -1921,6 +1930,7 @@ static struct video_device saa_template = {
 	.name = "SAA7146A",
 	.fops = &saa_fops,
 	.minor = -1,
+	.release = video_device_release_empty,
 };
 
 static int __devinit configure_saa7146(struct pci_dev *pdev, int num)
@@ -2049,7 +2059,7 @@ static int __devinit init_saa7146(struct pci_dev *pdev)
 		dev_err(&pdev->dev, "%d: debi kmalloc failed\n", saa->nr);
 		goto err;
 	}
-#if 0
+#if 0 /* keep */
 	saa->pagedebi = saa->dmadebi + 32768;	/* top 4k is for mmu */
 	saawrite(virt_to_bus(saa->pagedebi) /*|0x800 */ , SAA7146_DEBI_PAGE);
 	for (i = 0; i < 12; i++)	/* setup mmu page table */

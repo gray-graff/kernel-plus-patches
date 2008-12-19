@@ -44,9 +44,17 @@
 #define IVTV_IRQ_MASK_CAPTURE (IVTV_IRQ_ENC_START_CAP | IVTV_IRQ_ENC_EOS)
 #define IVTV_IRQ_MASK_DECODE  (IVTV_IRQ_DEC_DATA_REQ|IVTV_IRQ_DEC_AUD_MODE_CHG)
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18)
+irqreturn_t ivtv_irq_handler(int irq, void *dev_id, struct pt_regs *regs);
+#else
 irqreturn_t ivtv_irq_handler(int irq, void *dev_id);
+#endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 void ivtv_irq_work_handler(struct work_struct *work);
+#else
+void ivtv_irq_work_handler(void *arg);
+#endif
 void ivtv_dma_stream_dec_prepare(struct ivtv_stream *s, u32 offset, int lock);
 void ivtv_unfinished_dma(unsigned long arg);
 

@@ -26,6 +26,7 @@
 #include <media/v4l2-i2c-drv.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
+#include "compat.h"
 
 MODULE_DESCRIPTION("i2c device driver for cs5345 Audio ADC");
 MODULE_AUTHOR("Hans Verkuil");
@@ -37,6 +38,11 @@ module_param(debug, bool, 0644);
 
 MODULE_PARM_DESC(debug, "Debugging messages, 0=Off (default), 1=On");
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+static unsigned short normal_i2c[] = { 0x98 >> 1, I2C_CLIENT_END };
+
+I2C_CLIENT_INSMOD;
+#endif
 
 /* ----------------------------------------------------------------------- */
 
@@ -160,16 +166,20 @@ static int cs5345_probe(struct i2c_client *client,
 
 /* ----------------------------------------------------------------------- */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id cs5345_id[] = {
 	{ "cs5345", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, cs5345_id);
 
+#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "cs5345",
 	.driverid = I2C_DRIVERID_CS5345,
 	.command = cs5345_command,
 	.probe = cs5345_probe,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = cs5345_id,
+#endif
 };

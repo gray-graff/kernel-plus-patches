@@ -33,6 +33,7 @@
 #include <linux/vmalloc.h>
 #include <linux/firmware.h>
 #include <net/checksum.h>
+#include "compat.h"
 
 #include <asm/unaligned.h>
 #include <asm/io.h>
@@ -40,6 +41,9 @@
 #include "bttvp.h"
 #include <media/v4l2-common.h>
 #include <media/tvaudio.h>
+#if 0 /* not working yet */
+#include "bt832.h"
+#endif
 #include "bttv-audio-hook.h"
 
 /* fwd decl */
@@ -305,7 +309,7 @@ static struct CARD {
 	{ 0x00261822, BTTV_BOARD_TWINHAN_DST,	"DNTV Live! Mini "},
 	{ 0xd200dbc0, BTTV_BOARD_DVICO_FUSIONHDTV_2,	"DViCO FusionHDTV 2" },
 	{ 0x763c008a, BTTV_BOARD_GEOVISION_GV600,	"GeoVision GV-600" },
-
+	{ 0x18011000, BTTV_BOARD_ENLTV_FM_2,	"Encore ENL TV-FM-2" },
 	{ 0, -1, NULL }
 };
 
@@ -574,9 +578,14 @@ struct tvcard bttv_tvcards[] = {
 		.svhs		= 2,
 		.gpiomask	= 0x01fe00,
 		.muxsel		= { 2, 3, 1, 1 },
+	#if 0
+		/* old */
+		.gpiomux 	= { 0x01c000, 0, 0x018000, 0x014000, 0x002000 },
+	#else
 		/* 2003-10-20 by "Anton A. Arapov" <arapov@mail.ru> */
 		.gpiomux        = { 0x001e00, 0, 0x018000, 0x014000 },
 		.gpiomute 	= 0x002000,
+	#endif
 		.needs_tvaudio	= 1,
 		.pll		= PLL_28,
 		.tuner_type	= UNSET,
@@ -887,10 +896,15 @@ struct tvcard bttv_tvcards[] = {
 		.tuner		= 0,
 		.svhs		= 2,
 		.muxsel		= { 2, 3, 1, 1, 0 }, /* TV, CVid, SVid, CVid over SVid connector */
+	#if 0
+		.gpiomask	= 0xc33000,
+		.gpiomux 	= { 0x422000,0x1000,0x0000,0x620000,0x800000 },
+	#else
 		/* Alexander Varakin <avarakin@hotmail.com> [stereo version] */
 		.gpiomask	= 0xb33000,
 		.gpiomux 	= { 0x122000,0x1000,0x0000,0x620000 },
 		.gpiomute 	= 0x800000,
+	#endif
 		/* Audio Routing for "WinFast 2000 XP" (no tv stereo !)
 			gpio23 -- hef4052:nEnable (0x800000)
 			gpio12 -- hef4052:A1
@@ -1947,6 +1961,11 @@ struct tvcard bttv_tvcards[] = {
 		.video_inputs   = 4,
 		.audio_inputs   = 1,
 		.tuner          = UNSET,
+	#if 0 /* TODO ... */
+		.svhs           = OSPREY540_SVID_ANALOG,
+		.muxsel         = {       [OSPREY540_COMP_ANALOG] = 2,
+					[OSPREY540_SVID_ANALOG] = 3, },
+	#endif
 		.pll            = PLL_28,
 		.tuner_type     = UNSET,
 		.tuner_addr	= ADDR_UNSET,
@@ -1954,6 +1973,10 @@ struct tvcard bttv_tvcards[] = {
 		.no_msp34xx     = 1,
 		.no_tda9875     = 1,
 		.no_tda7432     = 1,
+	#if 0 /* TODO ... */
+		.muxsel_hook    = osprey_540_muxsel,
+		.picture_hook   = osprey_540_set_picture,
+	#endif
 	},
 
 		/* ---- card 0x5C ---------------------------------- */
@@ -2217,9 +2240,9 @@ struct tvcard bttv_tvcards[] = {
 		.tuner_addr	= ADDR_UNSET,
 		.radio_addr     = ADDR_UNSET,
 	},
-	[BTTV_BOARD_VD009X1_MINIDIN] = {
+	[BTTV_BOARD_VD009X1_VD011_MINIDIN] = {
 		/* M.Klahr@phytec.de */
-		.name           = "PHYTEC VD-009-X1 MiniDIN (bt878)",
+		.name           = "PHYTEC VD-009-X1 VD-011 MiniDIN (bt878)",
 		.video_inputs   = 4,
 		.audio_inputs   = 0,
 		.tuner          = UNSET, /* card has no tuner */
@@ -2227,14 +2250,14 @@ struct tvcard bttv_tvcards[] = {
 		.gpiomask       = 0x00,
 		.muxsel         = { 2, 3, 1, 0 },
 		.gpiomux        = { 0, 0, 0, 0 }, /* card has no audio */
-		.needs_tvaudio  = 1,
+		.needs_tvaudio  = 0,
 		.pll            = PLL_28,
 		.tuner_type     = UNSET,
 		.tuner_addr	= ADDR_UNSET,
 		.radio_addr     = ADDR_UNSET,
 	},
-	[BTTV_BOARD_VD009X1_COMBI] = {
-		.name           = "PHYTEC VD-009-X1 Combi (bt878)",
+	[BTTV_BOARD_VD009X1_VD011_COMBI] = {
+		.name           = "PHYTEC VD-009-X1 VD-011 Combi (bt878)",
 		.video_inputs   = 4,
 		.audio_inputs   = 0,
 		.tuner          = UNSET, /* card has no tuner */
@@ -2242,7 +2265,7 @@ struct tvcard bttv_tvcards[] = {
 		.gpiomask       = 0x00,
 		.muxsel         = { 2, 3, 1, 1 },
 		.gpiomux        = { 0, 0, 0, 0 }, /* card has no audio */
-		.needs_tvaudio  = 1,
+		.needs_tvaudio  = 0,
 		.pll            = PLL_28,
 		.tuner_type     = UNSET,
 		.tuner_addr	= ADDR_UNSET,
@@ -2628,6 +2651,9 @@ struct tvcard bttv_tvcards[] = {
 		.tuner_addr	= ADDR_UNSET,
 		.radio_addr     = ADDR_UNSET,
 		.has_radio      = 0,
+	#if 0
+		.has_remote     = 1,
+	#endif
 	},
 	[BTTV_BOARD_SUPER_TV] = {
 		/* Rick C <cryptdragoon@gmail.com> */
@@ -3028,7 +3054,13 @@ struct tvcard bttv_tvcards[] = {
 		.gpiomask       = 0x008007,
 		.muxsel         = { 2, 3, 1, 1 },
 		.gpiomux        = { 0, 1, 2, 2 }, /* CONTVFMi */
+#if 0
+		.gpiomux        = { 0, 1, 2, 3 }, /* MagicTV */
+#endif
 		.gpiomute 	= 3, /* CONTVFMi */
+#if 0
+		.gpiomute 	= 4, /* MagicTV */
+#endif
 		.needs_tvaudio  = 0,
 		.tuner_type     = TUNER_PHILIPS_FM1216ME_MK3, /* TCL MK3 */
 		.tuner_addr     = ADDR_UNSET,
@@ -3037,6 +3069,79 @@ struct tvcard bttv_tvcards[] = {
 		.has_radio      = 1,
 		.has_remote     = 1,
 	},
+	[BTTV_BOARD_ENLTV_FM_2] = {
+		/* Encore TV Tuner Pro ENL TV-FM-2
+		   Mauro Carvalho Chehab <mchehab@infradead.org */
+		.name           = "Encore ENL TV-FM-2",
+		.video_inputs   = 3,
+		.audio_inputs   = 1,
+		.tuner          = 0,
+		.svhs           = 2,
+		/* bit 6          -> IR disabled
+		   bit 18/17 = 00 -> mute
+			       01 -> enable external audio input
+			       10 -> internal audio input (mono?)
+			       11 -> internal audio input
+		 */
+		.gpiomask       = 0x060040,
+		.muxsel         = { 2, 3, 3 },
+		.gpiomux        = { 0x60000, 0x60000, 0x20000, 0x20000 },
+		.gpiomute 	= 0,
+		.tuner_type	= TUNER_TCL_MF02GIP_5N,
+		.tuner_addr     = ADDR_UNSET,
+		.radio_addr     = ADDR_UNSET,
+		.pll            = PLL_28,
+		.has_radio      = 1,
+		.has_remote     = 1,
+	},
+		[BTTV_BOARD_VD012] = {
+		/* D.Heer@Phytec.de */
+		.name           = "PHYTEC VD-012 (bt878)",
+		.video_inputs   = 4,
+		.audio_inputs   = 0,
+		.tuner          = UNSET, /* card has no tuner */
+		.svhs           = UNSET, /* card has no s-video */
+		.gpiomask       = 0x00,
+		.muxsel         = { 0, 2, 3, 1 },
+		.gpiomux        = { 0, 0, 0, 0 }, /* card has no audio */
+		.needs_tvaudio  = 0,
+		.pll            = PLL_28,
+		.tuner_type     = UNSET,
+		.tuner_addr	= ADDR_UNSET,
+		.radio_addr     = ADDR_UNSET,
+	},
+		[BTTV_BOARD_VD012_X1] = {
+		/* D.Heer@Phytec.de */
+		.name           = "PHYTEC VD-012-X1 (bt878)",
+		.video_inputs   = 4,
+		.audio_inputs   = 0,
+		.tuner          = UNSET, /* card has no tuner */
+		.svhs           = 3,
+		.gpiomask       = 0x00,
+		.muxsel         = { 2, 3, 1 },
+		.gpiomux        = { 0, 0, 0, 0 }, /* card has no audio */
+		.needs_tvaudio  = 0,
+		.pll            = PLL_28,
+		.tuner_type     = UNSET,
+		.tuner_addr	= ADDR_UNSET,
+		.radio_addr     = ADDR_UNSET,
+	},
+		[BTTV_BOARD_VD012_X2] = {
+		/* D.Heer@Phytec.de */
+		.name           = "PHYTEC VD-012-X2 (bt878)",
+		.video_inputs   = 4,
+		.audio_inputs   = 0,
+		.tuner          = UNSET, /* card has no tuner */
+		.svhs           = 3,
+		.gpiomask       = 0x00,
+		.muxsel         = { 3, 2, 1 },
+		.gpiomux        = { 0, 0, 0, 0 }, /* card has no audio */
+		.needs_tvaudio  = 0,
+		.pll            = PLL_28,
+		.tuner_type     = UNSET,
+		.tuner_addr	= ADDR_UNSET,
+		.radio_addr     = ADDR_UNSET,
+	}
 };
 
 static const unsigned int bttv_num_tvcards = ARRAY_SIZE(bttv_tvcards);
@@ -3334,12 +3439,21 @@ static void eagle_muxsel(struct bttv *btv, unsigned int input)
 	btaor((2)<<5, ~(3<<5), BT848_IFORM);
 	gpio_bits(3,bttv_tvcards[btv->c.type].muxsel[input&7]);
 
+#if 0
+	/* svhs */
+	/* wake chroma ADC */
+	btand(~BT848_ADC_C_SLEEP, BT848_ADC);
+	/* set to YC video */
+	btor(BT848_CONTROL_COMP, BT848_E_CONTROL);
+	btor(BT848_CONTROL_COMP, BT848_O_CONTROL);
+#else
 	/* composite */
 	/* set chroma ADC to sleep */
 	btor(BT848_ADC_C_SLEEP, BT848_ADC);
 	/* set to composite video */
 	btand(~BT848_CONTROL_COMP, BT848_E_CONTROL);
 	btand(~BT848_CONTROL_COMP, BT848_O_CONTROL);
+#endif
 
 	/* switch sync drive off */
 	gpio_bits(LM1882_SYNC_DRIVE,LM1882_SYNC_DRIVE);
@@ -3962,6 +4076,14 @@ static int tuner_0_table[] = {
 	TUNER_PHILIPS_SECAM, TUNER_PHILIPS_SECAM,
 	TUNER_PHILIPS_SECAM, TUNER_PHILIPS_PAL,
 	TUNER_PHILIPS_FM1216ME_MK3 };
+#if 0
+int tuner_0_fm_table[] = {
+	PHILIPS_FR1236_NTSC,  PHILIPS_FR1216_PAL,
+	PHILIPS_FR1216_PAL,   PHILIPS_FR1216_PAL,
+	PHILIPS_FR1216_PAL,   PHILIPS_FR1216_PAL,
+	PHILIPS_FR1236_SECAM, PHILIPS_FR1236_SECAM,
+	PHILIPS_FR1236_SECAM, PHILIPS_FR1216_PAL};
+#endif
 
 static int tuner_1_table[] = {
 	TUNER_TEMIC_NTSC,  TUNER_TEMIC_PAL,
@@ -4052,6 +4174,36 @@ static void __devinit boot_msp34xx(struct bttv *btv, int pin)
 
 static void __devinit boot_bt832(struct bttv *btv)
 {
+#if 0 /* not working yet */
+	int resetbit=0;
+
+	switch (btv->c.type) {
+	case BTTV_BOARD_PXELVWPLTVPAK:
+		resetbit = 0x400000;
+		break;
+	case BTTV_BOARD_MODTEC_205:
+		resetbit = 1<<9;
+		break;
+	default:
+		BUG();
+	}
+
+	request_module("bt832");
+	bttv_call_i2c_clients(btv, BT832_HEXDUMP, NULL);
+
+	printk("bttv%d: Reset Bt832 [line=0x%x]\n",btv->c.nr,resetbit);
+	gpio_write(0);
+	gpio_inout(resetbit, resetbit);
+	udelay(5);
+	gpio_bits(resetbit, resetbit);
+	udelay(5);
+	gpio_bits(resetbit, 0);
+	udelay(5);
+
+	/* bt832 on pixelview changes from i2c 0x8a to 0x88 after
+	 * being reset as above. So we must follow by this: */
+	bttv_call_i2c_clients(btv, BT832_REATTACH, NULL);
+#endif
 }
 
 /* ----------------------------------------------------------------------- */
@@ -4374,6 +4526,11 @@ void tea5757_set_freq(struct bttv *btv, unsigned short freq)
 {
 	dprintk("tea5757_set_freq %d\n",freq);
 	tea5757_write(btv, 5 * freq + 0x358); /* add 10.7MHz (see docs) */
+#if 0
+	/* breaks Miro PCTV */
+	value = tea5757_read(btv);
+	dprintk("bttv%d: tea5757 readback=0x%x\n",btv->c.nr,value);
+#endif
 }
 
 /* RemoteVision MX (rv605) muxsel helper [Miguel Freitas]
@@ -4772,6 +4929,11 @@ void __init bttv_check_chipset(void)
 		latency = 0x0A;
 #endif
 
+#if 0
+	/* print which chipset we have */
+	while ((dev = pci_find_class(PCI_CLASS_BRIDGE_HOST << 8,dev)))
+		printk(KERN_INFO "bttv: Host bridge is %s\n",pci_name(dev));
+#endif
 
 	/* print warnings about any quirks found */
 	if (triton1)

@@ -33,12 +33,15 @@
 #include <linux/pci.h>
 
 #include <asm/delay.h>
+#include "compat.h"
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/control.h>
 #include <sound/initval.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,19)
 #include <sound/tlv.h>
+#endif
 
 #include "cx88.h"
 #include "cx88-reg.h"
@@ -49,6 +52,17 @@
 #define dprintk_core(level,fmt, arg...)	if (debug >= level) \
 	printk(KERN_DEBUG "%s/1: " fmt, chip->core->name , ## arg)
 
+#if 0
+#include <linux/calc64.h>
+#define MHZ	1544.426
+#define INT	(unsigned int)(MHZ * (1<<12) + 0.5)
+#define FRAC	(unsigned int)(MHZ * (1<<21) / 1000.0 + 0.5)
+#define timestamp()	if(debug>=2) { u64 time; u32 rem; rdtscll(time); \
+	time = (time - chip->starttime)<<12; \
+	rem = do_div(time, INT); \
+	dprintk(2, "%s - called at %u.%03u us\n", __func__, \
+		(unsigned int)time, (rem << 9) / FRAC); }
+#endif
 /****************************************************************************
 	Data type declarations - Can be moded to a header file later
  ****************************************************************************/
@@ -56,6 +70,9 @@
 struct cx88_audio_dev {
 	struct cx88_core           *core;
 	struct cx88_dmaqueue       q;
+#if 0
+	u64 starttime;
+#endif
 
 	/* pci i/o */
 	struct pci_dev             *pci;
@@ -81,6 +98,17 @@ struct cx88_audio_dev {
 typedef struct cx88_audio_dev snd_cx88_card_t;
 
 
+#ifdef COMPAT_SND_CTL_BOOLEAN_MONO
+static int snd_ctl_boolean_mono_info(struct snd_kcontrol *kcontrol,
+			      struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+#endif
 
 /****************************************************************************
 			Module global static vars
@@ -155,6 +183,9 @@ static int _cx88_start_audio_dma(snd_cx88_card_t *chip)
 
 	/* start dma */
 	cx_set(MO_DEV_CNTRL2, (1<<5)); /* Enables Risc Processor */
+#if 0
+	rdtscll(chip->starttime);
+#endif
 	cx_set(MO_AUD_DMACNTRL, 0x11); /* audio downstream FIFO and RISC enable */
 
 	if (debug)
@@ -227,12 +258,18 @@ static void cx8801_aud_irq(snd_cx88_card_t *chip)
 		cx88_sram_channel_dump(core, &cx88_sram_channels[SRAM_CH25]);
 	}
 	if (status & AUD_INT_DN_SYNC) {
+#if 0
+		timestamp();
+#endif
 		dprintk(1, "Downstream sync error\n");
 		cx_write(MO_AUDD_GPCNTRL, GP_COUNT_CONTROL_RESET);
 		return;
 	}
 	/* risc1 downstream */
 	if (status & AUD_INT_DN_RISCI1) {
+#if 0
+		timestamp();
+#endif
 		atomic_set(&chip->count, cx_read(MO_AUDD_GPCNT));
 		snd_pcm_period_elapsed(chip->substream);
 	}
@@ -242,7 +279,11 @@ static void cx8801_aud_irq(snd_cx88_card_t *chip)
 /*
  * BOARD Specific: Handles IRQ calls
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t cx8801_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t cx8801_irq(int irq, void *dev_id)
+#endif
 {
 	snd_cx88_card_t *chip = dev_id;
 	struct cx88_core *core = chip->core;
@@ -468,6 +509,9 @@ static int snd_cx88_card_trigger(struct snd_pcm_substream *substream, int cmd)
 	snd_cx88_card_t *chip = snd_pcm_substream_chip(substream);
 	int err;
 
+#if 0
+	timestamp();
+#endif
 	/* Local interrupts are already disabled by ALSA */
 	spin_lock(&chip->reg_lock);
 
@@ -497,6 +541,9 @@ static snd_pcm_uframes_t snd_cx88_pointer(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	u16 count;
 
+#if 0
+	timestamp();
+#endif
 	count = atomic_read(&chip->count);
 
 //	dprintk(2, "%s - count %d (+%u), period %d, frame %lu\n", __func__,
@@ -610,17 +657,23 @@ static int snd_cx88_volume_put(struct snd_kcontrol *kcontrol,
 	return changed;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,19)
 static const DECLARE_TLV_DB_SCALE(snd_cx88_db_scale, -6300, 100, 0);
+#endif
 
 static struct snd_kcontrol_new snd_cx88_volume = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,19)
 	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE |
 		  SNDRV_CTL_ELEM_ACCESS_TLV_READ,
+#endif
 	.name = "Playback Volume",
 	.info = snd_cx88_volume_info,
 	.get = snd_cx88_volume_get,
 	.put = snd_cx88_volume_put,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,19)
 	.tlv.p = snd_cx88_db_scale,
+#endif
 };
 
 static int snd_cx88_switch_get(struct snd_kcontrol *kcontrol,
@@ -742,7 +795,6 @@ static int __devinit snd_cx88_create(struct snd_card *card,
 	core = cx88_core_get(pci);
 	if (NULL == core) {
 		err = -EINVAL;
-		kfree (chip);
 		return err;
 	}
 
@@ -774,10 +826,17 @@ static int __devinit snd_cx88_create(struct snd_card *card,
 	/* print pci info */
 	pci_read_config_byte(pci, PCI_LATENCY_TIMER, &pci_lat);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,23)
 	dprintk(1,"ALSA %s/%i: found at %s, rev: %d, irq: %d, "
 	       "latency: %d, mmio: 0x%llx\n", core->name, devno,
 	       pci_name(pci), pci->revision, pci->irq,
 	       pci_lat, (unsigned long long)pci_resource_start(pci,0));
+#else
+	dprintk(1,"ALSA %s/%i: found at %s, rev: %d, irq: %d, "
+	       "latency: %d, mmio: 0x%llx\n", core->name, devno,
+	       pci_name(pci), v4l_compat_pci_rev(pci), pci->irq,
+	       pci_lat, (unsigned long long)pci_resource_start(pci,0));
+#endif
 
 	chip->irq = pci->irq;
 	synchronize_irq(chip->irq);
@@ -812,7 +871,7 @@ static int __devinit cx88_audio_initdev(struct pci_dev *pci,
 
 	err = snd_cx88_create(card, pci, &chip);
 	if (err < 0)
-		return (err);
+		goto error;
 
 	err = snd_cx88_pcm(chip, 0, "CX88 Digital");
 	if (err < 0)
@@ -863,6 +922,10 @@ static void __devexit cx88_audio_finidev(struct pci_dev *pci)
 	devno--;
 }
 
+#if 0
+	.suspend  = cx88_audio_suspend,
+	.resume   = cx88_audio_resume,
+#endif
 /*
  * PCI driver definition
  */

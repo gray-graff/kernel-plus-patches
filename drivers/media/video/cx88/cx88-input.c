@@ -28,6 +28,7 @@
 #include <linux/pci.h>
 #include <linux/module.h>
 
+#include "compat.h"
 #include "cx88.h"
 #include <media/ir-common.h>
 
@@ -150,9 +151,17 @@ static void ir_timer(unsigned long data)
 	schedule_work(&ir->work);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void cx88_ir_work(void *data)
+#else
 static void cx88_ir_work(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct cx88_IR *ir = data;
+#else
 	struct cx88_IR *ir = container_of(work, struct cx88_IR, work);
+#endif
 
 	cx88_ir_handle_key(ir);
 	mod_timer(&ir->timer, jiffies + msecs_to_jiffies(ir->polling));
@@ -162,7 +171,11 @@ void cx88_ir_start(struct cx88_core *core, struct cx88_IR *ir)
 {
 	if (ir->polling) {
 		setup_timer(&ir->timer, ir_timer, (unsigned long)ir);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+		INIT_WORK(&ir->work, cx88_ir_work, ir);
+#else
 		INIT_WORK(&ir->work, cx88_ir_work);
+#endif
 		schedule_work(&ir->work);
 	}
 	if (ir->sampling) {
@@ -224,6 +237,8 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 	case CX88_BOARD_HAUPPAUGE_NOVASPLUS_S1:
 	case CX88_BOARD_HAUPPAUGE_HVR1100:
 	case CX88_BOARD_HAUPPAUGE_HVR3000:
+	case CX88_BOARD_HAUPPAUGE_HVR4000:
+	case CX88_BOARD_HAUPPAUGE_HVR4000LITE:
 		ir_codes = ir_codes_hauppauge_new;
 		ir_type = IR_TYPE_RC5;
 		ir->sampling = 1;
@@ -259,6 +274,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		ir->polling = 1; /* ms */
 		break;
 	case CX88_BOARD_PROLINK_PV_8000GT:
+	case CX88_BOARD_PROLINK_PV_GLOBAL_XTREME:
 		ir_codes = ir_codes_pixelview_new;
 		ir->gpio_addr = MO_GP1_IO;
 		ir->mask_keycode = 0x3f;
@@ -346,7 +362,11 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		input_dev->id.vendor = pci->vendor;
 		input_dev->id.product = pci->device;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &pci->dev;
+#else
+	input_dev->cdev.dev = &pci->dev;
+#endif
 	/* record handles to ourself */
 	ir->core = core;
 	core->ir = ir;
@@ -392,7 +412,7 @@ void cx88_ir_irq(struct cx88_core *core)
 {
 	struct cx88_IR *ir = core->ir;
 	u32 samples, ircode;
-	int i;
+	int i, start, range, toggle, dev, code;
 
 	if (NULL == ir)
 		return;
@@ -461,6 +481,34 @@ void cx88_ir_irq(struct cx88_core *core)
 	case CX88_BOARD_HAUPPAUGE_NOVASPLUS_S1:
 	case CX88_BOARD_HAUPPAUGE_HVR1100:
 	case CX88_BOARD_HAUPPAUGE_HVR3000:
+	case CX88_BOARD_HAUPPAUGE_HVR4000:
+	case CX88_BOARD_HAUPPAUGE_HVR4000LITE:
+		ircode = ir_decode_biphase(ir->samples, ir->scount, 5, 7);
+		ir_dprintk("biphase decoded: %x\n", ircode);
+		/*
+		 * RC5 has an extension bit which adds a new range
+		 * of available codes, this is detected here. Also
+		 * hauppauge remotes (black/silver) always use
+		 * specific device ids. If we do not filter the
+		 * device ids then messages destined for devices
+		 * such as TVs (id=0) will get through to the
+		 * device causing mis-fired events.
+		 */
+		/* split rc5 data block ... */
+		start = (ircode & 0x2000) >> 13;
+		range = (ircode & 0x1000) >> 12;
+		toggle= (ircode & 0x0800) >> 11;
+		dev   = (ircode & 0x07c0) >> 6;
+		code  = (ircode & 0x003f) | ((range << 6) ^ 0x0040);
+		if( start != 1)
+			/* no key pressed */
+			break;
+		if ( dev != 0x1e && dev != 0x1f )
+			/* not a hauppauge remote */
+			break;
+		ir_input_keydown(ir->input, &ir->ir, code, ircode);
+		ir->release = jiffies + msecs_to_jiffies(120);
+		break;
 	case CX88_BOARD_PINNACLE_PCTV_HD_800i:
 		ircode = ir_decode_biphase(ir->samples, ir->scount, 5, 7);
 		ir_dprintk("biphase decoded: %x\n", ircode);

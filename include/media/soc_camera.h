@@ -41,7 +41,10 @@ struct soc_camera_device {
 	const struct soc_camera_data_format *current_fmt;
 	const struct soc_camera_data_format *formats;
 	int num_formats;
+	struct soc_camera_format_xlate *user_formats;
+	int num_user_formats;
 	struct module *owner;
+	void *host_priv;		/* per-device host private data */
 	/* soc_camera.c private count. Only accessed with video_lock held */
 	int use_count;
 };
@@ -56,7 +59,7 @@ struct soc_camera_host {
 	struct device dev;
 	unsigned char nr;				/* Host number */
 	void *priv;
-	char *drv_name;
+	const char *drv_name;
 	struct soc_camera_host_ops *ops;
 };
 
@@ -64,16 +67,16 @@ struct soc_camera_host_ops {
 	struct module *owner;
 	int (*add)(struct soc_camera_device *);
 	void (*remove)(struct soc_camera_device *);
-	int (*suspend)(struct soc_camera_device *, pm_message_t state);
+	int (*suspend)(struct soc_camera_device *, pm_message_t);
 	int (*resume)(struct soc_camera_device *);
-	int (*set_fmt_cap)(struct soc_camera_device *, __u32,
-			   struct v4l2_rect *);
-	int (*try_fmt_cap)(struct soc_camera_device *, struct v4l2_format *);
+	int (*get_formats)(struct soc_camera_device *, int,
+			   struct soc_camera_format_xlate *);
+	int (*set_fmt)(struct soc_camera_device *, __u32, struct v4l2_rect *);
+	int (*try_fmt)(struct soc_camera_device *, struct v4l2_format *);
 	void (*init_videobuf)(struct videobuf_queue *,
 			      struct soc_camera_device *);
 	int (*reqbufs)(struct soc_camera_file *, struct v4l2_requestbuffers *);
 	int (*querycap)(struct soc_camera_host *, struct v4l2_capability *);
-	int (*try_bus_param)(struct soc_camera_device *, __u32);
 	int (*set_bus_param)(struct soc_camera_device *, __u32);
 	unsigned int (*poll)(struct file *, poll_table *);
 };
@@ -83,6 +86,9 @@ struct soc_camera_link {
 	int bus_id;
 	/* GPIO number to switch between 8 and 10 bit modes */
 	unsigned int gpio;
+	/* Optional callbacks to power on or off and reset the sensor */
+	int (*power)(struct device *, int);
+	int (*reset)(struct device *);
 };
 
 static inline struct soc_camera_device *to_soc_camera_dev(struct device *dev)
@@ -103,11 +109,33 @@ extern void soc_camera_device_unregister(struct soc_camera_device *icd);
 extern int soc_camera_video_start(struct soc_camera_device *icd);
 extern void soc_camera_video_stop(struct soc_camera_device *icd);
 
+extern const struct soc_camera_data_format *soc_camera_format_by_fourcc(
+	struct soc_camera_device *icd, unsigned int fourcc);
+extern const struct soc_camera_format_xlate *soc_camera_xlate_by_fourcc(
+	struct soc_camera_device *icd, unsigned int fourcc);
+
 struct soc_camera_data_format {
-	char *name;
+	const char *name;
 	unsigned int depth;
 	__u32 fourcc;
 	enum v4l2_colorspace colorspace;
+};
+
+/**
+ * struct soc_camera_format_xlate - match between host and sensor formats
+ * @cam_fmt: sensor format provided by the sensor
+ * @host_fmt: host format after host translation from cam_fmt
+ * @buswidth: bus width for this format
+ *
+ * Host and sensor translation structure. Used in table of host and sensor
+ * formats matchings in soc_camera_device. A host can override the generic list
+ * generation by implementing get_formats(), and use it for format checks and
+ * format setup.
+ */
+struct soc_camera_format_xlate {
+	const struct soc_camera_data_format *cam_fmt;
+	const struct soc_camera_data_format *host_fmt;
+	unsigned char buswidth;
 };
 
 struct soc_camera_ops {
@@ -120,9 +148,8 @@ struct soc_camera_ops {
 	int (*release)(struct soc_camera_device *);
 	int (*start_capture)(struct soc_camera_device *);
 	int (*stop_capture)(struct soc_camera_device *);
-	int (*set_fmt_cap)(struct soc_camera_device *, __u32,
-			   struct v4l2_rect *);
-	int (*try_fmt_cap)(struct soc_camera_device *, struct v4l2_format *);
+	int (*set_fmt)(struct soc_camera_device *, __u32, struct v4l2_rect *);
+	int (*try_fmt)(struct soc_camera_device *, struct v4l2_format *);
 	unsigned long (*query_bus_param)(struct soc_camera_device *);
 	int (*set_bus_param)(struct soc_camera_device *, unsigned long);
 	int (*get_chip_id)(struct soc_camera_device *,

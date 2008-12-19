@@ -111,7 +111,7 @@ static int specific_debug = W9968CF_SPECIFIC_DEBUG;
 
 static unsigned int param_nv[24]; /* number of values per parameter */
 
-#ifdef CONFIG_KMOD
+#ifdef CONFIG_MODULES
 module_param(ovmod_load, bool, 0644);
 #endif
 module_param(simcams, ushort, 0644);
@@ -144,7 +144,7 @@ module_param(debug, ushort, 0644);
 module_param(specific_debug, bool, 0644);
 #endif
 
-#ifdef CONFIG_KMOD
+#ifdef CONFIG_MODULES
 MODULE_PARM_DESC(ovmod_load,
 		 "\n<0|1> Automatic 'ovcamchip' module loading."
 		 "\n0 disabled, 1 enabled."
@@ -417,7 +417,11 @@ static int w9968cf_write_fsb(struct w9968cf_device*, u16* data);
 static int w9968cf_write_sb(struct w9968cf_device*, u16 value);
 static int w9968cf_read_sb(struct w9968cf_device*);
 static int w9968cf_upload_quantizationtables(struct w9968cf_device*);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void w9968cf_urb_complete(struct urb *urb, struct pt_regs *regs);
+#else
 static void w9968cf_urb_complete(struct urb *urb);
+#endif
 
 /* Low-level I2C (SMBus) I/O */
 static int w9968cf_smbus_start(struct w9968cf_device*);
@@ -779,7 +783,11 @@ static int w9968cf_allocate_memory(struct w9968cf_device* cam)
   If there are no requested frames in the FIFO list, packets are collected into
   a temporary buffer.
   --------------------------------------------------------------------------*/
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void w9968cf_urb_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void w9968cf_urb_complete(struct urb *urb)
+#endif
 {
 	struct w9968cf_device* cam = (struct w9968cf_device*)urb->context;
 	struct w9968cf_frame_t** f;
@@ -1549,6 +1557,9 @@ static int w9968cf_i2c_init(struct w9968cf_device* cam)
 	static struct i2c_algorithm algo = {
 		.smbus_xfer =    w9968cf_i2c_smbus_xfer,
 		.functionality = w9968cf_i2c_func,
+#ifdef NEED_ALGO_CONTROL
+		.algo_control = dummy_algo_control,
+#endif
 	};
 
 	static struct i2c_adapter adap = {
@@ -2398,7 +2409,7 @@ error:
 	cam->sensor = CC_UNKNOWN;
 	DBG(1, "Image sensor initialization failed for %s (/dev/video%d). "
 	       "Try to detach and attach this device again",
-	    symbolic(camlist, cam->id), cam->v4ldev->minor)
+	    symbolic(camlist, cam->id), cam->v4ldev->num)
 	return err;
 }
 
@@ -2644,7 +2655,7 @@ static void w9968cf_release_resources(struct w9968cf_device* cam)
 {
 	mutex_lock(&w9968cf_devlist_mutex);
 
-	DBG(2, "V4L device deregistered: /dev/video%d", cam->v4ldev->minor)
+	DBG(2, "V4L device deregistered: /dev/video%d", cam->v4ldev->num)
 
 	video_unregister_device(cam->v4ldev);
 	list_del(&cam->v4llist);
@@ -2679,7 +2690,7 @@ static int w9968cf_open(struct inode* inode, struct file* filp)
 		DBG(2, "No supported image sensor has been detected by the "
 		       "'ovcamchip' module for the %s (/dev/video%d). Make "
 		       "sure it is loaded *before* (re)connecting the camera.",
-		    symbolic(camlist, cam->id), cam->v4ldev->minor)
+		    symbolic(camlist, cam->id), cam->v4ldev->num)
 		mutex_unlock(&cam->dev_mutex);
 		up_read(&w9968cf_disconnect);
 		return -ENODEV;
@@ -2687,7 +2698,7 @@ static int w9968cf_open(struct inode* inode, struct file* filp)
 
 	if (cam->users) {
 		DBG(2, "%s (/dev/video%d) has been already occupied by '%s'",
-		    symbolic(camlist, cam->id),cam->v4ldev->minor,cam->command)
+		    symbolic(camlist, cam->id), cam->v4ldev->num, cam->command)
 		if ((filp->f_flags & O_NONBLOCK)||(filp->f_flags & O_NDELAY)) {
 			mutex_unlock(&cam->dev_mutex);
 			up_read(&w9968cf_disconnect);
@@ -2709,7 +2720,7 @@ static int w9968cf_open(struct inode* inode, struct file* filp)
 	}
 
 	DBG(5, "Opening '%s', /dev/video%d ...",
-	    symbolic(camlist, cam->id), cam->v4ldev->minor)
+	    symbolic(camlist, cam->id), cam->v4ldev->num)
 
 	cam->streaming = 0;
 	cam->misconfigured = 0;
@@ -2947,7 +2958,7 @@ static int w9968cf_v4l_ioctl(struct inode* inode, struct file* filp,
 			.minheight = cam->minheight,
 		};
 		sprintf(cap.name, "W996[87]CF USB Camera #%d",
-			cam->v4ldev->minor);
+			cam->v4ldev->num);
 		cap.maxwidth = (cam->upscaling && w9968cf_vpp)
 			       ? max((u16)W9968CF_MAX_WIDTH, cam->maxwidth)
 				 : cam->maxwidth;
@@ -3567,7 +3578,7 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 		goto fail;
 	}
 
-	DBG(2, "V4L device registered as /dev/video%d", cam->v4ldev->minor)
+	DBG(2, "V4L device registered as /dev/video%d", cam->v4ldev->num)
 
 	/* Set some basic constants */
 	w9968cf_configure_camera(cam, udev, mod_id, dev_nr);
@@ -3618,7 +3629,7 @@ static void w9968cf_usb_disconnect(struct usb_interface* intf)
 			DBG(2, "The device is open (/dev/video%d)! "
 			       "Process name: %s. Deregistration and memory "
 			       "deallocation are deferred on close.",
-			    cam->v4ldev->minor, cam->command)
+			    cam->v4ldev->num, cam->command)
 			cam->misconfigured = 1;
 			w9968cf_stop_transfer(cam);
 			wake_up_interruptible(&cam->wait_queue);

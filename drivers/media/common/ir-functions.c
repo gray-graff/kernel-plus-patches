@@ -24,6 +24,7 @@
 #include <linux/string.h>
 #include <linux/jiffies.h>
 #include <media/ir-common.h>
+#include "compat.h"
 
 /* -------------------------------------------------------------------------- */
 
@@ -104,6 +105,10 @@ void ir_input_keydown(struct input_dev *dev, struct ir_input_state *ir,
 		ir->keypressed = 1;
 		ir_input_key_event(dev,ir);
 	}
+#if 0
+	/* maybe do something like this ??? */
+	input_event(a, EV_IR, ir->ir_type, ir->ir_raw);
+#endif
 }
 EXPORT_SYMBOL_GPL(ir_input_keydown);
 

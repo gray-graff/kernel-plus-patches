@@ -39,7 +39,7 @@ struct stv0297_state {
 	unsigned long base_freq;
 };
 
-#if 1
+#if 1 /* keep */
 #define dprintk(x...) printk(x)
 #else
 #define dprintk(x...)

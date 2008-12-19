@@ -57,7 +57,11 @@ struct tda10023_state {
 	u32 sysclk;
 };
 
+#if 0
+#define dprintk(x...) printk(x)
+#else
 #define dprintk(x...)
+#endif
 
 static int verbose;
 
@@ -543,6 +547,10 @@ static struct dvb_frontend_ops tda10023_ops = {
 		.frequency_max = 862000000,
 		.symbol_rate_min = 0,  /* set in tda10023_attach */
 		.symbol_rate_max = 0,  /* set in tda10023_attach */
+	#if 0
+		.frequency_tolerance = ???,
+		.symbol_rate_tolerance = ???,  /* ppm */  /* == 8% (spec p. 5) */
+	#endif
 		.caps = 0x400 | //FE_CAN_QAM_4
 			FE_CAN_QAM_16 | FE_CAN_QAM_32 | FE_CAN_QAM_64 |
 			FE_CAN_QAM_128 | FE_CAN_QAM_256 |

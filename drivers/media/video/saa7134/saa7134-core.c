@@ -144,14 +144,59 @@ void saa7134_set_gpio(struct saa7134_dev *dev, int bit_no, int value)
 
 /* ------------------------------------------------------------------ */
 
+#if 0
+static char *dec1_bits[8] = {
+	"DCSTD0", "DCSCT1", "WIPA", "GLIMB",
+	"GLIMT", "SLTCA", "HLCK"
+};
+static char *dec2_bits[8] = {
+	"RDCAP", "COPRO", "COLSTR", "TYPE3",
+	NULL, "FIDT", "HLVLN", "INTL"
+};
+static char *scale1_bits[8] = {
+	"VID_A", "VBI_A", NULL, NULL, "VID_B", "VBI_B"
+};
+static char *scale2_bits[8] = {
+	"TRERR", "CFERR", "LDERR", "WASRST",
+	"FIDSCI", "FIDSCO", "D6^D5", "TASK"
+};
+
+static void dump_statusreg(struct saa7134_dev *dev, int reg,
+			   char *regname, char **bits)
+{
+	int value,i;
+
+	value = saa_readb(reg);
+	printk(KERN_DEBUG "%s: %s:", dev->name, regname);
+	for (i = 7; i >= 0; i--) {
+		if (NULL == bits[i])
+			continue;
+		printk(" %s=%d", bits[i], (value & (1 << i)) ? 1 : 0);
+	}
+	printk("\n");
+}
+
+static void dump_statusregs(struct saa7134_dev *dev)
+{
+	dump_statusreg(dev,SAA7134_STATUS_VIDEO1,"dec1",dec1_bits);
+	dump_statusreg(dev,SAA7134_STATUS_VIDEO2,"dec2",dec2_bits);
+	dump_statusreg(dev,SAA7134_SCALER_STATUS0,"scale0",scale1_bits);
+	dump_statusreg(dev,SAA7134_SCALER_STATUS1,"scale1",scale2_bits);
+}
+#endif
 
 /* ----------------------------------------------------------- */
 /* delayed request_module                                      */
 
 #if defined(CONFIG_MODULES) && defined(MODULE)
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void request_module_async(void *ptr){
+	struct saa7134_dev* dev=(struct saa7134_dev*)ptr;
+#else
 static void request_module_async(struct work_struct *work){
 	struct saa7134_dev* dev = container_of(work, struct saa7134_dev, request_module_wk);
+#endif
 	if (card_is_empress(dev))
 		request_module("saa7134-empress");
 	if (card_is_dvb(dev))
@@ -164,7 +209,11 @@ static void request_module_async(struct work_struct *work){
 
 static void request_submodules(struct saa7134_dev *dev)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&dev->request_module_wk, request_module_async, (void*)dev);
+#else
 	INIT_WORK(&dev->request_module_wk, request_module_async);
+#endif
 	schedule_work(&dev->request_module_wk);
 }
 
@@ -215,7 +264,7 @@ unsigned long saa7134_buffer_base(struct saa7134_buf *buf)
 int saa7134_pgtable_alloc(struct pci_dev *pci, struct saa7134_pgtable *pt)
 {
 	__le32       *cpu;
-	dma_addr_t   dma_addr;
+	dma_addr_t   dma_addr = 0;
 
 	cpu = pci_alloc_consistent(pci, SAA7134_PGTABLE_SIZE, &dma_addr);
 	if (NULL == cpu)
@@ -359,32 +408,6 @@ void saa7134_buffer_timeout(unsigned long data)
 	spin_unlock_irqrestore(&dev->slock,flags);
 }
 
-/* resends a current buffer in queue after resume */
-
-static int saa7134_buffer_requeue(struct saa7134_dev *dev,
-				  struct saa7134_dmaqueue *q)
-{
-	struct saa7134_buf *buf, *next;
-
-	assert_spin_locked(&dev->slock);
-
-	buf  = q->curr;
-	next = buf;
-	dprintk("buffer_requeue\n");
-
-	if (!buf)
-		return 0;
-
-	dprintk("buffer_requeue : resending active buffers \n");
-
-	if (!list_empty(&q->queue))
-		next = list_entry(q->queue.next, struct saa7134_buf,
-					  vb.queue);
-	buf->activate(dev, buf, next);
-
-	return 0;
-}
-
 /* ------------------------------------------------------------------ */
 
 int saa7134_set_dmabits(struct saa7134_dev *dev)
@@ -442,9 +465,7 @@ int saa7134_set_dmabits(struct saa7134_dev *dev)
 	/* TS capture -- dma 5 */
 	if (dev->ts_q.curr) {
 		ctrl |= SAA7134_MAIN_CTRL_TE5;
-		irq  |= SAA7134_IRQ1_INTE_RA2_3 |
-			SAA7134_IRQ1_INTE_RA2_2 |
-			SAA7134_IRQ1_INTE_RA2_1 |
+		irq  |= SAA7134_IRQ1_INTE_RA2_1 |
 			SAA7134_IRQ1_INTE_RA2_0;
 	}
 
@@ -523,12 +544,20 @@ static void print_irqstatus(struct saa7134_dev *dev, int loop,
 	printk("\n");
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t saa7134_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t saa7134_irq(int irq, void *dev_id)
+#endif
 {
 	struct saa7134_dev *dev = (struct saa7134_dev*) dev_id;
 	unsigned long report,status;
 	int loop, handled = 0;
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 23)
+	/* To make sure we see correct value of dev->insuspend */
+	smp_rmb();
+#endif
 	if (dev->insuspend)
 		goto out;
 
@@ -560,6 +589,10 @@ static irqreturn_t saa7134_irq(int irq, void *dev_id)
 		if (irq_debug)
 			print_irqstatus(dev,loop,report,status);
 
+#if 0
+		if (report & SAA7134_IRQ_REPORT_CONF_ERR)
+			dump_statusregs(dev);
+#endif
 
 		if ((report & SAA7134_IRQ_REPORT_RDCAP) ||
 			(report & SAA7134_IRQ_REPORT_INTL))
@@ -725,6 +758,10 @@ static int saa7134_hw_enable2(struct saa7134_dev *dev)
 			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18;
 		else if (dev->remote->mask_keyup & 0x40000)
 			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18A;
+	}
+
+	if (dev->has_remote == SAA7134_REMOTE_I2C) {
+		request_module("ir-kbd-i2c");
 	}
 
 	saa_writel(SAA7134_IRQ1, 0);
@@ -965,7 +1002,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		       dev->name,(unsigned long long)pci_resource_start(pci_dev,0));
 		goto fail1;
 	}
-	dev->lmmio = ioremap(pci_resource_start(pci_dev,0), 0x1000);
+	dev->lmmio = ioremap(pci_resource_start(pci_dev, 0),
+			     pci_resource_len(pci_dev, 0));
 	dev->bmmio = (__u8 __iomem *)dev->lmmio;
 	if (NULL == dev->lmmio) {
 		err = -EIO;
@@ -1020,7 +1058,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		goto fail4;
 	}
 	printk(KERN_INFO "%s: registered device video%d [v4l2]\n",
-	       dev->name,dev->video_dev->minor & 0x1f);
+	       dev->name, dev->video_dev->num);
 
 	dev->vbi_dev = vdev_init(dev, &saa7134_video_template, "vbi");
 
@@ -1029,7 +1067,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (err < 0)
 		goto fail4;
 	printk(KERN_INFO "%s: registered device vbi%d\n",
-	       dev->name,dev->vbi_dev->minor & 0x1f);
+	       dev->name, dev->vbi_dev->num);
 
 	if (card_has_radio(dev)) {
 		dev->radio_dev = vdev_init(dev,&saa7134_radio_template,"radio");
@@ -1038,7 +1076,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		if (err < 0)
 			goto fail4;
 		printk(KERN_INFO "%s: registered device radio%d\n",
-		       dev->name,dev->radio_dev->minor & 0x1f);
+		       dev->name, dev->radio_dev->num);
 	}
 
 	/* everything worked */
@@ -1132,6 +1170,9 @@ static void __devexit saa7134_finidev(struct pci_dev *pci_dev)
 	release_mem_region(pci_resource_start(pci_dev,0),
 			   pci_resource_len(pci_dev,0));
 
+#if 0  /* causes some trouble when reinserting the driver ... */
+	pci_disable_device(pci_dev);
+#endif
 	pci_set_drvdata(pci_dev, NULL);
 
 	/* free memory */
@@ -1139,6 +1180,32 @@ static void __devexit saa7134_finidev(struct pci_dev *pci_dev)
 }
 
 #ifdef CONFIG_PM
+
+/* resends a current buffer in queue after resume */
+static int saa7134_buffer_requeue(struct saa7134_dev *dev,
+				  struct saa7134_dmaqueue *q)
+{
+	struct saa7134_buf *buf, *next;
+
+	assert_spin_locked(&dev->slock);
+
+	buf  = q->curr;
+	next = buf;
+	dprintk("buffer_requeue\n");
+
+	if (!buf)
+		return 0;
+
+	dprintk("buffer_requeue : resending active buffers \n");
+
+	if (!list_empty(&q->queue))
+		next = list_entry(q->queue.next, struct saa7134_buf,
+					  vb.queue);
+	buf->activate(dev, buf, next);
+
+	return 0;
+}
+
 static int saa7134_suspend(struct pci_dev *pci_dev , pm_message_t state)
 {
 
@@ -1153,6 +1220,9 @@ static int saa7134_suspend(struct pci_dev *pci_dev , pm_message_t state)
 	saa_writel(SAA7134_MAIN_CTRL, 0);
 
 	dev->insuspend = 1;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 23)
+	smp_wmb();
+#endif
 	synchronize_irq(pci_dev->irq);
 
 	/* ACK interrupts once more, just in case,

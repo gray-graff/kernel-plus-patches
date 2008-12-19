@@ -29,6 +29,7 @@
 #include <linux/videodev2.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include "compat.h"
 
 #include "btcx-risc.h"
 
@@ -64,7 +65,7 @@ int btcx_riscmem_alloc(struct pci_dev *pci,
 		       unsigned int size)
 {
 	__le32 *cpu;
-	dma_addr_t dma;
+	dma_addr_t dma = 0;
 
 	if (NULL != risc->cpu && risc->size < size)
 		btcx_riscmem_free(pci,risc);

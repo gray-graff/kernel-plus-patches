@@ -21,6 +21,17 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* NOTE: the full version of this header is in the v4l-dvb repository
+ * and allows v4l i2c drivers to be compiled on older kernels as well.
+ * The version of this header as it appears in the kernel is a stripped
+ * version (without all the backwards compatibility stuff) and so it
+ * looks a bit odd.
+ *
+ * If you look at the full version then you will understand the reason
+ * for introducing this header since you really don't want to have all
+ * the tricky backwards compatibility code in each and every i2c driver.
+ */
+
 struct v4l2_i2c_driver_data {
 	const char * const name;
 	int driverid;
@@ -31,11 +42,17 @@ struct v4l2_i2c_driver_data {
 	int (*resume)(struct i2c_client *client);
 	int (*legacy_probe)(struct i2c_adapter *adapter);
 	int legacy_class;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	const struct i2c_device_id *id_table;
+#endif
 };
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25)
 static const struct i2c_client_address_data addr_data;
+#else
+static struct i2c_client_address_data addr_data;
+#endif
 static struct i2c_driver v4l2_i2c_driver_legacy;
 static char v4l2_i2c_drv_name_legacy[32];
 
@@ -71,13 +88,27 @@ static int v4l2_i2c_drv_detach_legacy(struct i2c_client *client)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 20)
 static int v4l2_i2c_drv_suspend_helper(struct i2c_client *client, pm_message_t state)
+#else
+static int v4l2_i2c_drv_suspend_helper(struct device * dev, pm_message_t state)
+#endif
 {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 20)
+	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+#endif
 	return v4l2_i2c_data.suspend ? v4l2_i2c_data.suspend(client, state) : 0;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 20)
 static int v4l2_i2c_drv_resume_helper(struct i2c_client *client)
+#else
+static int v4l2_i2c_drv_resume_helper(struct device * dev)
+#endif
 {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 20)
+	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+#endif
 	return v4l2_i2c_data.resume ? v4l2_i2c_data.resume(client) : 0;
 }
 
@@ -87,20 +118,34 @@ static int v4l2_i2c_drv_resume_helper(struct i2c_client *client)
 static struct i2c_driver v4l2_i2c_driver_legacy = {
 	.driver = {
 		.owner = THIS_MODULE,
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 20)
+		.suspend = v4l2_i2c_drv_suspend_helper,
+		.resume  = v4l2_i2c_drv_resume_helper,
+#endif
 	},
 	.attach_adapter = v4l2_i2c_drv_probe_legacy,
 	.detach_client = v4l2_i2c_drv_detach_legacy,
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 20)
 	.suspend = v4l2_i2c_drv_suspend_helper,
 	.resume  = v4l2_i2c_drv_resume_helper,
+#endif
 };
 
 /* ----------------------------------------------------------------------- */
 
 /* i2c implementation */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 static struct i2c_driver v4l2_i2c_driver = {
 	.suspend 	= v4l2_i2c_drv_suspend_helper,
 	.resume  	= v4l2_i2c_drv_resume_helper,
 };
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
+static int compat_legacy_probe(struct i2c_client *client)
+{
+	return v4l2_i2c_data.probe(client, NULL);
+}
+#endif
+#endif
 
 static int __init v4l2_i2c_drv_init(void)
 {
@@ -117,24 +162,34 @@ static int __init v4l2_i2c_drv_init(void)
 	v4l2_i2c_driver_legacy.command = v4l2_i2c_data.command;
 	err = i2c_add_driver(&v4l2_i2c_driver_legacy);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	if (err)
 		return err;
 	v4l2_i2c_driver.driver.name = v4l2_i2c_data.name;
 	v4l2_i2c_driver.id = v4l2_i2c_data.driverid;
 	v4l2_i2c_driver.command = v4l2_i2c_data.command;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	v4l2_i2c_driver.probe = v4l2_i2c_data.probe;
+#else
+	v4l2_i2c_driver.probe = compat_legacy_probe;
+#endif
 	v4l2_i2c_driver.remove = v4l2_i2c_data.remove;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	v4l2_i2c_driver.id_table = v4l2_i2c_data.id_table;
+#endif
 	err = i2c_add_driver(&v4l2_i2c_driver);
 	if (err)
 		i2c_del_driver(&v4l2_i2c_driver_legacy);
+#endif
 	return err;
 }
 
 static void __exit v4l2_i2c_drv_cleanup(void)
 {
 	i2c_del_driver(&v4l2_i2c_driver_legacy);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	i2c_del_driver(&v4l2_i2c_driver);
+#endif
 }
 
 module_init(v4l2_i2c_drv_init);

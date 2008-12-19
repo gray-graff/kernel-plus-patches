@@ -39,7 +39,7 @@
 
 #include "ttpci-eeprom.h"
 
-#if 1
+#if 1 /* keep */
 #define dprintk(x...) do { printk(x); } while (0)
 #else
 #define dprintk(x...) do { } while (0)

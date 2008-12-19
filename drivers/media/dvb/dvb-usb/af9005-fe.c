@@ -443,6 +443,13 @@ static int af9005_fe_read_status(struct dvb_frontend *fe, fe_status_t * stat)
 {
 	struct af9005_fe_state *state = fe->demodulator_priv;
 	u8 temp;
+#if 0
+	/* adjust mt2060 for strong signal (test) */
+	u8 buf[2];
+	struct i2c_msg msg = {
+		.addr = 0xc0,.flags = 0,.buf = buf,.len = 2
+	};
+#endif
 	int ret;
 
 	if (fe->ops.tuner_ops.release == NULL)
@@ -483,6 +490,18 @@ static int af9005_fe_read_status(struct dvb_frontend *fe, fe_status_t * stat)
 		return ret;
 	if (temp != state->strong) {
 		deb_info("adjust for strong signal %d\n", temp);
+#if 0
+		/* adjust mt2060 for strong signal (test) */
+		buf[0] = 0x0b;
+		if (temp) {
+			buf[1] = 0x30;
+		} else {
+			buf[1] = 0x33;
+		}
+		if (i2c_transfer(&state->d->i2c_adap, &msg, 1) != 1) {
+			err("aiaiaia");
+		} else
+#endif
 			state->strong = temp;
 	}
 	return 0;
@@ -803,6 +822,16 @@ static int af9005_fe_power(struct dvb_frontend *fe, int on)
 	int ret;
 	deb_info("power %s tuner\n", on ? "on" : "off");
 	ret = af9005_send_command(state->d, 0x03, &temp, 1, NULL, 0);
+#if 0
+	if (ret)
+		return ret;
+	if (fe->ops.tuner_ops.init != NULL) {
+		if (on)
+			ret = fe->ops.tuner_ops.init(fe);
+		else
+			ret = fe->ops.tuner_ops.sleep(fe);
+	}
+#endif
 	return ret;
 }
 
@@ -922,6 +951,29 @@ static int af9005_fe_init(struct dvb_frontend *fe)
 	     af9005_write_register_bits(state->d, xd_p_reg_dca_en,
 					reg_dca_en_pos, reg_dca_en_len, 0)))
 		return ret;
+#if 0
+	/*FIXME in the sample code but not in the captured data */
+	/* set B202[7] (1 for DCA, 0 for stand-alone) */
+	deb_info("set b202[7]\n");
+	if ((ret = af9005_write_register_bits(state->d, 0xb202, 7, 1, 0)))
+		return ret;
+
+	/* set A160[4] (1 for DCA & upper, 0 otherwise) */
+	deb_info("set a160[4]\n");
+	if ((ret =
+	     af9005_write_register_bits(state->d, xd_p_reg_dca_platch,
+					reg_dca_platch_pos,
+					reg_dca_platch_len, 0)))
+		return ret;
+
+	/* reset tpsrdy bit */
+	deb_info("reset tpsrdy bit\n");
+	if ((ret =
+	     af9005_write_register_bits(state->d, xd_p_reg_dca_api_tpsrdy,
+					reg_dca_api_tpsrdy_pos,
+					reg_dca_api_tpsrdy_len, 0)))
+		return ret;
+#endif
 	/* FIXME these are register bits, but I don't know which ones */
 	ret = af9005_write_ofdm_register(state->d, 0xa16c, 1);
 	if (ret)
@@ -934,6 +986,12 @@ static int af9005_fe_init(struct dvb_frontend *fe)
 	deb_info("program cfoe\n");
 	if ((ret = af9005_fe_program_cfoe(state->d, BANDWIDTH_6_MHZ)))
 		return ret;
+#if 0
+	/*FIXME not found in the captured data */
+	deb_info("select bandwith\n");
+	if ((ret = af9005_fe_select_bw(state->d, BANDWITH_6_MHZ)))	/* FIXME */
+		return ret;
+#endif
 	/* set read-update bit for constellation */
 	deb_info("set read-update bit for constellation\n");
 	if ((ret =
@@ -964,6 +1022,16 @@ static int af9005_fe_init(struct dvb_frontend *fe)
 	/* FIXME should be register bits, I don't know which ones */
 	ret = af9005_write_ofdm_register(state->d, 0xa601, 0);
 
+#if 0
+	/* set register-out bit to 1 for i2c master */
+	/* FIXME not in the captured data */
+	deb_info("set register-out bit to 1 for i2c master\n");
+	if ((ret =
+	     af9005_write_register_bits(state->d, xd_p_reg_top_gpioon0,
+					reg_top_gpioon0_pos,
+					reg_top_gpioon0_len, 1)))
+		return ret;
+#endif
 	/* set api_retrain_never_freeze */
 	deb_info("set api_retrain_never_freeze\n");
 	if ((ret = af9005_write_ofdm_register(state->d, 0xaefb, 0x01)))
@@ -1000,6 +1068,14 @@ static int af9005_fe_init(struct dvb_frontend *fe)
 	state->original_fcw =
 	    ((u32) temp2 << 16) + ((u32) temp1 << 8) + (u32) temp0;
 
+#if 0
+	/* power on tuner */
+	/*FIXME not in the captured data */
+	ret = af9005_fe_power(fe, 1);
+	if (ret)
+		return ret;
+	msleep(100);
+#endif
 
 	/* save original TOPs */
 	deb_info("save original TOPs\n");
@@ -1036,6 +1112,24 @@ static int af9005_fe_init(struct dvb_frontend *fe)
 	if (ret)
 		return ret;
 
+#if 0
+	/*  (For strong signal) IF minimal value  */
+	/*  FIXME not in the captured data, wrong register? */
+	ret =
+	    af9005_read_word_agc(state->d, xd_p_reg_aagc_min_if_agc_9_8,
+				 xd_p_reg_aagc_min_if_agc_7_0, 0, 2,
+				 &state->original_if_min);
+	if (ret)
+		return ret;
+
+	/*  (For strong signal) IF minimal value  */
+	/*  FIXME not in the captured data, wrong register? */
+	ret =
+	    af9005_read_word_agc(state->d, 0xA60E, 0xA608, 0, 2,
+				 &state->original_aci0_if_min);
+	if (ret)
+		return ret;
+#endif
 	/* attach tuner and init */
 	if (fe->ops.tuner_ops.release == NULL) {
 		/* read tuner and board id from eeprom */
@@ -1189,6 +1283,13 @@ static int af9005_fe_set_frontend(struct dvb_frontend *fe,
 				       state->original_if_unplug_th);
 	if (ret)
 		return ret;
+#if 0
+	ret =
+	    af9005_write_ofdm_register(state->d, xd_p_reg_unplug_rf_gain_th,
+				       state->original_rf_unplug_th);
+	if (ret)
+		return ret;
+#endif
 	/* set tuner */
 	deb_info("set tuner\n");
 	ret = fe->ops.tuner_ops.set_params(fe, fep);
@@ -1211,6 +1312,46 @@ static int af9005_fe_set_frontend(struct dvb_frontend *fe,
 	if (ret)
 		return ret;
 
+#if 0
+	/* FIXME not found in captured data */
+	/* clear tpsrdy */
+	deb_info("clear tpsrdy\n");
+	ret =
+	    af9005_write_register_bits(state->d, xd_p_reg_dca_api_tpsrdy,
+				       reg_dca_api_tpsrdy_pos,
+				       reg_dca_api_tpsrdy_len, 0);
+	if (ret)
+		return ret;
+
+	/* clear dca_en */
+	deb_info("clear dca_en\n");
+	ret =
+	    af9005_write_register_bits(state->d, xd_p_reg_dca_en,
+				       reg_dca_en_pos, reg_dca_en_len, 0);
+	if (ret)
+		return ret;
+
+	/* clear MP2IF lock */
+	deb_info("clear MP2IF lock\n");
+	ret =
+	    af9005_write_register_bits(state->d,
+				       xd_r_mp2if_sync_byte_locked,
+				       mp2if_sync_byte_locked_pos,
+				       mp2if_sync_byte_locked_len, 0);
+	if (ret)
+		return ret;
+
+	/* clear TPS lock flag */
+	deb_info("clear TPS lock flag\n");
+	ret =
+	    af9005_write_register_bits(state->d, xd_p_fd_tpsd_lock,
+				       fd_tpsd_lock_pos, fd_tpsd_lock_len, 1);
+	if (ret)
+		return ret;
+
+	/* write TPS information to demods here for easy mode */
+	/* FIXME in the sample code but not in captured data, so I didn't bother to write the code */
+#endif
 	/* reset pre viterbi and post viterbi registers and statistics */
 	af9005_reset_pre_viterbi(fe);
 	af9005_reset_post_viterbi(fe);

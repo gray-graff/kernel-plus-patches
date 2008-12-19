@@ -38,6 +38,7 @@
 #include <media/saa7115.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
+#include "compat.h"
 
 struct pvr2_v4l_decoder {
 	struct pvr2_i2c_handler handler;

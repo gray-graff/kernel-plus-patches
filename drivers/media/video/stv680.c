@@ -69,6 +69,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/usb.h>
 #include <linux/mutex.h>
+#include "compat.h"
 
 #include "stv680.h"
 
@@ -84,7 +85,8 @@ static unsigned int debug;
 #define PDEBUG(level, fmt, args...) \
 	do { \
 	if (debug >= level)	\
-		info("[%s:%d] " fmt, __func__, __LINE__ , ## args);	\
+		printk(KERN_INFO KBUILD_MODNAME " [%s:%d] \n" fmt,	\
+			__func__, __LINE__ , ## args);	\
 	} while (0)
 
 
@@ -617,7 +619,11 @@ static int stv680_set_pict (struct usb_stv *stv680, struct video_picture *p)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void stv680_video_irq (struct urb *urb, struct pt_regs *regs)
+#else
 static void stv680_video_irq (struct urb *urb)
+#endif
 {
 	struct usb_stv *stv680 = urb->context;
 	int length = urb->actual_length;
@@ -1086,6 +1092,7 @@ static int stv_open (struct inode *inode, struct file *file)
 	int err = 0;
 
 	/* we are called with the BKL held */
+	lock_kernel();
 	stv680->user = 1;
 	err = stv_init (stv680);	/* main initialization routine for camera */
 
@@ -1099,6 +1106,7 @@ static int stv_open (struct inode *inode, struct file *file)
 	}
 	if (err)
 		stv680->user = 0;
+	unlock_kernel();
 
 	return err;
 }
@@ -1129,8 +1137,7 @@ static int stv_close (struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int stv680_do_ioctl (struct inode *inode, struct file *file,
-			    unsigned int cmd, void *arg)
+static int stv680_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = file->private_data;
 	struct usb_stv *stv680 = video_get_drvdata(vdev);
@@ -1300,7 +1307,7 @@ static int stv680_do_ioctl (struct inode *inode, struct file *file,
 static int stv680_ioctl(struct inode *inode, struct file *file,
 			unsigned int cmd, unsigned long arg)
 {
-	return video_usercopy(inode, file, cmd, arg, stv680_do_ioctl);
+	return video_usercopy(file, cmd, arg, stv680_do_ioctl);
 }
 
 static int stv680_mmap (struct file *file, struct vm_area_struct *vma)
@@ -1467,7 +1474,8 @@ static int stv680_probe (struct usb_interface *intf, const struct usb_device_id 
 		retval = -EIO;
 		goto error_vdev;
 	}
-	PDEBUG (0, "STV(i): registered new video device: video%d", stv680->vdev->minor);
+	PDEBUG(0, "STV(i): registered new video device: video%d",
+		stv680->vdev->num);
 
 	usb_set_intfdata (intf, stv680);
 	retval = stv680_create_sysfs_files(stv680->vdev);
@@ -1550,7 +1558,8 @@ static int __init usb_stv680_init (void)
 	}
 	PDEBUG (0, "STV(i): usb camera driver version %s registering", DRIVER_VERSION);
 
-	info(DRIVER_DESC " " DRIVER_VERSION);
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
 	return 0;
 }
 
