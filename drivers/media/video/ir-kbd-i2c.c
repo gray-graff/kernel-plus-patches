@@ -47,7 +47,7 @@
 
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* ----------------------------------------------------------------------- */
 /* insmod parameters                                                       */

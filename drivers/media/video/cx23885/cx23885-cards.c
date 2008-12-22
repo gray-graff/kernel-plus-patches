@@ -25,7 +25,7 @@
 #include <linux/delay.h>
 #include <media/cx25840.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "cx23885.h"
 #include "tuner-xc2028.h"
 

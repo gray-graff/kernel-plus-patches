@@ -13,7 +13,7 @@
 
 #include <linux/kernel.h>
 #include <linux/i2c.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "dvb_frontend.h"
 

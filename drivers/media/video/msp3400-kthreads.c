@@ -24,6 +24,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 #include <linux/freezer.h>
 #endif
@@ -32,7 +33,7 @@
 #include <media/msp3400.h>
 #include <linux/kthread.h>
 #include <linux/suspend.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* this one uses the automatic sound standard detection of newer msp34xx

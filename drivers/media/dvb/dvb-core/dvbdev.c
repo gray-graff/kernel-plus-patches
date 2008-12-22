@@ -31,7 +31,7 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include <linux/smp_lock.h>
 #include "dvbdev.h"

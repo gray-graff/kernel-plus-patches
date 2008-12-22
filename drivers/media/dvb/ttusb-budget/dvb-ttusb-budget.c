@@ -19,7 +19,7 @@
 #include <linux/time.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #ifdef TTUSB_KERNEL
 #include <linux/firmware.h>

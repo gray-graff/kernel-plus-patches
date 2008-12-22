@@ -30,7 +30,7 @@
 #include <asm/system.h>
 
 #include <media/v4l2-common.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define VIDEO_NUM_DEVICES	256
 #define VIDEO_NAME              "video4linux"

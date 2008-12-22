@@ -33,6 +33,7 @@
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/list.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 #include <linux/suspend.h>
 #else
@@ -44,7 +45,7 @@
 
 #include "dvb_frontend.h"
 #include "dvbdev.h"
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/dvb/version.h>
 
 static int dvb_frontend_debug;

@@ -24,7 +24,7 @@
 #include <linux/device.h>
 #include <linux/suspend.h>
 #include <media/v4l2-common.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "au0828.h"
 #include "au8522.h"

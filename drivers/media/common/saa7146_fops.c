@@ -1,5 +1,5 @@
 #include <media/saa7146_vv.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define BOARD_CAN_DO_VBI(dev)   (dev->revision != 0 && dev->vv_data->vbi_minor != -1)
 

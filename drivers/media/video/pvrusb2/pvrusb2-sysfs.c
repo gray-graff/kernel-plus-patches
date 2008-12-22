@@ -26,7 +26,7 @@
 #ifdef CONFIG_VIDEO_PVRUSB2_DEBUGIFC
 #include "pvrusb2-debugifc.h"
 #endif /* CONFIG_VIDEO_PVRUSB2_DEBUGIFC */
-#include "compat.h"
+#include <media/compat.h>
 
 #define pvr2_sysfs_trace(...) pvr2_trace(PVR2_TRACE_SYSFS,__VA_ARGS__)
 

@@ -38,7 +38,7 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("Brooktree-856A video encoder driver");
 MODULE_AUTHOR("Mike Bernson & Dave Perks");

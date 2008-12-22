@@ -11,7 +11,7 @@
 #include "dvb_net.h"
 
 #include <linux/module.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include <media/saa7146.h>

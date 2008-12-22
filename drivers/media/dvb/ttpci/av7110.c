@@ -52,6 +52,7 @@
 #include <linux/kthread.h>
 #include <asm/unaligned.h>
 #include <asm/byteorder.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
 #include <linux/byteorder/swabb.h>
 #endif

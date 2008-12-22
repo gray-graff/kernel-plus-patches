@@ -38,7 +38,7 @@
 #include <linux/string.h>
 #include <linux/stddef.h>
 #include <linux/kref.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "sn9c102_config.h"
 #include "sn9c102_sensor.h"

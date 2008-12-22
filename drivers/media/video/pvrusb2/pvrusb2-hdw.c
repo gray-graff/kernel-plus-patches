@@ -35,7 +35,7 @@
 #include "pvrusb2-encoder.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define TV_MIN_FREQ     55250000L
 #define TV_MAX_FREQ    850000000L

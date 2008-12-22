@@ -28,7 +28,7 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "em28xx.h"
 
 #define EM28XX_SNAPSHOT_KEY KEY_CAMERA

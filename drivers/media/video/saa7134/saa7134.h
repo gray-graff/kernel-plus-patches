@@ -33,7 +33,7 @@
 
 #include <asm/io.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/tuner.h>

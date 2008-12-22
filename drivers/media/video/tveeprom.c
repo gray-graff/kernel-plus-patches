@@ -41,7 +41,7 @@
 #include <media/tveeprom.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c Hauppauge eeprom decoder driver");
 MODULE_AUTHOR("John Klar");

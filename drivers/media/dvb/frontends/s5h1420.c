@@ -37,7 +37,7 @@
 #include "dvb_frontend.h"
 #include "s5h1420.h"
 #include "s5h1420_priv.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define TONE_FREQ 22000
 

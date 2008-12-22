@@ -53,7 +53,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/vmalloc.h>
 #include <linux/usb.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define FIRMWARE_FILE_NAME "f2255usb.bin"
 

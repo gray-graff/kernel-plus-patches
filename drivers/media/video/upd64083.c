@@ -30,7 +30,7 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
 #include <media/upd64083.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("uPD64083 driver");
 MODULE_AUTHOR("T. Adachi, Takeru KOMORIYA, Hans Verkuil");

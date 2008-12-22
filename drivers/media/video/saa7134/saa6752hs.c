@@ -32,7 +32,7 @@
 #include <linux/poll.h>
 #include <linux/i2c.h>
 #include <linux/types.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>

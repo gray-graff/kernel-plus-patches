@@ -22,7 +22,7 @@
 #include "pvrusb2-debug.h"
 #include <asm/string.h>
 #include <linux/slab.h>
-#include "compat.h"
+#include <media/compat.h>
 
 struct std_name {
 	const char *name;

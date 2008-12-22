@@ -20,7 +20,7 @@
 #ifndef _CX25840_CORE_H_
 #define _CX25840_CORE_H_
 
-#include "compat.h"
+#include <media/compat.h>
 
 #include <linux/videodev2.h>
 #include <media/v4l2-device.h>

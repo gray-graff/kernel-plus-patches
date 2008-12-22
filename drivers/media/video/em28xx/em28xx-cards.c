@@ -27,7 +27,7 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/usb.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <media/tuner.h>
 #include <media/msp3400.h>
 #include <media/saa7115.h>

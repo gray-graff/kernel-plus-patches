@@ -7,7 +7,7 @@
 #include <linux/i2c.h>
 #include <media/tuner.h>
 #include <media/tuner-types.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* ---------------------------------------------------------------------- */
 

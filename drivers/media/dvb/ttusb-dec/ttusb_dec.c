@@ -32,7 +32,7 @@
 #include <linux/init.h>
 #include <linux/input.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dmxdev.h"

@@ -57,7 +57,7 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
 #include <media/saa7127.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static int debug;
 static int test_image;

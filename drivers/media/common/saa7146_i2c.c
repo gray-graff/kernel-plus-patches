@@ -1,5 +1,5 @@
 #include <media/saa7146_vv.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static u32 saa7146_i2c_func(struct i2c_adapter *adapter)
 {

@@ -26,7 +26,7 @@
 #include <media/v4l2-i2c-drv.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c device driver for cs5345 Audio ADC");
 MODULE_AUTHOR("Hans Verkuil");

@@ -26,7 +26,7 @@
 #include <linux/kthread.h>
 #include <linux/file.h>
 #include <linux/suspend.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "cx23885.h"
 #include <media/v4l2-common.h>

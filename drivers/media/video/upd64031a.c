@@ -30,7 +30,7 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
 #include <media/upd64031a.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* --------------------- read registers functions define -------------------- */
 

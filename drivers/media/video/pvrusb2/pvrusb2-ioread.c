@@ -26,7 +26,7 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define BUFFER_COUNT 32
 #define BUFFER_SIZE PAGE_ALIGN(0x4000)

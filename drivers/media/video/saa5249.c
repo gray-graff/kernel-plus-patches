@@ -54,7 +54,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_AUTHOR("Michael Geng <linux@MichaelGeng.de>");
 MODULE_DESCRIPTION("Philips SAA5249 Teletext decoder driver");

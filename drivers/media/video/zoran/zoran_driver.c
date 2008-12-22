@@ -81,7 +81,7 @@
 
 #include <linux/video_decoder.h>
 #include <linux/video_encoder.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include "zoran.h"
 #include "zoran_device.h"

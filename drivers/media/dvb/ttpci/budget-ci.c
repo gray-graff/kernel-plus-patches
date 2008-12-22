@@ -34,6 +34,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 23)
 /* Fix compile warning */
 #undef BIT

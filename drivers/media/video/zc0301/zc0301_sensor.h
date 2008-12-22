@@ -23,7 +23,7 @@
 #define _ZC0301_SENSOR_H_
 
 #include <linux/usb.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <linux/device.h>
 #include <linux/stddef.h>

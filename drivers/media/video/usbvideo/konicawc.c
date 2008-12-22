@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
 #else
@@ -22,7 +23,7 @@
 #endif
 
 #include "usbvideo.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define MAX_BRIGHTNESS	108
 #define MAX_CONTRAST	108

@@ -28,7 +28,7 @@
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <linux/videodev.h>
 #include <linux/video_decoder.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("vpx3220a/vpx3216b/vpx3214c video decoder driver");
 MODULE_AUTHOR("Laurent Pinchart");

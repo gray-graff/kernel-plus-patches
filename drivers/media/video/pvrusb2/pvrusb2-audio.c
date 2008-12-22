@@ -25,7 +25,7 @@
 #include <linux/videodev2.h>
 #include <media/msp3400.h>
 #include <media/v4l2-common.h>
-#include "compat.h"
+#include <media/compat.h>
 
 struct pvr2_msp3400_handler {
 	struct pvr2_hdw *hdw;

@@ -39,7 +39,7 @@
 #include <linux/i2c.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-i2c-drv.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA717x audio/video decoder driver");
 MODULE_AUTHOR("K. Ohta, T. Adachi, Hans Verkuil");

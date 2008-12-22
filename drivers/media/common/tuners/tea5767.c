@@ -12,7 +12,7 @@
 
 #include <linux/i2c.h>
 #include <linux/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include "tuner-i2c.h"
 #include "tea5767.h"

@@ -62,7 +62,7 @@
 #include <linux/uio.h>
 #include <asm/uaccess.h>
 #include <linux/crc32.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_demux.h"

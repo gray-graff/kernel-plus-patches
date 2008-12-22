@@ -23,7 +23,7 @@
 
 #include <linux/input.h>
 #include <media/ir-common.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* empty keytable, can be used as placeholder for not-yet created keytables */
 IR_KEYTAB_TYPE ir_codes_empty[IR_KEYTAB_SIZE] = {

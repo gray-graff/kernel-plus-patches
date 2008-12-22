@@ -23,7 +23,7 @@
 
 #include <linux/kernel.h>
 #include <linux/types.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include "tuner-i2c.h"
 #include "tda18271.h"

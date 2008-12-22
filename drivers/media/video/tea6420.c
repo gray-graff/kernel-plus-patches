@@ -34,7 +34,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include "tea6420.h"
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_AUTHOR("Michael Hunold <michael@mihu.de>");
 MODULE_DESCRIPTION("tea6420 driver");

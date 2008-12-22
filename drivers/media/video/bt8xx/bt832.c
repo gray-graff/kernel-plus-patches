@@ -26,7 +26,7 @@
 #include <linux/kernel.h>
 #include <linux/i2c.h>
 #include <linux/types.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <linux/init.h>
 #include <linux/errno.h>

@@ -25,7 +25,7 @@
 #include <linux/pci.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "bt848.h"

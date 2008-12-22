@@ -18,7 +18,7 @@
 #include <linux/module.h>
 #include <linux/smp_lock.h>
 #include <media/v4l2-ioctl.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #ifdef CONFIG_COMPAT
 

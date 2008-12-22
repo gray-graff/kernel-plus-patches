@@ -43,7 +43,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include "ks0127.h"
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("KS0127 video decoder driver");
 MODULE_AUTHOR("Ryan Drake");

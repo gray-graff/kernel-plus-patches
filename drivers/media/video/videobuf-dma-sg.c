@@ -32,7 +32,7 @@
 #include <asm/pgtable.h>
 
 #include <media/videobuf-dma-sg.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define MAGIC_DMABUF 0x19721112
 #define MAGIC_SG_MEM 0x17890714

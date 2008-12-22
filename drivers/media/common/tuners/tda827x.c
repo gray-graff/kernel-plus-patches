@@ -20,7 +20,7 @@
 
 #include <linux/module.h>
 #include <asm/types.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/dvb/frontend.h>
 #include <linux/videodev2.h>
 

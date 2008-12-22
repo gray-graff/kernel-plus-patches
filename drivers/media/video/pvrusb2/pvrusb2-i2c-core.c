@@ -23,7 +23,7 @@
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
 #include "pvrusb2.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define trace_i2c(...) pvr2_trace(PVR2_TRACE_I2C,__VA_ARGS__)
 

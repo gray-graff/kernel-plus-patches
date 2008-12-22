@@ -28,7 +28,7 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/saa7115.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "mxb.h"
 #include "tea6415c.h"

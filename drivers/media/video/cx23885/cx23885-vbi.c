@@ -25,7 +25,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "cx23885.h"
 
 static unsigned int vbibufs = 4;

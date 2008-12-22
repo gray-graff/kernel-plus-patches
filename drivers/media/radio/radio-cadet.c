@@ -37,7 +37,7 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <asm/io.h>		/* outb, outb_p			*/
 #include <asm/uaccess.h>	/* copy to/from user		*/
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>	/* V4L2 API defs		*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>

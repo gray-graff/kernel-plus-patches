@@ -15,7 +15,7 @@
 #include <linux/i2c.h>
 #include <linux/types.h>
 #include <linux/init.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/tuner.h>
 #include <media/tuner-types.h>

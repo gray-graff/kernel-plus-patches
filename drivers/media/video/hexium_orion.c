@@ -24,7 +24,7 @@
 #define DEBUG_VARIABLE debug
 
 #include <media/saa7146_vv.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static int debug;
 module_param(debug, int, 0);
