@@ -34,7 +34,7 @@
 #include <linux/mutex.h>
 #include <linux/mm.h>
 #include <asm/errno.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>

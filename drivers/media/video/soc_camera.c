@@ -29,7 +29,7 @@
 #include <media/v4l2-dev.h>
 #include <media/videobuf-core.h>
 #include <media/soc_camera.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static LIST_HEAD(hosts);
 static LIST_HEAD(devices);

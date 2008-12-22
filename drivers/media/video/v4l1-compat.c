@@ -35,7 +35,7 @@
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <asm/pgtable.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static unsigned int debug;
 module_param(debug, int, 0644);

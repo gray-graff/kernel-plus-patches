@@ -21,7 +21,7 @@
 
 #include <linux/kernel.h>
 #include <linux/usb.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "em28xx.h"
 #include <media/v4l2-common.h>

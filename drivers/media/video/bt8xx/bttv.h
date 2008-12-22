@@ -16,7 +16,7 @@
 
 #include <linux/videodev.h>
 #include <linux/i2c.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/i2c-addr.h>

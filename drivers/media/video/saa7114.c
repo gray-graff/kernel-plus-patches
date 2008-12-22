@@ -38,7 +38,7 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA7114H video decoder driver");
 MODULE_AUTHOR("Maxim Yevtyushkin");

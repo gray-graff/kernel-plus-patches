@@ -3,7 +3,7 @@
 #define __LINUX_se401_H
 
 #include <asm/uaccess.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>

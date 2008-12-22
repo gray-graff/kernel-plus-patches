@@ -25,7 +25,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "cx88.h"
 #include "tea5767.h"
 

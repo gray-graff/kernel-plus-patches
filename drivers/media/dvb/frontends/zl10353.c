@@ -25,7 +25,7 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <asm/div64.h>
 
 #include "dvb_frontend.h"

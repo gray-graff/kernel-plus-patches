@@ -25,7 +25,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "au0828.h"
 
 #include <media/v4l2-common.h>

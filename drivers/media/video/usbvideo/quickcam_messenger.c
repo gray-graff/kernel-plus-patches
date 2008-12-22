@@ -33,6 +33,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/input.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
 #else
@@ -41,7 +42,7 @@
 
 #include "usbvideo.h"
 #include "quickcam_messenger.h"
-#include "compat.h"
+#include <media/compat.h>
 
 /*
  * Version Information

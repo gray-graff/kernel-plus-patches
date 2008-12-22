@@ -29,7 +29,7 @@
 #include <media/v4l2-common.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include <media/i2c-addr.h>
 

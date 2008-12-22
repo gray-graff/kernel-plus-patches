@@ -29,7 +29,7 @@
 #include <media/tveeprom.h>
 #include <media/videobuf-dma-sg.h>
 #include <media/videobuf-dvb.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "btcx-risc.h"
 #include "cx23885-reg.h"

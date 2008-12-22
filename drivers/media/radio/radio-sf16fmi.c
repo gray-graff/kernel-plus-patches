@@ -22,7 +22,7 @@
 #include <linux/init.h>		/* Initdata			*/
 #include <linux/ioport.h>	/* request_region		*/
 #include <linux/delay.h>	/* udelay			*/
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>	/* kernel radio structs		*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>

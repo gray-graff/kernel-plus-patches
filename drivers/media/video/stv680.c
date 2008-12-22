@@ -69,7 +69,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/usb.h>
 #include <linux/mutex.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "stv680.h"
 

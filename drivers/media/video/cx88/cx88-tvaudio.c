@@ -37,6 +37,7 @@
 
 #include <linux/module.h>
 #include <linux/errno.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 #include <linux/suspend.h>
 #else

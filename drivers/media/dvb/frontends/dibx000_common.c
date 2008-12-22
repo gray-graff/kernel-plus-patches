@@ -1,7 +1,7 @@
 #include <linux/i2c.h>
 
 #include "dibx000_common.h"
-#include "compat.h"
+#include <media/compat.h>
 
 static int debug;
 module_param(debug, int, 0644);

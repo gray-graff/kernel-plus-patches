@@ -31,7 +31,7 @@
 #include <media/v4l2-dev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
-#include "compat.h"
+#include <media/compat.h>
 
 struct pvr2_v4l2_dev;
 struct pvr2_v4l2_fh;

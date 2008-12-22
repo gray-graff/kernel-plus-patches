@@ -9,7 +9,7 @@
 
 #include <linux/i2c.h>
 #include <linux/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/tuner.h>
 #include "tuner-i2c.h"

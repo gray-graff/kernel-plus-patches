@@ -25,7 +25,7 @@
 #ifndef _EM28XX_H
 #define _EM28XX_H
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/videobuf-vmalloc.h>
 

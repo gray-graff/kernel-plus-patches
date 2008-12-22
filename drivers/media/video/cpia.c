@@ -40,7 +40,7 @@
 #include <linux/mutex.h>
 
 #include "cpia.h"
-#include "compat.h"
+#include <media/compat.h>
 
 static int video_nr = -1;
 

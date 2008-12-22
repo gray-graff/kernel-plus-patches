@@ -26,7 +26,7 @@
 #include <linux/random.h>
 #include <linux/version.h>
 #include <linux/mutex.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <linux/dma-mapping.h>
 #ifdef CONFIG_VIDEO_V4L1_COMPAT

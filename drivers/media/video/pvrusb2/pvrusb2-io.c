@@ -24,7 +24,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static const char *pvr2_buffer_state_decode(enum pvr2_buffer_state);
 

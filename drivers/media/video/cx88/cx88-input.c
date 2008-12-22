@@ -28,7 +28,7 @@
 #include <linux/pci.h>
 #include <linux/module.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "cx88.h"
 #include <media/ir-common.h>
 

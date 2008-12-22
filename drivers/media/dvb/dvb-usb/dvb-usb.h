@@ -13,7 +13,7 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 #include <linux/firmware.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_frontend.h"

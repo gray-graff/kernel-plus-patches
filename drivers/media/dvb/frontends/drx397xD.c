@@ -30,7 +30,7 @@
 
 #include "dvb_frontend.h"
 #include "drx397xD.h"
-#include "compat.h"
+#include <media/compat.h>
 
 static const char mod_name[] = "drx397xD";
 

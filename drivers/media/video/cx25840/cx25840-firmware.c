@@ -20,7 +20,7 @@
 #include <linux/firmware.h>
 #include <media/v4l2-common.h>
 #include <media/cx25840.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "cx25840-core.h"
 

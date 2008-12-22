@@ -37,7 +37,7 @@
 #include <media/soc_camera.h>
 #include <media/sh_mobile_ceu.h>
 #include <media/videobuf-dma-contig.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* register offsets for sh7722 / sh7723 */
 

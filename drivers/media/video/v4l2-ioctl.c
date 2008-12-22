@@ -25,7 +25,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <linux/video_decoder.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define dbgarg(cmd, fmt, arg...) \
 		do {							\

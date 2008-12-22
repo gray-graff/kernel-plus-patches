@@ -19,7 +19,7 @@
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
 #include <media/videobuf-dma-contig.h>
-#include "compat.h"
+#include <media/compat.h>
 
 struct videobuf_dma_contig_memory {
 	u32 magic;

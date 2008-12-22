@@ -18,7 +18,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <linux/i2c.h>
-#include "compat.h"
+#include <media/compat.h>
 
 
 MODULE_AUTHOR("Jonathan Corbet <corbet@lwn.net>");

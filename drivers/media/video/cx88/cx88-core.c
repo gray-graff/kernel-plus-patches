@@ -35,7 +35,7 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <linux/mutex.h>
 

@@ -67,7 +67,7 @@ struct uvc_xu_control {
 #ifdef __KERNEL__
 
 #include <linux/poll.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* --------------------------------------------------------------------------
  * UVC constants

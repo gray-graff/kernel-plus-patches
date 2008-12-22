@@ -29,7 +29,7 @@
 #include <linux/videodev2.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "btcx-risc.h"
 

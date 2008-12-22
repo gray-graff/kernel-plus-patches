@@ -57,7 +57,7 @@
 #include <asm/system.h>
 #include <asm/byteorder.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/dvb/video.h>
 #include <linux/dvb/audio.h>
 #include <media/v4l2-common.h>

@@ -44,6 +44,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 #include <linux/firmware.h>
 #include <linux/ihex.h>

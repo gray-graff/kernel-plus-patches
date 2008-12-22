@@ -27,7 +27,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static struct pvr2_context *pvr2_context_exist_first;
 static struct pvr2_context *pvr2_context_exist_last;

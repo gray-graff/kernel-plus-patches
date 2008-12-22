@@ -38,7 +38,7 @@
 #include <linux/jiffies.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_frontend.h"

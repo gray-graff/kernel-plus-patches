@@ -37,7 +37,7 @@
 #include <asm/atomic.h>
 #include <linux/delay.h>
 #include <linux/usb.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 #include <linux/firmware.h>

@@ -36,7 +36,7 @@
 #include <linux/errno.h>
 #include <linux/usb.h>
 #include <linux/i2c.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "usbvision.h"
 
 #define DBG_I2C		1<<0

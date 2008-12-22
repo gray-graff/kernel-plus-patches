@@ -19,7 +19,7 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include "qt1010.h"
-#include "compat.h"
+#include <media/compat.h>
 #include "qt1010_priv.h"
 
 static int debug;

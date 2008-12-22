@@ -24,7 +24,7 @@
 #include <linux/videodev2.h>
 #include "pvrusb2-io.h"
 #include "pvrusb2-ctrl.h"
-#include "compat.h"
+#include <media/compat.h>
 
 
 /* Private internal control ids, look these up with

@@ -33,7 +33,7 @@
 #include <linux/pci.h>
 
 #include <asm/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>

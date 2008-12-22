@@ -30,7 +30,7 @@
 #include <linux/types.h>
 #include <asm/page.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include "dmxdev.h"
 #include "dvbdev.h"
 #include "dvb_demux.h"

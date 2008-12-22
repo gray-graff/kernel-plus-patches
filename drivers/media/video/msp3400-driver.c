@@ -52,6 +52,7 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/kthread.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
 #include <linux/suspend.h>
 #else
@@ -63,7 +64,7 @@
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/msp3400.h>
 #include <media/tvaudio.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* ---------------------------------------------------------------------- */

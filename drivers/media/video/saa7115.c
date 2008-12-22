@@ -49,7 +49,7 @@
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/saa7115.h>
 #include <asm/div64.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define VRES_60HZ	(480+16)
 

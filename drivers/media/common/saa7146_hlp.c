@@ -1,6 +1,6 @@
 #include <linux/kernel.h>
 #include <media/saa7146_vv.h>
-#include "compat.h"
+#include <media/compat.h>
 
 static void calculate_output_format_register(struct saa7146_dev* saa, u32 palette, u32* clip_format)
 {

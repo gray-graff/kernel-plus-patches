@@ -36,7 +36,7 @@
 #include <linux/proc_fs.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <linux/spinlock.h>
 #include <linux/sem.h>

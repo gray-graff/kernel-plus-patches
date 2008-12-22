@@ -144,7 +144,7 @@ M                       zr36055[1] 0001 0000c001 00000000 (zr36050[1])
 #ifndef __LINUX_VIDEOCODEC_H
 #define __LINUX_VIDEOCODEC_H
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 
 //should be in videodev.h ??? (VID_DO_....)

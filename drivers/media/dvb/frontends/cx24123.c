@@ -29,7 +29,7 @@
 
 #include "dvb_frontend.h"
 #include "cx24123.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define XTAL 10111000
 

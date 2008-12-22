@@ -30,7 +30,7 @@
 #include <linux/wait.h>
 #include <linux/fs.h>
 #include <linux/string.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include <linux/dvb/dmx.h>

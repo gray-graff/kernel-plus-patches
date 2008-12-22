@@ -28,7 +28,7 @@
 #include "pvrusb2-video-v4l.h"
 #include "pvrusb2-cx2584x-v4l.h"
 #include "pvrusb2-wm8775.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define trace_i2c(...) pvr2_trace(PVR2_TRACE_I2C,__VA_ARGS__)
 

@@ -41,7 +41,7 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/cx25840.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "cx25840-core.h"
 

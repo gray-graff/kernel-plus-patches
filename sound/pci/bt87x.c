@@ -36,7 +36,7 @@
 #include <sound/pcm_params.h>
 #include <sound/control.h>
 #include <sound/initval.h>
-#include "compat.h"
+#include <media/compat.h>
 #ifdef COMPAT_SND_CTL_BOOLEAN_MONO
 static int snd_ctl_boolean_mono_info(struct snd_kcontrol *kcontrol,
 				     struct snd_ctl_elem_info *uinfo)

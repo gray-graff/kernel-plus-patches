@@ -9,7 +9,7 @@
 #define __FLEXCOP_COMMON_H__
 
 #include <linux/pci.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "flexcop-reg.h"

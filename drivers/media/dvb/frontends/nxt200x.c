@@ -46,7 +46,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "dvb_frontend.h"
 #include "nxt200x.h"

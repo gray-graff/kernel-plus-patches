@@ -33,7 +33,7 @@
 #include <linux/vmalloc.h>
 #include <linux/firmware.h>
 #include <net/checksum.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include <asm/unaligned.h>
 #include <asm/io.h>

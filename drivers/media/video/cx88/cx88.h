@@ -34,7 +34,7 @@
 #if defined(CONFIG_VIDEO_CX88_DVB) || defined(CONFIG_VIDEO_CX88_DVB_MODULE)
 #include <media/videobuf-dvb.h>
 #endif
-#include "compat.h"
+#include <media/compat.h>
 
 #include "btcx-risc.h"
 #include "cx88-reg.h"

@@ -10,7 +10,7 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/smp_lock.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <linux/init.h>
 #include <linux/kdev_t.h>

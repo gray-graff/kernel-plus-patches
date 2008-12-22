@@ -19,7 +19,7 @@
 */
 
 #include <linux/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev2.h>
 #include "tda18271-priv.h"
 

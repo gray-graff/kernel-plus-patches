@@ -42,7 +42,7 @@
 //#include<errno.h>
 
 /* v4l  API */
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 
 /* headerfile of this module */

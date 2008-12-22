@@ -19,13 +19,14 @@
  */
 
 #include <linux/kthread.h>
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 #include <linux/suspend.h>
 #else
 #include <linux/freezer.h>
 #endif
 #include <linux/mm.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "dvbdev.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-hdw-internal.h"

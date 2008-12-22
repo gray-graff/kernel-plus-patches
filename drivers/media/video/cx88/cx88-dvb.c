@@ -28,7 +28,7 @@
 #include <linux/kthread.h>
 #include <linux/file.h>
 #include <linux/suspend.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #include "cx88.h"
 #include "dvb-pll.h"

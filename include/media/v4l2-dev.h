@@ -8,7 +8,7 @@
  */
 #ifndef _V4L2_DEV_H
 #define _V4L2_DEV_H
-
+#include <linux/version.h>
 #include <linux/poll.h>
 #include <linux/fs.h>
 #include <linux/device.h>

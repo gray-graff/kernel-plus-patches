@@ -50,7 +50,7 @@
 #include "ibmmpeg2.h"
 #include "saa7121.h"
 #include "cs8420.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define DEBUG(x)		/* debug driver */
 #undef  IDEBUG			/* debug irq handler */

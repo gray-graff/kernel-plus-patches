@@ -21,7 +21,7 @@
 #include <media/v4l2-ioctl.h>
 #include <linux/usb.h>
 #include <linux/mutex.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* Most helpful debugging aid */
 #define assert(expr) ((void) ((expr) ? 0 : (err("assert failed at line %d",__LINE__))))

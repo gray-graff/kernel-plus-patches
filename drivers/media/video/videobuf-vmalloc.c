@@ -26,7 +26,7 @@
 #include <asm/pgtable.h>
 
 #include <media/videobuf-vmalloc.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define MAGIC_DMABUF   0x17760309
 #define MAGIC_VMAL_MEM 0x18221223

@@ -28,7 +28,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <asm/div64.h>
 
 #include "cx23885.h"
