@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.27
-%define kernel_version		2.6.27
+%define original_kernel_version	2.6.28
+%define kernel_version		2.6.28
 %define patch_level		%nil
 
 %define testing			0
@@ -51,6 +51,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Thu Dec 25 2008 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
+- 2.6.28
+
 * Fri Oct 10 2008 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
 - 2.6.27
 
