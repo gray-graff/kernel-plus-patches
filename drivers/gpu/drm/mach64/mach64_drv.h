@@ -96,7 +96,7 @@ typedef struct drm_mach64_private {
 	unsigned int depth_bpp;
 	unsigned int depth_offset, depth_pitch;
 
-	atomic_t vbl_received;		/**< Number of vblanks received. */
+	atomic_t vbl_received;          /**< Number of vblanks received. */
 
 	u32 front_offset_pitch;
 	u32 back_offset_pitch;
@@ -167,9 +167,9 @@ extern u32 mach64_get_vblank_counter(struct drm_device *dev, int crtc);
 extern int mach64_enable_vblank(struct drm_device *dev, int crtc);
 extern void mach64_disable_vblank(struct drm_device *dev, int crtc);
 extern irqreturn_t mach64_driver_irq_handler(DRM_IRQ_ARGS);
-extern void mach64_driver_irq_preinstall(struct drm_device * dev);
-extern void mach64_driver_irq_postinstall(struct drm_device * dev);
-extern void mach64_driver_irq_uninstall(struct drm_device * dev);
+extern void mach64_driver_irq_preinstall(struct drm_device *dev);
+extern int mach64_driver_irq_postinstall(struct drm_device *dev);
+extern void mach64_driver_irq_uninstall(struct drm_device *dev);
 
 /* ================================================================
  * Registers

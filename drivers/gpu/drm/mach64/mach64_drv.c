@@ -41,7 +41,7 @@ static struct pci_device_id pciidlist[] = {
 static struct drm_driver driver = {
 	.driver_features =
 	    DRIVER_USE_AGP | DRIVER_USE_MTRR | DRIVER_PCI_DMA | DRIVER_HAVE_DMA
-	    | DRIVER_HAVE_IRQ | DRIVER_IRQ_SHARED | DRIVER_IRQ_VBL,
+	    | DRIVER_HAVE_IRQ | DRIVER_IRQ_SHARED,
 	.lastclose = mach64_driver_lastclose,
 	.get_vblank_counter = mach64_get_vblank_counter,
 	.enable_vblank = mach64_enable_vblank,
