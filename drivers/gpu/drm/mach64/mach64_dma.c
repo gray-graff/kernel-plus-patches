@@ -1369,8 +1369,7 @@ int mach64_do_cleanup_dma(struct drm_device * dev)
 	 * may not have been called from userspace and after dev_private
 	 * is freed, it's too late.
 	 */
-	if (dev->irq)
-		drm_irq_uninstall(dev);
+	drm_irq_uninstall(dev);
 
 	if (dev->dev_private) {
 		drm_mach64_private_t *dev_priv = dev->dev_private;

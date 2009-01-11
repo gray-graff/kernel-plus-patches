@@ -895,7 +895,7 @@ int mach64_get_param(struct drm_device *dev, void *data,
 		value = mach64_do_get_frames_queued(dev_priv);
 		break;
 	case MACH64_PARAM_IRQ_NR:
-		value = dev->irq;
+		value = drm_dev_to_irq(dev);
 		break;
 	default:
 		return -EINVAL;
