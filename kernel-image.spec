@@ -468,7 +468,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Sun Jan 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt9
-- 
+- add GEM support
+- update config on x86_64: turn off CONFIG_SYSFS_DEPRECATED 
 
 * Thu Dec 18 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt8
 - 2.6.27.10 
