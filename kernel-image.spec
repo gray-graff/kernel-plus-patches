@@ -473,6 +473,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - config:
 +	turn on PRINTK_TIME
 +	build-in kernel config
++	turn off CONFIG_USB_OHCI_HCD_SSB
 
 * Sun Jan 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt9
 - add GEM support
