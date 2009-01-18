@@ -468,7 +468,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
-- 2.6.27.11 
+- 2.6.27.12 
 - add eeepc rfkill support
 - config:
 +	turn on PRINTK_TIME
