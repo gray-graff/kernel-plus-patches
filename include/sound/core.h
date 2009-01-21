@@ -478,5 +478,17 @@ struct snd_pci_quirk {
 const struct snd_pci_quirk *
 snd_pci_quirk_lookup(struct pci_dev *pci, const struct snd_pci_quirk *list);
 
+typedef unsigned int fmode_t;
+
+#ifdef CONFIG_PCI
+#ifndef CONFIG_HAVE_PCI_IOREMAP_BAR
+#include <linux/pci.h>
+static inline void *pci_ioremap_bar(struct pci_dev *pdev, int bar)
+{
+        return ioremap_nocache(pci_resource_start(pdev, bar),
+                               pci_resource_len(pdev, bar));
+}
+#endif
+#endif
 
 #endif /* __SOUND_CORE_H */

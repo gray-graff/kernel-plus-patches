@@ -18,6 +18,7 @@ module_param(nforce_wa, bool, 0444);
 MODULE_PARM_DESC(nforce_wa, "Apply NForce chipset workaround "
 		"(expect bad sound)");
 
+#define hrtimer_get_expires(t)  (t)->expires
 #define DMIX_WANTS_S16	1
 
 /*
