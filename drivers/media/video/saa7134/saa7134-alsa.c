@@ -987,9 +987,9 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 	if (!enable[devnum])
 		return -ENODEV;
 
-	card = snd_card_new(index[devnum], id[devnum], THIS_MODULE, sizeof(snd_card_saa7134_t));
+	err = snd_card_create(index[devnum], id[devnum], THIS_MODULE, sizeof(snd_card_saa7134_t), &card);
 
-	if (card == NULL)
+	if (err < 0)
 		return -ENOMEM;
 
 	strcpy(card->driver, "SAA7134");
