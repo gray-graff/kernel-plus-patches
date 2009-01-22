@@ -1193,7 +1193,7 @@ static int path_lookup_create(int dfd, const char *name,
 			nd, open_flags, create_mode);
 }
 
-static struct dentry *__lookup_hash(struct qstr *name,
+struct dentry *__lookup_hash(struct qstr *name,
 		struct dentry *base, struct nameidata *nd)
 {
 	struct dentry *dentry;
@@ -2851,6 +2851,7 @@ EXPORT_SYMBOL(follow_up);
 EXPORT_SYMBOL(get_write_access); /* binfmt_aout */
 EXPORT_SYMBOL(getname);
 EXPORT_SYMBOL(lock_rename);
+EXPORT_SYMBOL(__lookup_hash);
 EXPORT_SYMBOL(lookup_one_len);
 EXPORT_SYMBOL(page_follow_link_light);
 EXPORT_SYMBOL(page_put_link);
@@ -2877,3 +2878,4 @@ EXPORT_SYMBOL(vfs_symlink);
 EXPORT_SYMBOL(vfs_unlink);
 EXPORT_SYMBOL(dentry_unhash);
 EXPORT_SYMBOL(generic_readlink);
+EXPORT_SYMBOL(deny_write_access);
