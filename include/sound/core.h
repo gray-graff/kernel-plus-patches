@@ -28,6 +28,7 @@
 #include <linux/rwsem.h>		/* struct rw_semaphore */
 #include <linux/pm.h>			/* pm_message_t */
 #include <linux/device.h>
+#include <linux/stringify.h>
 
 /* number of supported soundcards */
 #ifdef CONFIG_SND_DYNAMIC_MINORS
@@ -41,9 +42,6 @@
 /* forward declarations */
 #ifdef CONFIG_PCI
 struct pci_dev;
-#endif
-#ifdef CONFIG_SBUS
-struct sbus_dev;
 #endif
 
 /* device allocation stuff */
@@ -63,6 +61,7 @@ typedef int __bitwise snd_device_type_t;
 #define	SNDRV_DEV_INFO		((__force snd_device_type_t) 0x1006)
 #define	SNDRV_DEV_BUS		((__force snd_device_type_t) 0x1007)
 #define	SNDRV_DEV_CODEC		((__force snd_device_type_t) 0x1008)
+#define	SNDRV_DEV_JACK          ((__force snd_device_type_t) 0x1009)
 #define	SNDRV_DEV_LOWLEVEL	((__force snd_device_type_t) 0x2000)
 
 typedef int __bitwise snd_device_state_t;
@@ -114,7 +113,7 @@ struct snd_card {
 	char shortname[32];		/* short name of this soundcard */
 	char longname[80];		/* name of this soundcard */
 	char mixername[80];		/* mixer name */
-	char components[80];		/* card components delimited with
+	char components[128];		/* card components delimited with
 								space */
 	struct module *module;		/* top-level module */
 
@@ -297,8 +296,20 @@ int snd_card_locked(int card);
 extern int (*snd_mixer_oss_notify_callback)(struct snd_card *card, int cmd);
 #endif
 
+int snd_card_create(int idx, const char *id,
+		    struct module *module, int extra_size,
+		    struct snd_card **card_ret);
+
+static inline __deprecated
 struct snd_card *snd_card_new(int idx, const char *id,
-			 struct module *module, int extra_size);
+			      struct module *module, int extra_size)
+{
+	struct snd_card *card;
+	if (snd_card_create(idx, id, module, extra_size, &card) < 0)
+		return NULL;
+	return card;
+}
+
 int snd_card_disconnect(struct snd_card *card);
 int snd_card_free(struct snd_card *card);
 int snd_card_free_when_closed(struct snd_card *card);
@@ -354,7 +365,7 @@ void snd_verbose_printd(const char *file, int line, const char *format, ...)
  * snd_printk - printk wrapper
  * @fmt: format string
  *
- * Works like print() but prints the file and the line of the caller
+ * Works like printk() but prints the file and the line of the caller
  * when configured with CONFIG_SND_VERBOSE_PRINTK.
  */
 #define snd_printk(fmt, args...) \
@@ -365,8 +376,6 @@ void snd_verbose_printd(const char *file, int line, const char *format, ...)
 #endif
 
 #ifdef CONFIG_SND_DEBUG
-
-#define __ASTRING__(x) #x
 
 #ifdef CONFIG_SND_VERBOSE_PRINTK
 /**
@@ -382,33 +391,41 @@ void snd_verbose_printd(const char *file, int line, const char *format, ...)
 #define snd_printd(fmt, args...) \
 	printk(fmt ,##args)
 #endif
-/**
- * snd_assert - run-time assertion macro
- * @expr: expression
- *
- * This macro checks the expression in run-time and invokes the commands
- * given in the rest arguments if the assertion is failed.
- * When CONFIG_SND_DEBUG is not set, the expression is executed but
- * not checked.
- */
-#define snd_assert(expr, args...) do {					\
-	if (unlikely(!(expr))) {					\
-		snd_printk(KERN_ERR "BUG? (%s)\n", __ASTRING__(expr));	\
-		dump_stack();						\
-		args;							\
-	}								\
-} while (0)
 
-#define snd_BUG() do {				\
-	snd_printk(KERN_ERR "BUG?\n");		\
-	dump_stack();				\
-} while (0)
+/**
+ * snd_BUG - give a BUG warning message and stack trace
+ *
+ * Calls WARN() if CONFIG_SND_DEBUG is set.
+ * Ignored when CONFIG_SND_DEBUG is not set.
+ */
+#define snd_BUG()		WARN(1, "BUG?\n")
+
+/**
+ * snd_BUG_ON - debugging check macro
+ * @cond: condition to evaluate
+ *
+ * When CONFIG_SND_DEBUG is set, this macro evaluates the given condition,
+ * and call WARN() and returns the value if it's non-zero.
+ * 
+ * When CONFIG_SND_DEBUG is not set, this just returns zero, and the given
+ * condition is ignored.
+ *
+ * NOTE: the argument won't be evaluated at all when CONFIG_SND_DEBUG=n.
+ * Thus, don't put any statement that influences on the code behavior,
+ * such as pre/post increment, to the argument of this macro.
+ * If you want to evaluate and give a warning, use standard WARN_ON().
+ */
+#define snd_BUG_ON(cond)	WARN((cond), "BUG? (%s)\n", __stringify(cond))
 
 #else /* !CONFIG_SND_DEBUG */
 
-#define snd_printd(fmt, args...)	/* nothing */
-#define snd_assert(expr, args...)	(void)(expr)
-#define snd_BUG()			/* nothing */
+#define snd_printd(fmt, args...)	do { } while (0)
+#define snd_BUG()			do { } while (0)
+static inline int __snd_bug_on(int cond)
+{
+	return 0;
+}
+#define snd_BUG_ON(cond)	__snd_bug_on(0 && (cond))  /* always false */
 
 #endif /* CONFIG_SND_DEBUG */
 
@@ -461,5 +478,17 @@ struct snd_pci_quirk {
 const struct snd_pci_quirk *
 snd_pci_quirk_lookup(struct pci_dev *pci, const struct snd_pci_quirk *list);
 
+typedef unsigned int fmode_t;
+
+#ifdef CONFIG_PCI
+#ifndef CONFIG_HAVE_PCI_IOREMAP_BAR
+#include <linux/pci.h>
+static inline void *pci_ioremap_bar(struct pci_dev *pdev, int bar)
+{
+        return ioremap_nocache(pci_resource_start(pdev, bar),
+                               pci_resource_len(pdev, bar));
+}
+#endif
+#endif
 
 #endif /* __SOUND_CORE_H */

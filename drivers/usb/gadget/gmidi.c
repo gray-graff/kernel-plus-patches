@@ -1084,8 +1084,8 @@ static int gmidi_register_card(struct gmidi_device *dev)
 		.dev_free = gmidi_snd_free,
 	};
 
-	card = snd_card_new(index, id, THIS_MODULE, 0);
-	if (!card) {
+	err = snd_card_create(index, id, THIS_MODULE, 0, &card);
+	if (err < 0) {
 		ERROR(dev, "snd_card_new failed\n");
 		err = -ENOMEM;
 		goto fail;

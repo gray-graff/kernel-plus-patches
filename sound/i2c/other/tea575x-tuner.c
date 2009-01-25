@@ -89,14 +89,10 @@ static void snd_tea575x_set_freq(struct snd_tea575x *tea)
  * Linux Video interface
  */
 
-static int snd_tea575x_ioctl(struct inode *inode, struct file *file,
+static long snd_tea575x_ioctl(struct file *file,
 			     unsigned int cmd, unsigned long data)
 {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,17)
-	tea575x_t *tea = video_drvdata(file);
-#else
 	struct snd_tea575x *tea = video_drvdata(file);
-#endif
 	void __user *arg = (void __user *)data;
 
 	switch(cmd) {
@@ -166,12 +162,11 @@ static int snd_tea575x_ioctl(struct inode *inode, struct file *file,
 			struct video_audio v;
 			if(copy_from_user(&v, arg, sizeof(v)))
 				return -EFAULT;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+
 			if (tea->ops->mute)
 				tea->ops->mute(tea,
 					       (v.flags &
 						VIDEO_AUDIO_MUTE) ? 1 : 0);
-#endif
 			if(v.audio)
 				return -EINVAL;
 			return 0;
@@ -185,24 +180,16 @@ static void snd_tea575x_release(struct video_device *vfd)
 {
 }
 
-static int snd_tea575x_exclusive_open(struct inode *inode, struct file *file)
+static int snd_tea575x_exclusive_open(struct file *file)
 {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,17)
-	tea575x_t *tea = video_drvdata(file);
-#else
 	struct snd_tea575x *tea = video_drvdata(file);
-#endif
 
 	return test_and_set_bit(0, &tea->in_use) ? -EBUSY : 0;
 }
 
-static int snd_tea575x_exclusive_release(struct inode *inode, struct file *file)
+static int snd_tea575x_exclusive_release(struct file *file)
 {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,17)
-	tea575x_t *tea = video_drvdata(file);
-#else
 	struct snd_tea575x *tea = video_drvdata(file);
-#endif
 
 	clear_bit(0, &tea->in_use);
 	return 0;

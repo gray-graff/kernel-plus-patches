@@ -2,8 +2,7 @@
  * wm9712.c  --  ALSA Soc WM9712 codec support
  *
  * Copyright 2006 Wolfson Microelectronics PLC.
- * Author: Liam Girdwood
- *         liam.girdwood@wolfsonmicro.com or linux@wolfsonmicro.com
+ * Author: Liam Girdwood <lrg@slimlogic.co.uk>
  *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
@@ -154,21 +153,6 @@ SOC_SINGLE("Mic 1 Volume", AC97_MIC, 8, 31, 1),
 SOC_SINGLE("Mic 2 Volume", AC97_MIC, 0, 31, 1),
 SOC_SINGLE("Mic 20dB Boost Switch", AC97_MIC, 7, 1, 0),
 };
-
-/* add non dapm controls */
-static int wm9712_add_controls(struct snd_soc_codec *codec)
-{
-	int err, i;
-
-	for (i = 0; i < ARRAY_SIZE(wm9712_snd_ac97_controls); i++) {
-		err = snd_ctl_add(codec->card,
-				  snd_soc_cnew(&wm9712_snd_ac97_controls[i],
-					       codec, NULL));
-		if (err < 0)
-			return err;
-	}
-	return 0;
-}
 
 /* We have to create a fake left and right HP mixers because
  * the codec only has a single control that is shared by both channels.
@@ -488,7 +472,8 @@ static int ac97_write(struct snd_soc_codec *codec, unsigned int reg,
 	return 0;
 }
 
-static int ac97_prepare(struct snd_pcm_substream *substream)
+static int ac97_prepare(struct snd_pcm_substream *substream,
+			struct snd_soc_dai *dai)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -508,7 +493,8 @@ static int ac97_prepare(struct snd_pcm_substream *substream)
 	return ac97_write(codec, reg, runtime->rate);
 }
 
-static int ac97_aux_prepare(struct snd_pcm_substream *substream)
+static int ac97_aux_prepare(struct snd_pcm_substream *substream,
+			    struct snd_soc_dai *dai)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -534,7 +520,7 @@ static int ac97_aux_prepare(struct snd_pcm_substream *substream)
 struct snd_soc_dai wm9712_dai[] = {
 {
 	.name = "AC97 HiFi",
-	.type = SND_SOC_DAI_AC97_BUS,
+	.ac97_control = 1,
 	.playback = {
 		.stream_name = "HiFi Playback",
 		.channels_min = 1,
@@ -689,7 +675,7 @@ static int wm9712_soc_probe(struct platform_device *pdev)
 
 	ret = wm9712_reset(codec, 0);
 	if (ret < 0) {
-		printk(KERN_ERR "AC97 link error\n");
+		printk(KERN_ERR "Failed to reset WM9712: AC97 link error\n");
 		goto reset_err;
 	}
 
@@ -697,9 +683,10 @@ static int wm9712_soc_probe(struct platform_device *pdev)
 	ac97_write(codec, AC97_VIDEO, ac97_read(codec, AC97_VIDEO) | 0x3000);
 
 	wm9712_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
-	wm9712_add_controls(codec);
+	snd_soc_add_controls(codec, wm9712_snd_ac97_controls,
+				ARRAY_SIZE(wm9712_snd_ac97_controls));
 	wm9712_add_widgets(codec);
-	ret = snd_soc_register_card(socdev);
+	ret = snd_soc_init_card(socdev);
 	if (ret < 0) {
 		printk(KERN_ERR "wm9712: failed to register card\n");
 		goto reset_err;

@@ -816,7 +816,8 @@ snd_azf3328_mixer_new(struct snd_azf3328 *chip)
 	int err;
 
 	snd_azf3328_dbgcallenter();
-	snd_assert(chip != NULL && chip->card != NULL, return -EINVAL);
+	if (snd_BUG_ON(!chip || !chip->card))
+		return -EINVAL;
 
 	card = chip->card;
 
@@ -1471,7 +1472,8 @@ snd_azf3328_gameport_cooked_read(struct gameport *gameport,
 	u8 val;
 	unsigned long flags;
 
-	snd_assert(chip, return 0);
+	if (snd_BUG_ON(!chip))
+		return 0;
 
 	spin_lock_irqsave(&chip->reg_lock, flags);
 	val = snd_azf3328_game_inb(chip, IDX_GAME_LEGACY_COMPATIBLE);
@@ -2214,9 +2216,9 @@ snd_azf3328_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return -ENOENT;
 	}
 
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	strcpy(card->driver, "AZF3328");
 	strcpy(card->shortname, "Aztech AZF3328 (PCI168)");

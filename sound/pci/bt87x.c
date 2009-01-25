@@ -278,11 +278,7 @@ static int snd_bt87x_create_risc(struct snd_bt87x *chip, struct snd_pcm_substrea
 			if (len == rest)
 				cmd |= RISC_EOL | RISC_IRQ;
 			*risc++ = cpu_to_le32(cmd);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
-			addr = snd_pcm_sgbuf_get_addr(sgbuf, offset);
-#else
 			addr = snd_pcm_sgbuf_get_addr(substream, offset);
-#endif
 			*risc++ = cpu_to_le32(addr);
 			offset += len;
 			rest -= len;
@@ -914,9 +910,9 @@ static int __devinit snd_bt87x_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (!card)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	err = snd_bt87x_create(card, pci, &chip);
 	if (err < 0)

@@ -493,12 +493,10 @@ static int snd_card_saa7134_hw_params(struct snd_pcm_substream * substream,
 	period_size = params_period_bytes(hw_params);
 	periods = params_periods(hw_params);
 
-	if (period_size < 0x100 || period_size > 0x10000)
-		return -EINVAL;
-	if (periods < 4)
-		return -EINVAL;
-	if (period_size * periods > 1024 * 1024)
-		return -EINVAL;
+	if (snd_BUG_ON(period_size <= 0x100 || period_size >= 0x10000))
+		   return -EINVAL;
+	if (snd_BUG_ON(periods <= 4)) return -EINVAL;
+	if (snd_BUG_ON(period_size * periods >= 1024 * 1024)) return -EINVAL;
 
 	dev = saa7134->dev;
 
@@ -995,9 +993,9 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 	if (!enable[devnum])
 		return -ENODEV;
 
-	card = snd_card_new(index[devnum], id[devnum], THIS_MODULE, sizeof(snd_card_saa7134_t));
+	err = snd_card_create(index[devnum], id[devnum], THIS_MODULE, sizeof(snd_card_saa7134_t), &card);
 
-	if (card == NULL)
+	if (err < 0)
 		return -ENOMEM;
 
 	strcpy(card->driver, "SAA7134");

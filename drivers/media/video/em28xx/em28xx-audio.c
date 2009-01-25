@@ -526,8 +526,8 @@ static int em28xx_audio_init(struct em28xx *dev)
 		printk(KERN_ERR "em28xx-audio.c: out of memory\n");
 		return -1;
 	}
-	card = snd_card_new(index[devnr], "Em28xx Audio", THIS_MODULE, 0);
-	if (card == NULL) {
+	err = snd_card_create(index[devnr], "Em28xx Audio", THIS_MODULE, 0, &card);
+	if (err < 0) {
 		kfree(adev);
 		return -ENOMEM;
 	}

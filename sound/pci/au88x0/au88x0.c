@@ -180,8 +180,7 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	if ((err = pci_request_regions(pci, CARD_NAME_SHORT)) != 0)
 		goto regions_out;
 
-	chip->mmio = ioremap_nocache(pci_resource_start(pci, 0),
-	                             pci_resource_len(pci, 0));
+	chip->mmio = pci_ioremap_bar(pci, 0);
 	if (!chip->mmio) {
 		printk(KERN_ERR "MMIO area remap failed.\n");
 		err = -ENOMEM;
@@ -251,9 +250,9 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return -ENOENT;
 	}
 	// (2)
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	// (3)
 	if ((err = snd_vortex_create(card, pci, &chip)) < 0) {
