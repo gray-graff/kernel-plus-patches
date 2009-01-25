@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
 - 2.6.27.13 
+- alsa 1.0.19
 
 * Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
 - 2.6.27.12 
