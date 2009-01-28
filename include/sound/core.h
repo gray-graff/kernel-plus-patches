@@ -29,7 +29,7 @@
 #include <linux/pm.h>			/* pm_message_t */
 #include <linux/device.h>
 #include <linux/stringify.h>
-
+#include <asm/io.h>
 /* number of supported soundcards */
 #ifdef CONFIG_SND_DYNAMIC_MINORS
 #define SNDRV_CARDS 32
@@ -475,20 +475,15 @@ struct snd_pci_quirk {
 	{_SND_PCI_QUIRK_ID(vend, dev), .value = (val)}
 #endif
 
+#ifndef pci_ioremap_bar
+#define pci_ioremap_bar(pci, a)                         \
+	ioremap_nocache(pci_resource_start(pci, a),    \
+			pci_resource_len(pci, a))
+#endif
+
 const struct snd_pci_quirk *
 snd_pci_quirk_lookup(struct pci_dev *pci, const struct snd_pci_quirk *list);
 
 typedef unsigned int fmode_t;
-
-#ifdef CONFIG_PCI
-#ifndef CONFIG_HAVE_PCI_IOREMAP_BAR
-#include <linux/pci.h>
-static inline void *pci_ioremap_bar(struct pci_dev *pdev, int bar)
-{
-        return ioremap_nocache(pci_resource_start(pdev, bar),
-                               pci_resource_len(pdev, bar));
-}
-#endif
-#endif
 
 #endif /* __SOUND_CORE_H */
