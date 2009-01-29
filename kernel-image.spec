@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.27
-Release: alt11
+Release: alt12
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -52,6 +52,7 @@ BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
+Provides: kernel-modueles-eeepc-%flavour
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
@@ -467,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jan 29 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt12
+- move eeepc modules to kernel  
+
 * Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
 - 2.6.27.13 
 - alsa 1.0.19
