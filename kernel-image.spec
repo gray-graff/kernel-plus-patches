@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Jan 29 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt12
+- 2.6.27.14
 - move eeepc modules to kernel  
 
 * Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
