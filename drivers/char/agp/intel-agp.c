@@ -217,8 +217,8 @@ static int intel_i810_configure(void)
 	if (agp_bridge->driver->needs_scratch_page) {
 		for (i = 0; i < current_size->num_entries; i++) {
 			writel(agp_bridge->scratch_page, intel_private.registers+I810_PTE_BASE+(i*4));
-			readl(intel_private.registers+I810_PTE_BASE+(i*4));	/* PCI posting. */
 		}
+		readl(intel_private.registers+I810_PTE_BASE+((i-1)*4));	/* PCI posting. */
 	}
 	global_cache_flush();
 	return 0;
@@ -778,8 +778,8 @@ static int intel_i830_configure(void)
 	if (agp_bridge->driver->needs_scratch_page) {
 		for (i = intel_private.gtt_entries; i < current_size->num_entries; i++) {
 			writel(agp_bridge->scratch_page, intel_private.registers+I810_PTE_BASE+(i*4));
-			readl(intel_private.registers+I810_PTE_BASE+(i*4));	/* PCI Posting. */
 		}
+		readl(intel_private.registers+I810_PTE_BASE+((i-1)*4));	/* PCI Posting. */
 	}
 
 	global_cache_flush();
@@ -994,8 +994,8 @@ static int intel_i915_configure(void)
 	if (agp_bridge->driver->needs_scratch_page) {
 		for (i = intel_private.gtt_entries; i < current_size->num_entries; i++) {
 			writel(agp_bridge->scratch_page, intel_private.gtt+i);
-			readl(intel_private.gtt+i);	/* PCI Posting. */
 		}
+		readl(intel_private.gtt+i-1);	/* PCI Posting. */
 	}
 
 	global_cache_flush();
@@ -2132,7 +2132,7 @@ static const struct intel_driver_description {
 	{ PCI_DEVICE_ID_INTEL_Q33_HB, PCI_DEVICE_ID_INTEL_Q33_IG, 0, "Q33",
 		NULL, &intel_g33_driver },
 	{ PCI_DEVICE_ID_INTEL_GM45_HB, PCI_DEVICE_ID_INTEL_GM45_IG, 0,
-	    "Mobile Intel? GM45 Express", NULL, &intel_i965_driver },
+	    "Mobile Intel® GM45 Express", NULL, &intel_i965_driver },
 	{ PCI_DEVICE_ID_INTEL_IGD_E_HB, PCI_DEVICE_ID_INTEL_IGD_E_IG, 0,
 	    "Intel Integrated Graphics Device", NULL, &intel_i965_driver },
 	{ PCI_DEVICE_ID_INTEL_Q45_HB, PCI_DEVICE_ID_INTEL_Q45_IG, 0,
