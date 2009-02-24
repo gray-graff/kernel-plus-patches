@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.27
-Release: alt12
+Release: alt13
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Feb 24 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt13
+- 2.6.27.19 
+
 * Thu Jan 29 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt12
 - 2.6.27.14
 - move eeepc modules to kernel  
