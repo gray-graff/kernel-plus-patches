@@ -706,7 +706,6 @@ static int __devinit snd_mtpav_probe(struct platform_device *dev)
 	mtp_card->card = card;
 	mtp_card->irq = -1;
 	mtp_card->share_irq = 0;
-	mtp_card->inmidiport = 0xffffffff;
 	mtp_card->inmidistate = 0;
 	mtp_card->outmidihwport = 0xffffffff;
 	init_timer(&mtp_card->timer);
