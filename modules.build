@@ -30,6 +30,7 @@ kvm
 lirc
 subfs
 svgalib_helper
+etercifs
 
 #telephony drivers
 zaptel
