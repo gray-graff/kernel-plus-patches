@@ -834,8 +834,8 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	/* don't enable GEM on PAE - needs agp + set_memory_* interface fixes */
 	dev_priv->has_gem = 0;
 #else
-	/* enable GEM by default */
-	dev_priv->has_gem = 1;
+	/* enable GEM by default, except on I8xx */
+	dev_priv->has_gem = !IS_I8XX(dev) ? 1 : 0;
 #endif
 
 	i915_gem_load(dev);
