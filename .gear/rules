@@ -1,1 +1,1 @@
-tar.bz2: v2.6.29-rc8:. name=linux-2.6.29
+tar.bz2: v2.6.29:. name=linux-2.6.29
