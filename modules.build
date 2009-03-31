@@ -12,6 +12,7 @@ madwifi-dfs
 madwifi-ar5007
 rt2860
 rtl8187se
+bcmwl
 
 #vendor specific  hardware features drives
 acerhk
