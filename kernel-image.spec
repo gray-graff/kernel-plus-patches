@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.27
-Release: alt15
+Release: alt16
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
+- v4l: add AverMedia CardBus Plus  support (tnx week@) 
+
 * Tue Mar 24 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt15
 - 2.6.27.21
 - disable GEM on Intel 8xx 
