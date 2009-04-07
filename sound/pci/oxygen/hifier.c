@@ -94,11 +94,6 @@ static void hifier_cleanup(struct oxygen *chip)
 {
 }
 
-static void hifier_resume(struct oxygen *chip)
-{
-	hifier_registers_init(chip);
-}
-
 static void set_ak4396_params(struct oxygen *chip,
 			       struct snd_pcm_hw_params *params)
 {
@@ -155,16 +150,16 @@ static const struct oxygen_model model_hifier = {
 	.init = hifier_init,
 	.control_filter = hifier_control_filter,
 	.cleanup = hifier_cleanup,
-	.resume = hifier_resume,
+	.resume = hifier_registers_init,
 	.set_dac_params = set_ak4396_params,
 	.set_adc_params = set_cs5340_params,
 	.update_dac_volume = update_ak4396_volume,
 	.update_dac_mute = update_ak4396_mute,
 	.dac_tlv = ak4396_db_scale,
 	.model_data_size = sizeof(struct hifier_data),
-	.device_config = PLAYBACK_0_TO_I2S |
-			 PLAYBACK_1_TO_SPDIF |
-			 CAPTURE_0_FROM_I2S_1,
+	.pcm_dev_cfg = PLAYBACK_0_TO_I2S |
+		       PLAYBACK_1_TO_SPDIF |
+		       CAPTURE_0_FROM_I2S_1,
 	.dac_channels = 2,
 	.dac_volume_min = 0,
 	.dac_volume_max = 255,
@@ -185,7 +180,7 @@ static int __devinit hifier_probe(struct pci_dev *pci,
 		++dev;
 		return -ENOENT;
 	}
-	err = oxygen_pci_probe(pci, index[dev], id[dev], &model_hifier, 0);
+	err = oxygen_pci_probe(pci, index[dev], id[dev], &model_hifier);
 	if (err >= 0)
 		++dev;
 	return err;

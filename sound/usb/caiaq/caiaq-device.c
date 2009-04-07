@@ -42,17 +42,15 @@
 #endif
 
 MODULE_AUTHOR("Daniel Mack <daniel@caiaq.de>");
-MODULE_DESCRIPTION("caiaq USB audio, version 1.3.11");
+MODULE_DESCRIPTION("caiaq USB audio, version 1.3.8");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Native Instruments, RigKontrol2},"
 			 "{Native Instruments, RigKontrol3},"
 			 "{Native Instruments, Kore Controller},"
 			 "{Native Instruments, Kore Controller 2},"
 			 "{Native Instruments, Audio Kontrol 1},"
-			 "{Native Instruments, Audio 4 DJ},"
 			 "{Native Instruments, Audio 8 DJ},"
-			 "{Native Instruments, Session I/O},"
-			 "{Native Instruments, GuitarRig mobile}");
+			 "{Native Instruments, Session I/O}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX; /* Index 0-max */
 static char* id[SNDRV_CARDS] = SNDRV_DEFAULT_STR; /* Id for this card */
@@ -117,16 +115,6 @@ static struct usb_device_id snd_usb_id_table[] = {
 		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
 		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
 		.idProduct =    USB_PID_SESSIONIO
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_GUITARRIGMOBILE
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_AUDIO4DJ
 	},
 	{ /* terminator */ }
 };
@@ -348,10 +336,9 @@ static void __devinit setup_card(struct snd_usb_caiaqdev *dev)
 		log("Unable to set up control system (ret=%d)\n", ret);
 }
 
-static int create_card(struct usb_device* usb_dev, struct snd_card **cardp)
+static struct snd_card* create_card(struct usb_device* usb_dev)
 {
 	int devnum;
-	int err;
 	struct snd_card *card;
 	struct snd_usb_caiaqdev *dev;
 
@@ -360,12 +347,12 @@ static int create_card(struct usb_device* usb_dev, struct snd_card **cardp)
 			break;
 
 	if (devnum >= SNDRV_CARDS)
-		return -ENODEV;
+		return NULL;
 
-	err = snd_card_create(index[devnum], id[devnum], THIS_MODULE, 
-			      sizeof(struct snd_usb_caiaqdev), &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[devnum], id[devnum], THIS_MODULE, 
+					sizeof(struct snd_usb_caiaqdev));
+	if (!card)
+		return NULL;
 
 	dev = caiaqdev(card);
 	dev->chip.dev = usb_dev;
@@ -375,8 +362,7 @@ static int create_card(struct usb_device* usb_dev, struct snd_card **cardp)
 	spin_lock_init(&dev->spinlock);
 	snd_card_set_dev(card, &usb_dev->dev);
 
-	*cardp = card;
-	return 0;
+	return card;
 }
 
 static int __devinit init_card(struct snd_usb_caiaqdev *dev)
@@ -455,12 +441,12 @@ static int __devinit snd_probe(struct usb_interface *intf,
 	struct snd_card *card;
 	struct usb_device *device = interface_to_usbdev(intf);
 	
-	ret = create_card(device, &card);
+	card = create_card(device);
 	
-	if (ret < 0)
-		return ret;
+	if (!card)
+		return -ENOMEM;
 			
-	usb_set_intfdata(intf, card);
+	dev_set_drvdata(&intf->dev, card);
 	ret = init_card(caiaqdev(card));
 	if (ret < 0) {
 		log("unable to init card! (ret=%d)\n", ret);
@@ -474,7 +460,7 @@ static int __devinit snd_probe(struct usb_interface *intf,
 static void snd_disconnect(struct usb_interface *intf)
 {
 	struct snd_usb_caiaqdev *dev;
-	struct snd_card *card = usb_get_intfdata(intf);
+	struct snd_card *card = dev_get_drvdata(&intf->dev);
 
 	debug("%s(%p)\n", __func__, intf);
 

@@ -4,7 +4,7 @@
  * Copyright 2005 Wolfson Microelectronics PLC.
  * Copyright 2005 Openedhand Ltd.
  *
- * Authors: Liam Girdwood <lrg@slimlogic.co.uk>
+ * Authors: Liam Girdwood <liam.girdwood@wolfsonmicro.com>
  *          Richard Purdie <richard@openedhand.com>
  *
  *  This program is free software; you can redistribute  it and/or modify it
@@ -18,13 +18,13 @@
 #include <linux/timer.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
+#include <asm/hardware/scoop.h>
 #include <mach/pxa-regs.h>
 #include <mach/hardware.h>
 #include <mach/corgi.h>
@@ -54,8 +54,8 @@ static void corgi_ext_control(struct snd_soc_codec *codec)
 	switch (corgi_jack_func) {
 	case CORGI_HP:
 		/* set = unmute headphone */
-		gpio_set_value(CORGI_GPIO_MUTE_L, 1);
-		gpio_set_value(CORGI_GPIO_MUTE_R, 1);
+		set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_L);
+		set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_R);
 		snd_soc_dapm_disable_pin(codec, "Mic Jack");
 		snd_soc_dapm_disable_pin(codec, "Line Jack");
 		snd_soc_dapm_enable_pin(codec, "Headphone Jack");
@@ -63,24 +63,24 @@ static void corgi_ext_control(struct snd_soc_codec *codec)
 		break;
 	case CORGI_MIC:
 		/* reset = mute headphone */
-		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
-		gpio_set_value(CORGI_GPIO_MUTE_R, 0);
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_L);
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_R);
 		snd_soc_dapm_enable_pin(codec, "Mic Jack");
 		snd_soc_dapm_disable_pin(codec, "Line Jack");
 		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
 		snd_soc_dapm_disable_pin(codec, "Headset Jack");
 		break;
 	case CORGI_LINE:
-		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
-		gpio_set_value(CORGI_GPIO_MUTE_R, 0);
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_L);
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_R);
 		snd_soc_dapm_disable_pin(codec, "Mic Jack");
 		snd_soc_dapm_enable_pin(codec, "Line Jack");
 		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
 		snd_soc_dapm_disable_pin(codec, "Headset Jack");
 		break;
 	case CORGI_HEADSET:
-		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
-		gpio_set_value(CORGI_GPIO_MUTE_R, 1);
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_L);
+		set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_R);
 		snd_soc_dapm_enable_pin(codec, "Mic Jack");
 		snd_soc_dapm_disable_pin(codec, "Line Jack");
 		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
@@ -108,11 +108,15 @@ static int corgi_startup(struct snd_pcm_substream *substream)
 }
 
 /* we need to unmute the HP at shutdown as the mute burns power on corgi */
-static void corgi_shutdown(struct snd_pcm_substream *substream)
+static int corgi_shutdown(struct snd_pcm_substream *substream)
 {
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_codec *codec = rtd->socdev->codec;
+
 	/* set = unmute headphone */
-	gpio_set_value(CORGI_GPIO_MUTE_L, 1);
-	gpio_set_value(CORGI_GPIO_MUTE_R, 1);
+	set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_L);
+	set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MUTE_R);
+	return 0;
 }
 
 static int corgi_hw_params(struct snd_pcm_substream *substream,
@@ -214,14 +218,22 @@ static int corgi_set_spk(struct snd_kcontrol *kcontrol,
 static int corgi_amp_event(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *k, int event)
 {
-	gpio_set_value(CORGI_GPIO_APM_ON, SND_SOC_DAPM_EVENT_ON(event));
+	if (SND_SOC_DAPM_EVENT_ON(event))
+		set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_APM_ON);
+	else
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_APM_ON);
+
 	return 0;
 }
 
 static int corgi_mic_event(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *k, int event)
 {
-	gpio_set_value(CORGI_GPIO_MIC_BIAS, SND_SOC_DAPM_EVENT_ON(event));
+	if (SND_SOC_DAPM_EVENT_ON(event))
+		set_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MIC_BIAS);
+	else
+		reset_scoop_gpio(&corgiscoop_device.dev, CORGI_SCP_MIC_BIAS);
+
 	return 0;
 }
 
@@ -277,8 +289,8 @@ static int corgi_wm8731_init(struct snd_soc_codec *codec)
 {
 	int i, err;
 
-	snd_soc_dapm_nc_pin(codec, "LLINEIN");
-	snd_soc_dapm_nc_pin(codec, "RLINEIN");
+	snd_soc_dapm_disable_pin(codec, "LLINEIN");
+	snd_soc_dapm_disable_pin(codec, "RLINEIN");
 
 	/* Add corgi specific controls */
 	for (i = 0; i < ARRAY_SIZE(wm8731_corgi_controls); i++) {
@@ -310,22 +322,21 @@ static struct snd_soc_dai_link corgi_dai = {
 };
 
 /* corgi audio machine driver */
-static struct snd_soc_card snd_soc_corgi = {
+static struct snd_soc_machine snd_soc_machine_corgi = {
 	.name = "Corgi",
-	.platform = &pxa2xx_soc_platform,
 	.dai_link = &corgi_dai,
 	.num_links = 1,
 };
 
 /* corgi audio private data */
 static struct wm8731_setup_data corgi_wm8731_setup = {
-	.i2c_bus = 0,
 	.i2c_address = 0x1b,
 };
 
 /* corgi audio subsystem */
 static struct snd_soc_device corgi_snd_devdata = {
-	.card = &snd_soc_corgi,
+	.machine = &snd_soc_machine_corgi,
+	.platform = &pxa2xx_soc_platform,
 	.codec_dev = &soc_codec_dev_wm8731,
 	.codec_data = &corgi_wm8731_setup,
 };

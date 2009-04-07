@@ -306,8 +306,7 @@ static unsigned int get_ich_codec_bit(struct intel8x0m *chip, unsigned int codec
 	static unsigned int codec_bit[3] = {
 		ICH_PCR, ICH_SCR, ICH_TCR
 	};
-	if (snd_BUG_ON(codec >= 3))
-		return ICH_PCR;
+	snd_assert(codec < 3, return ICH_PCR);
 	return codec_bit[codec];
 }
 
@@ -1269,9 +1268,9 @@ static int __devinit snd_intel8x0m_probe(struct pci_dev *pci,
 	int err;
 	struct shortname_table *name;
 
-	err = snd_card_create(index, id, THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index, id, THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 
 	strcpy(card->driver, "ICH-MODEM");
 	strcpy(card->shortname, "Intel ICH");

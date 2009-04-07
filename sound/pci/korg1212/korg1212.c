@@ -1281,8 +1281,7 @@ static int snd_korg1212_silence(struct snd_korg1212 *korg1212, int pos, int coun
 
 	K1212_DEBUG_PRINTK_VERBOSE("K1212_DEBUG: snd_korg1212_silence pos=%d offset=%d size=%d count=%d\n",
 				   pos, offset, size, count);
-	if (snd_BUG_ON(pos + count > K1212_MAX_SAMPLES))
-		return -EINVAL;
+	snd_assert(pos + count <= K1212_MAX_SAMPLES, return -EINVAL);
 
 	for (i=0; i < count; i++) {
 #if K1212_DEBUG_LEVEL > 0
@@ -1307,8 +1306,7 @@ static int snd_korg1212_copy_to(struct snd_korg1212 *korg1212, void __user *dst,
 
 	K1212_DEBUG_PRINTK_VERBOSE("K1212_DEBUG: snd_korg1212_copy_to pos=%d offset=%d size=%d\n",
 				   pos, offset, size);
-	if (snd_BUG_ON(pos + count > K1212_MAX_SAMPLES))
-		return -EINVAL;
+	snd_assert(pos + count <= K1212_MAX_SAMPLES, return -EINVAL);
 
 	for (i=0; i < count; i++) {
 #if K1212_DEBUG_LEVEL > 0
@@ -1338,8 +1336,7 @@ static int snd_korg1212_copy_from(struct snd_korg1212 *korg1212, void __user *sr
 	K1212_DEBUG_PRINTK_VERBOSE("K1212_DEBUG: snd_korg1212_copy_from pos=%d offset=%d size=%d count=%d\n",
 				   pos, offset, size, count);
 
-	if (snd_BUG_ON(pos + count > K1212_MAX_SAMPLES))
-		return -EINVAL;
+	snd_assert(pos + count <= K1212_MAX_SAMPLES, return -EINVAL);
 
 	for (i=0; i < count; i++) {
 #if K1212_DEBUG_LEVEL > 0
@@ -2443,9 +2440,9 @@ snd_korg1212_probe(struct pci_dev *pci,
 		dev++;
 		return -ENOENT;
 	}
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
+        if (card == NULL)
+		return -ENOMEM;
 
         if ((err = snd_korg1212_create(card, pci, &korg1212)) < 0) {
 		snd_card_free(card);

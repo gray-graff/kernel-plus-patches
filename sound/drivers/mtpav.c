@@ -696,9 +696,9 @@ static int __devinit snd_mtpav_probe(struct platform_device *dev)
 	int err;
 	struct mtpav *mtp_card;
 
-	err = snd_card_create(index, id, THIS_MODULE, sizeof(*mtp_card), &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index, id, THIS_MODULE, sizeof(*mtp_card));
+	if (! card)
+		return -ENOMEM;
 
 	mtp_card = card->private_data;
 	spin_lock_init(&mtp_card->spinlock);
@@ -714,9 +714,7 @@ static int __devinit snd_mtpav_probe(struct platform_device *dev)
 
 	card->private_free = snd_mtpav_free;
 
-	err = snd_mtpav_get_RAWMIDI(mtp_card);
-	if (err < 0)
-		goto __error;
+	mtp_card->inmidiport = mtp_card->num_ports + MTPAV_PIDX_BROADCAST;
 
 	err = snd_mtpav_get_ISA(mtp_card);
 	if (err < 0)
@@ -726,6 +724,10 @@ static int __devinit snd_mtpav_probe(struct platform_device *dev)
 	strcpy(card->shortname, "MTPAV on parallel port");
 	snprintf(card->longname, sizeof(card->longname),
 		 "MTPAV on parallel port at 0x%lx", port);
+
+	err = snd_mtpav_get_RAWMIDI(mtp_card);
+	if (err < 0)
+		goto __error;
 
 	snd_mtpav_portscan(mtp_card);
 
