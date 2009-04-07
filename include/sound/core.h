@@ -309,6 +309,14 @@ int snd_component_add(struct snd_card *card, const char *component);
 int snd_card_file_add(struct snd_card *card, struct file *file);
 int snd_card_file_remove(struct snd_card *card, struct file *file);
 
+static inline int snd_card_create(int idx, const char *xid,struct module *module, int extra_size,struct snd_card **card_ret)
+{
+	card_ret=snd_card_new(idx, xid,module,extra_size);
+	if(card_ret==0)
+		return -EINVAL;
+	return 0;
+}
+
 #ifndef snd_card_set_dev
 #define snd_card_set_dev(card, devptr) ((card)->dev = (devptr))
 #endif
@@ -398,7 +406,7 @@ void snd_verbose_printd(const char *file, int line, const char *format, ...)
 		args;							\
 	}								\
 } while (0)
-
+#define snd_BUG_ON(cond) snd_assert(cond)
 #define snd_BUG() do {				\
 	snd_printk(KERN_ERR "BUG?\n");		\
 	dump_stack();				\
@@ -408,6 +416,7 @@ void snd_verbose_printd(const char *file, int line, const char *format, ...)
 
 #define snd_printd(fmt, args...)	/* nothing */
 #define snd_assert(expr, args...)	(void)(expr)
+#define snd_BUG_ON(cond) cond 
 #define snd_BUG()			/* nothing */
 
 #endif /* CONFIG_SND_DEBUG */
