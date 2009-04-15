@@ -580,6 +580,10 @@ static const struct oxygen_model xonar_models[] = {
 		.update_dac_mute = update_pcm1796_mute,
 		.dac_tlv = pcm1796_db_scale,
 		.model_data_size = sizeof(struct xonar_data),
+		.pcm_dev_cfg = PLAYBACK_0_TO_I2S |
+			       PLAYBACK_1_TO_SPDIF |
+			       CAPTURE_0_FROM_I2S_2 |
+			       CAPTURE_1_FROM_SPDIF,
 		.dac_channels = 8,
 		.dac_volume_min = 0x0f,
 		.dac_volume_max = 0xff,
@@ -607,6 +611,10 @@ static const struct oxygen_model xonar_models[] = {
 		.gpio_changed = xonar_gpio_changed,
 		.dac_tlv = pcm1796_db_scale,
 		.model_data_size = sizeof(struct xonar_data),
+		.pcm_dev_cfg = PLAYBACK_0_TO_I2S |
+			       PLAYBACK_1_TO_SPDIF |
+			       CAPTURE_0_FROM_I2S_2 |
+			       CAPTURE_1_FROM_SPDIF,
 		.dac_channels = 8,
 		.dac_volume_min = 0x0f,
 		.dac_volume_max = 0xff,
@@ -634,6 +642,10 @@ static const struct oxygen_model xonar_models[] = {
 		.ac97_switch = xonar_d1_ac97_switch,
 		.dac_tlv = cs4362a_db_scale,
 		.model_data_size = sizeof(struct xonar_data),
+		.pcm_dev_cfg = PLAYBACK_0_TO_I2S |
+			       PLAYBACK_1_TO_SPDIF |
+			       CAPTURE_0_FROM_I2S_2,
+		.dac_channels = 8,
 		.dac_volume_min = 0,
 		.dac_volume_max = 127,
 		.function_flags = OXYGEN_FUNCTION_2WIRE,
@@ -659,6 +671,9 @@ static const struct oxygen_model xonar_models[] = {
 		.ac97_switch = xonar_d1_ac97_switch,
 		.dac_tlv = cs4362a_db_scale,
 		.model_data_size = sizeof(struct xonar_data),
+		.pcm_dev_cfg = PLAYBACK_0_TO_I2S |
+			       PLAYBACK_1_TO_SPDIF |
+			       CAPTURE_0_FROM_I2S_2,
 		.dac_channels = 8,
 		.dac_volume_min = 0,
 		.dac_volume_max = 127,
@@ -681,7 +696,7 @@ static int __devinit xonar_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 	err = oxygen_pci_probe(pci, index[dev], id[dev],
-			       &xonar_models[pci_id->driver_data],0);
+			       &xonar_models[pci_id->driver_data]);
 	if (err >= 0)
 		++dev;
 	return err;

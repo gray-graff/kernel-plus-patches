@@ -171,22 +171,6 @@ int snd_ctl_boolean_stereo_info(struct snd_kcontrol *kcontrol,
  */
 struct snd_kcontrol *snd_ctl_make_virtual_master(char *name,
 						 const unsigned int *tlv);
-int _snd_ctl_add_slave(struct snd_kcontrol *master, struct snd_kcontrol *slave,
-		       unsigned int flags);
-/* optional flags for slave */
-#define SND_CTL_SLAVE_NEED_UPDATE	(1 << 0)
-
-static inline int
-snd_ctl_add_slave(struct snd_kcontrol *master, struct snd_kcontrol *slave)
-{
-	return _snd_ctl_add_slave(master, slave, 0);
-}
-
-static inline int
-snd_ctl_add_slave_uncached(struct snd_kcontrol *master,
-			   struct snd_kcontrol *slave)
-{
-	return _snd_ctl_add_slave(master, slave, SND_CTL_SLAVE_NEED_UPDATE);
-}
-
+int snd_ctl_add_slave(struct snd_kcontrol *master, struct snd_kcontrol *slave);
+		      
 #endif	/* __SOUND_CONTROL_H */

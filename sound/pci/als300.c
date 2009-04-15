@@ -812,10 +812,10 @@ static int __devinit snd_als300_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
 
-	if (err < 0)
-		return err;
+	if (card == NULL)
+		return -ENOMEM;
 
 	chip_type = pci_id->driver_data;
 

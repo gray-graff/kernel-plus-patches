@@ -85,11 +85,11 @@ static int __devinit snd_sb8_match(struct device *pdev, unsigned int dev)
 	if (!enable[dev])
 		return 0;
 	if (irq[dev] == SNDRV_AUTO_IRQ) {
-		dev_err(pdev, "please specify irq\n");
+		snd_printk(KERN_ERR "%s: please specify irq\n", pdev->bus_id);
 		return 0;
 	}
 	if (dma8[dev] == SNDRV_AUTO_DMA) {
-		dev_err(pdev, "please specify dma8\n");
+		snd_printk(KERN_ERR "%s: please specify dma8\n", pdev->bus_id);
 		return 0;
 	}
 	return 1;
@@ -103,10 +103,10 @@ static int __devinit snd_sb8_probe(struct device *pdev, unsigned int dev)
 	struct snd_opl3 *opl3;
 	int err;
 
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE,
-			      sizeof(struct snd_sb8), &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE,
+			    sizeof(struct snd_sb8));
+	if (card == NULL)
+		return -ENOMEM;
 	acard = card->private_data;
 	card->private_free = snd_sb8_free;
 
@@ -140,10 +140,8 @@ static int __devinit snd_sb8_probe(struct device *pdev, unsigned int dev)
 				break;
 			}
 		}
-		if (i >= ARRAY_SIZE(possible_ports)) {
-			err = -EINVAL;
+		if (i >= ARRAY_SIZE(possible_ports))
 			goto _err;
-		}
 	}
 	acard->chip = chip;
 			

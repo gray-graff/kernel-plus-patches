@@ -771,8 +771,7 @@ int __init snd_chip_uda1341_mixer_new(struct snd_card *card, struct l3_client **
 	struct l3_client *clnt;
 	int idx, err;
 
-	if (snd_BUG_ON(!card))
-		return -EINVAL;
+	snd_assert(card != NULL, return -EINVAL);
 
 	clnt = kzalloc(sizeof(*clnt), GFP_KERNEL);
 	if (clnt == NULL)
