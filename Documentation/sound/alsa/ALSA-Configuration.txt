@@ -746,8 +746,10 @@ Prior to version 0.9.0rc4 options had a 'snd_' prefix. This was removed.
   Module snd-hda-intel
   --------------------
 
-    Module for Intel HD Audio (ICH6, ICH6M, ESB2, ICH7, ICH8),
-		ATI SB450, SB600, RS600,
+    Module for Intel HD Audio (ICH6, ICH6M, ESB2, ICH7, ICH8, ICH9, ICH10,
+			PCH, SCH),
+		ATI SB450, SB600, R600, RS600, RS690, RS780, RV610, RV620,
+			RV630, RV635, RV670, RV770,
 		VIA VT8251/VT8237A,
 		SIS966, ULI M5461
 
