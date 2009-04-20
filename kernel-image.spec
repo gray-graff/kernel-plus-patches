@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
+- alsa: alsa 1.0.19 repleaced by vanilla alsa with patches
 - v4l: add AverMedia CardBus Plus  support (tnx week@) 
 - udf: add dmode and mode mount options (tnx mutab0r@)
 
