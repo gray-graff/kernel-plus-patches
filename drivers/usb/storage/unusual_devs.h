@@ -174,6 +174,20 @@ UNUSUAL_DEV(  0x0421, 0x0019, 0x0592, 0x0592,
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_MAX_SECTORS_64 ),
 
+/* Reported by Filip Joelsson <filip@blueturtle.nu> */
+UNUSUAL_DEV(  0x0421, 0x005d, 0x0001, 0x0600,
+		"Nokia",
+		"Nokia 3110c",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
+
+/* Patch for Nokia 5310 capacity */
+UNUSUAL_DEV(  0x0421, 0x006a, 0x0000, 0x0591,
+		"Nokia",
+		"5310",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
+
 /* Reported by Mario Rettig <mariorettig@web.de> */
 UNUSUAL_DEV(  0x0421, 0x042e, 0x0100, 0x0100,
 		"Nokia",
@@ -194,6 +208,13 @@ UNUSUAL_DEV(  0x0421, 0x0434, 0x0100, 0x0100,
 		"E60",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY | US_FL_IGNORE_RESIDUE ),
+
+/* Reported by Evgenii Terechkov <evg@altlinux.org>, ALT#18044 */
+UNUSUAL_DEV(  0x0421, 0x043e, 0x0000, 0x0366,
+		"Nokia",
+		"Nokia 6270",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
 
 /* Reported by Sumedha Swamy <sumedhaswamy@gmail.com> and
  * Einar Th. Einarsson <einarthered@gmail.com> */
@@ -238,6 +259,35 @@ UNUSUAL_DEV(  0x0421, 0x0495, 0x0370, 0x0370,
 		"6234",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_MAX_SECTORS_64 ),
+
+/* Reported by Cedric Godin <cedric@belbone.be> */
+UNUSUAL_DEV(  0x0421, 0x04b9, 0x0500, 0x0551,
+		"Nokia",
+		"5300",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
+
+/* Reported by Richard Nauber <RichardNauber@web.de> */
+UNUSUAL_DEV(  0x0421, 0x04fa, 0x0550, 0x0660,
+		"Nokia",
+		"6300",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY ),
+
+/* Patch for Nokia 5310 capacity */
+UNUSUAL_DEV(  0x0421, 0x006a, 0x0000, 0x0591,
+	"Nokia",
+	"5310",
+	US_SC_DEVICE, US_PR_DEVICE, NULL,
+	US_FL_FIX_CAPACITY ),
+
+/* Submitted by Ricky Wong Yung Fei <evilbladewarrior@gmail.com> */
+/* Nokia 7610 Supernova - Too many sectors reported in usb storage mode */
+UNUSUAL_DEV(  0x0421, 0x00f5, 0x0000, 0x0470,
+	"Nokia",
+	"7610 Supernova",
+	US_SC_DEVICE, US_PR_DEVICE, NULL,
+	US_FL_FIX_CAPACITY ),
 
 /* Reported by Olaf Hering <olh@suse.de> from novell bug #105878 */
 UNUSUAL_DEV(  0x0424, 0x0fdc, 0x0210, 0x0210,
@@ -367,6 +417,76 @@ UNUSUAL_DEV(  0x04b0, 0x0301, 0x0010, 0x0010,
 		"NIKON DSC E2000",
 		US_SC_DEVICE, US_PR_DEVICE,NULL,
 		US_FL_NOT_LOCKABLE ),
+
+/* Reported by Stefan de Konink <skinkie@xs4all.nl> */
+UNUSUAL_DEV(  0x04b0, 0x0401, 0x0200, 0x0200,
+		"NIKON",
+		"NIKON DSC D100",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Milinevsky Dmitry <niam.niam@gmail.com> */
+UNUSUAL_DEV(  0x04b0, 0x0409, 0x0100, 0x0100,
+		"NIKON",
+		"NIKON DSC D50",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Andreas Bockhold <andreas@bockionline.de> */
+UNUSUAL_DEV(  0x04b0, 0x0405, 0x0100, 0x0100,
+		"NIKON",
+		"NIKON DSC D70",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Jamie Kitson <jamie@staberinde.fsnet.co.uk> */
+UNUSUAL_DEV(  0x04b0, 0x040d, 0x0100, 0x0100,
+		"NIKON",
+		"NIKON DSC D70s",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Graber and Mike Pagano <mpagano-kernel@mpagano.com> */
+UNUSUAL_DEV(  0x04b0, 0x040f, 0x0100, 0x0200,
+		"NIKON",
+		"NIKON DSC D200",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Emil Larsson <emil@swip.net> */
+UNUSUAL_DEV(  0x04b0, 0x0411, 0x0100, 0x0111,
+		"NIKON",
+		"NIKON DSC D80",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Ortwin Glueck <odi@odi.ch> */
+UNUSUAL_DEV(  0x04b0, 0x0413, 0x0110, 0x0111,
+		"NIKON",
+		"NIKON DSC D40",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Paul Check <paul@openstreet.com> */
+UNUSUAL_DEV(  0x04b0, 0x0415, 0x0100, 0x0100,
+		"NIKON",
+		"NIKON DSC D2Xs",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by Shan Destromp (shansan@gmail.com) */
+UNUSUAL_DEV(  0x04b0, 0x0417, 0x0100, 0x0100,
+		"NIKON",
+		"NIKON DSC D40X",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
+
+/* Reported by paul ready <lxtwin@homecall.co.uk> */
+UNUSUAL_DEV(  0x04b0, 0x0419, 0x0100, 0x0200,
+		"NIKON",
+		"NIKON DSC D300",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_FIX_CAPACITY),
 
 /* Reported by Doug Maxey (dwm@austin.ibm.com) */
 UNUSUAL_DEV(  0x04b3, 0x4001, 0x0110, 0x0110,
