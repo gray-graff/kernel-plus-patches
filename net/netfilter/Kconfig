@@ -268,6 +268,14 @@ config NF_CONNTRACK_TFTP
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
+config NF_CONNTRACK_RTSP
+	tristate "RTSP protocol support"
+	depends on NF_CONNTRACK
+	depends on NETFILTER_ADVANCED
+	help
+	RTSP is used in some LANs for video streams, conntrack_rtsp is needed to be able
+	to watch the streams while one is using firewall rules or NAT 
+
 config NF_CT_NETLINK
 	tristate 'Connection tracking netlink interface'
 	select NETFILTER_NETLINK
