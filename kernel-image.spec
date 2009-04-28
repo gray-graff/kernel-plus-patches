@@ -361,6 +361,9 @@ KbuildFiles="
 	scripts/checkconfig.pl
 	scripts/bin2c
 	scripts/gcc-version.sh
+	scripts/recordmcount.pl
+	scripts/gcc-x86_64-has-stack-protector.sh
+
 
 	.config
 	.kernelrelease
