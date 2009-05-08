@@ -309,11 +309,15 @@ int snd_component_add(struct snd_card *card, const char *component);
 int snd_card_file_add(struct snd_card *card, struct file *file);
 int snd_card_file_remove(struct snd_card *card, struct file *file);
 
-static inline int snd_card_create(int idx, const char *xid,struct module *module, int extra_size,struct snd_card **card_ret)
+static inline int snd_card_create(int idx, const char *xid,
+				  struct module *module, int extra_size,
+				  struct snd_card **card_ret)
 {
-	card_ret=snd_card_new(idx, xid,module,extra_size);
-	if(card_ret==0)
+	if (!card_ret)
 		return -EINVAL;
+	*card_ret = snd_card_new(idx, xid, module, extra_size);
+	if (!*card_ret)
+		return -ENOMEM;
 	return 0;
 }
 
