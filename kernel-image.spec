@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Fri May 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt17
+- 2.6.27.22
 - fix build in new environment
 - Fix snd_card_create() backport (ALT#19978)(vsu@)
 
