@@ -370,16 +370,8 @@ int intel_opregion_init(struct drm_device *dev, int resume)
 	if (mboxes & MBOX_ACPI) {
 		DRM_DEBUG("Public ACPI methods supported\n");
 		opregion->acpi = base + OPREGION_ACPI_OFFSET;
-<<<<<<< HEAD:drivers/gpu/drm/i915/i915_opregion.c
 		if (drm_core_check_feature(dev, DRIVER_MODESET))
 			intel_didl_outputs(dev);
-=======
-		if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-			intel_didl_outputs(dev);
-			if (!resume)
-				acpi_video_register();
-		}
->>>>>>> 74a365b... ACPI: Populate DIDL before registering ACPI video device on Intel:drivers/gpu/drm/i915/i915_opregion.c
 	} else {
 		DRM_DEBUG("Public ACPI methods not supported\n");
 		err = -ENOTSUPP;

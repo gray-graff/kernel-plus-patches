@@ -674,15 +674,7 @@ extern int i915_restore_state(struct drm_device *dev);
 #ifdef CONFIG_ACPI
 /* i915_opregion.c */
 extern int intel_opregion_init(struct drm_device *dev, int resume);
-<<<<<<< HEAD:drivers/gpu/drm/i915/i915_drv.h
-<<<<<<< HEAD:drivers/gpu/drm/i915/i915_drv.h
 extern void intel_opregion_free(struct drm_device *dev, int suspend);
-=======
-extern void intel_opregion_free(struct drm_device *dev);
->>>>>>> 74a365b... ACPI: Populate DIDL before registering ACPI video device on Intel:drivers/gpu/drm/i915/i915_drv.h
-=======
-extern void intel_opregion_free(struct drm_device *dev, int suspend);
->>>>>>> 3b1c1c1... drm/i915: Unregister ACPI video driver when exiting:drivers/gpu/drm/i915/i915_drv.h
 extern void opregion_asle_intr(struct drm_device *dev);
 extern void opregion_enable_asle(struct drm_device *dev);
 #else
