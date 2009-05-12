@@ -16,20 +16,14 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 */
 
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/moduleparam.h>
-#include <linux/interrupt.h>
-#include <linux/usb.h>
 #include <linux/spinlock.h>
+#include <linux/init.h>
+#include <linux/usb.h>
 #include <sound/core.h>
-#include <sound/initval.h>
 #include <sound/pcm.h>
-#include <sound/rawmidi.h>
-#include <linux/input.h>
 
-#include "caiaq-device.h"
-#include "caiaq-audio.h"
+#include "device.h"
+#include "audio.h"
 
 #define N_URBS			32
 #define CLOCK_DRIFT_TOLERANCE	5
@@ -114,6 +108,7 @@ static int stream_start(struct snd_usb_caiaqdev *dev)
 	dev->output_panic = 0;
 	dev->first_packet = 1;
 	dev->streaming = 1;
+	dev->warned = 0;
 
 	for (i = 0; i < N_URBS; i++) {
 		ret = usb_submit_urb(dev->data_urbs_in[i], GFP_ATOMIC);
@@ -200,11 +195,14 @@ static int snd_usb_caiaq_pcm_prepare(struct snd_pcm_substream *substream)
 
 	debug("%s(%p)\n", __func__, substream);
 	
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		dev->period_out_count[index] = BYTES_PER_SAMPLE + 1;
 		dev->audio_out_buf_pos[index] = BYTES_PER_SAMPLE + 1;
-	else
+	} else {
+		dev->period_in_count[index] = BYTES_PER_SAMPLE;
 		dev->audio_in_buf_pos[index] = BYTES_PER_SAMPLE;
-	
+	}
+
 	if (dev->streaming)
 		return 0;
 	
@@ -305,8 +303,7 @@ static void check_for_elapsed_periods(struct snd_usb_caiaqdev *dev,
 		if (!sub)
 			continue;
 
-		pb = frames_to_bytes(sub->runtime, 
-				     sub->runtime->period_size);
+		pb = snd_pcm_lib_period_bytes(sub);
 		cnt = (sub->stream == SNDRV_PCM_STREAM_PLAYBACK) ?
 					&dev->period_out_count[stream] :
 					&dev->period_in_count[stream];
@@ -376,6 +373,9 @@ static void read_in_urb_mode2(struct snd_usb_caiaqdev *dev,
 
 		for (stream = 0; stream < dev->n_streams; stream++, i++) {
 			sub = dev->sub_capture[stream];
+			if (dev->input_panic)
+				usb_buf[i] = 0;
+
 			if (sub) {
 				struct snd_pcm_runtime *rt = sub->runtime;
 				char *audio_buf = rt->dma_area;
@@ -397,6 +397,9 @@ static void read_in_urb(struct snd_usb_caiaqdev *dev,
 	if (!dev->streaming)
 		return;
 
+	if (iso->actual_length < dev->bpp)
+		return;
+
 	switch (dev->spec.data_alignment) {
 	case 0:
 		read_in_urb_mode0(dev, urb, iso);
@@ -406,10 +409,11 @@ static void read_in_urb(struct snd_usb_caiaqdev *dev,
 		break;
 	}
 
-	if (dev->input_panic || dev->output_panic) {
+	if ((dev->input_panic || dev->output_panic) && !dev->warned) {
 		debug("streaming error detected %s %s\n", 
 				dev->input_panic ? "(input)" : "",
 				dev->output_panic ? "(output)" : "");
+		dev->warned = 1;
 	}
 }
 
@@ -638,9 +642,10 @@ int snd_usb_caiaq_audio_init(struct snd_usb_caiaqdev *dev)
 	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AK1):
 	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_RIGKONTROL3):
 	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_SESSIONIO):
-		dev->samplerates |= SNDRV_PCM_RATE_88200;
+	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_GUITARRIGMOBILE):
 		dev->samplerates |= SNDRV_PCM_RATE_192000;
-		break;
+		/* fall thru */
+	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ):
 	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO8DJ):
 		dev->samplerates |= SNDRV_PCM_RATE_88200;
 		break;
