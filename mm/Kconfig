@@ -215,4 +215,4 @@ config UNEVICTABLE_LRU
 	  say Y unless you know what you are doing.
 
 config MMU_NOTIFIER
-	bool
+	bool MMU_NOTIFIER
