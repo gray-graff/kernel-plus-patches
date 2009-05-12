@@ -354,6 +354,7 @@ KbuildFiles="
 	scripts/kallsyms
 	scripts/genksyms/genksyms
 	scripts/basic/fixdep
+	scripts/basic/hash
 	scripts/extract-ikconfig
 	scripts/conmakehash
 	scripts/checkversion.pl
