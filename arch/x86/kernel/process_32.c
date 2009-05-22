@@ -28,6 +28,7 @@
 #include <linux/delay.h>
 #include <linux/reboot.h>
 #include <linux/init.h>
+#include <linux/perfctr.h>
 #include <linux/mc146818rtc.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
@@ -248,6 +249,7 @@ void exit_thread(void)
 		tss->x86_tss.io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
 		put_cpu();
 	}
+	perfctr_exit_thread(&current->thread);
 
 	ds_exit_thread(current);
 }
@@ -306,6 +308,8 @@ int copy_thread(int nr, unsigned long clone_flags, unsigned long sp,
 	p->thread.ip = (unsigned long) ret_from_fork;
 
 	savesegment(gs, p->thread.gs);
+
+	perfctr_copy_task(p, regs);
 
 	tsk = current;
 	if (unlikely(test_tsk_thread_flag(tsk, TIF_IO_BITMAP))) {
@@ -589,6 +593,8 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		loadsegment(gs, next->gs);
 
 	x86_write_percpu(current_task, next_p);
+
+	perfctr_resume_thread(next);
 
 	return prev_p;
 }

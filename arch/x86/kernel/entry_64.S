@@ -1025,6 +1025,11 @@ apicinterrupt ERROR_APIC_VECTOR \
 apicinterrupt SPURIOUS_APIC_VECTOR \
 	spurious_interrupt smp_spurious_interrupt
 
+#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_KPERFCTR)
+apicinterrupt LOCAL_PERFCTR_VECTOR \
+	perfctr_interrupt smp_perfctr_interrupt
+#endif
+
 /*
  * Exception entry points.
  */

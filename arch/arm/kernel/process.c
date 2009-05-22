@@ -26,6 +26,7 @@
 #include <linux/cpu.h>
 #include <linux/elfcore.h>
 #include <linux/pm.h>
+#include <linux/perfctr.h>
 #include <linux/tick.h>
 #include <linux/utsname.h>
 #include <linux/uaccess.h>
@@ -272,6 +273,7 @@ void show_regs(struct pt_regs * regs)
  */
 void exit_thread(void)
 {
+	perfctr_exit_thread(&current->thread);
 }
 
 ATOMIC_NOTIFIER_HEAD(thread_notify_head);
@@ -316,6 +318,8 @@ copy_thread(int nr, unsigned long clone_flags, unsigned long stack_start,
 
 	if (clone_flags & CLONE_SETTLS)
 		thread->tp_value = regs->ARM_r3;
+
+	perfctr_copy_task(p, regs);
 
 	return 0;
 }

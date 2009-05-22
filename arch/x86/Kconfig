@@ -1364,6 +1364,8 @@ config CC_STACKPROTECTOR_ALL
 	  functions that use large-ish on-stack buffers. By enabling
 	  this option, GCC will be asked to do this for ALL functions.
 
+source "drivers/perfctr/Kconfig"
+
 source kernel/Kconfig.hz
 
 config KEXEC

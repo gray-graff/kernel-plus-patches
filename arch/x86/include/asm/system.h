@@ -37,6 +37,7 @@ do {									\
 	 * __switch_to())						\
 	 */								\
 	unsigned long ebx, ecx, edx, esi, edi;				\
+	perfctr_suspend_thread(&(prev)->thread);			\
 									\
 	asm volatile("pushfl\n\t"		/* save    flags */	\
 		     "pushl %%ebp\n\t"		/* save    EBP   */	\
@@ -87,7 +88,8 @@ do {									\
 	  "r12", "r13", "r14", "r15"
 
 /* Save restore flags to clear handle leaking NT */
-#define switch_to(prev, next, last) \
+#define switch_to(prev, next, last) do { \
+	perfctr_suspend_thread(&(prev)->thread); \
 	asm volatile(SAVE_CONTEXT						    \
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
@@ -107,7 +109,8 @@ do {									\
 	       [tif_fork] "i" (TIF_FORK),			  	  \
 	       [thread_info] "i" (offsetof(struct task_struct, stack)),   \
 	       [pda_pcurrent] "i" (offsetof(struct x8664_pda, pcurrent))  \
-	     : "memory", "cc" __EXTRA_CLOBBER)
+	     : "memory", "cc" __EXTRA_CLOBBER); \
+} while (0)
 #endif
 
 #ifdef __KERNEL__

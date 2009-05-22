@@ -20,6 +20,7 @@
 #include <asm/apic.h>
 #include <asm/arch_hooks.h>
 #include <asm/i8259.h>
+#include <asm/perfctr.h>
 #include <asm/traps.h>
 
 
@@ -173,6 +174,8 @@ void __init native_init_IRQ(void)
 	 * the architecture specific gates)
 	 */
 	intr_init_hook();
+
+	perfctr_vector_init();
 
 	/*
 	 * External FPU? Set up irq13 if so, for
