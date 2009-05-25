@@ -18,17 +18,13 @@
  */
 
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/usb.h>
-#include <sound/core.h>
-#include <sound/initval.h>
-#include <sound/pcm.h>
-#include <sound/rawmidi.h>
 #include <sound/control.h>
-#include <linux/input.h>
+#include <sound/core.h>
+#include <sound/pcm.h>
 
-#include "caiaq-device.h"
-#include "caiaq-control.h"
+#include "device.h"
+#include "control.h"
 
 #define CNT_INTVAL 0x10000
 
@@ -39,17 +35,26 @@ static int control_info(struct snd_kcontrol *kcontrol,
 	struct snd_usb_caiaqdev *dev = caiaqdev(chip->card);
 	int pos = kcontrol->private_value;
 	int is_intval = pos & CNT_INTVAL;
+	unsigned int id = dev->chip.usb_id;
 
 	uinfo->count = 1;
 	pos &= ~CNT_INTVAL;
 
-	if (dev->chip.usb_id ==
-		USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO8DJ)
+	if (id == USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO8DJ)
 		&& (pos == 0)) {
 		/* current input mode of A8DJ */
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 		uinfo->value.integer.min = 0;
 		uinfo->value.integer.max = 2;
+		return 0;
+	}
+
+	if (id == USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ)
+		&& (pos == 0)) {
+		/* current input mode of A4DJ */
+		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+		uinfo->value.integer.min = 0;
+		uinfo->value.integer.max = 1;
 		return 0;
 	}
 
@@ -73,6 +78,14 @@ static int control_get(struct snd_kcontrol *kcontrol,
 	struct snd_usb_caiaqdev *dev = caiaqdev(chip->card);
 	int pos = kcontrol->private_value;
 
+	if (dev->chip.usb_id ==
+		USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ)) {
+		/* A4DJ has only one control */
+		/* do not expose hardware input mode 0 */
+		ucontrol->value.integer.value[0] = dev->control_state[0] - 1;
+		return 0;
+	}
+
 	if (pos & CNT_INTVAL)
 		ucontrol->value.integer.value[0]
 			= dev->control_state[pos & ~CNT_INTVAL];
@@ -90,10 +103,20 @@ static int control_put(struct snd_kcontrol *kcontrol,
 	struct snd_usb_caiaqdev *dev = caiaqdev(chip->card);
 	int pos = kcontrol->private_value;
 
+	if (dev->chip.usb_id ==
+		USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ)) {
+		/* A4DJ has only one control */
+		/* do not expose hardware input mode 0 */
+		dev->control_state[0] = ucontrol->value.integer.value[0] + 1;
+		snd_usb_caiaq_send_command(dev, EP1_CMD_WRITE_IO,
+				dev->control_state, sizeof(dev->control_state));
+		return 1;
+	}
+
 	if (pos & CNT_INTVAL) {
 		dev->control_state[pos & ~CNT_INTVAL]
 			= ucontrol->value.integer.value[0];
-		snd_usb_caiaq_send_command(dev, EP1_CMD_DIMM_LEDS,
+		snd_usb_caiaq_send_command(dev, EP1_CMD_WRITE_IO,
 				dev->control_state, sizeof(dev->control_state));
 	} else {
 		if (ucontrol->value.integer.value[0])
@@ -243,8 +266,11 @@ static struct caiaq_controller a8dj_controller[] = {
 	{ "GND lift for TC Vinyl mode", 	24 + 0 		},
 	{ "GND lift for TC CD/Line mode", 	24 + 1 		},
 	{ "GND lift for phono mode", 		24 + 2 		},
-	{ "GND lift for TC Vinyl mode", 	24 + 3 		},
 	{ "Software lock", 			40 		}
+};
+
+static struct caiaq_controller a4dj_controller[] = {
+	{ "Current input mode",	0 | CNT_INTVAL 	}
 };
 
 static int __devinit add_controls(struct caiaq_controller *c, int num,
@@ -294,6 +320,10 @@ int __devinit snd_usb_caiaq_control_init(struct snd_usb_caiaqdev *dev)
 	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO8DJ):
 		ret = add_controls(a8dj_controller,
 			ARRAY_SIZE(a8dj_controller), dev);
+		break;
+	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ):
+		ret = add_controls(a4dj_controller,
+			ARRAY_SIZE(a4dj_controller), dev);
 		break;
 	}
 
