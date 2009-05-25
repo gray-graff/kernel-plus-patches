@@ -41,7 +41,7 @@ static void intel_crt_dpms(struct drm_encoder *encoder, int mode)
 
 	temp = I915_READ(ADPA);
 	temp &= ~(ADPA_HSYNC_CNTL_DISABLE | ADPA_VSYNC_CNTL_DISABLE);
-	temp &= ~ADPA_DAC_ENABLE;
+	temp |= ADPA_DAC_ENABLE;
 
 	switch(mode) {
 	case DRM_MODE_DPMS_ON:
@@ -64,11 +64,21 @@ static void intel_crt_dpms(struct drm_encoder *encoder, int mode)
 static int intel_crt_mode_valid(struct drm_connector *connector,
 				struct drm_display_mode *mode)
 {
+	struct drm_device *dev = connector->dev;
+
+	int max_clock = 0;
 	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
 		return MODE_NO_DBLESCAN;
 
-	if (mode->clock > 400000 || mode->clock < 25000)
-		return MODE_CLOCK_RANGE;
+	if (mode->clock < 25000)
+		return MODE_CLOCK_LOW;
+
+	if (!IS_I9XX(dev))
+		max_clock = 350000;
+	else
+		max_clock = 400000;
+	if (mode->clock > max_clock)
+		return MODE_CLOCK_HIGH;
 
 	return MODE_OK;
 }
@@ -113,10 +123,13 @@ static void intel_crt_mode_set(struct drm_encoder *encoder,
 	if (adjusted_mode->flags & DRM_MODE_FLAG_PVSYNC)
 		adpa |= ADPA_VSYNC_ACTIVE_HIGH;
 
-	if (intel_crtc->pipe == 0)
+	if (intel_crtc->pipe == 0) {
 		adpa |= ADPA_PIPE_A_SELECT;
-	else
+		I915_WRITE(BCLRPAT_A, 0);
+	} else {
 		adpa |= ADPA_PIPE_B_SELECT;
+		I915_WRITE(BCLRPAT_B, 0);
+	}
 
 	I915_WRITE(ADPA, adpa);
 }
@@ -145,7 +158,7 @@ static bool intel_crt_detect_hotplug(struct drm_connector *connector)
 	else
 		tries = 1;
 	hotplug_en = I915_READ(PORT_HOTPLUG_EN);
-	hotplug_en &= ~(CRT_HOTPLUG_MASK);
+	hotplug_en &= CRT_FORCE_HOTPLUG_MASK;
 	hotplug_en |= CRT_HOTPLUG_FORCE_DETECT;
 
 	if (IS_GM45(dev))
