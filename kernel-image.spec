@@ -478,7 +478,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Mon Apr 27 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt1
-- 2.6.29.1
+- 2.6.29.4
 
 * Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
 - alsa: alsa 1.0.19 repleaced by vanilla alsa with patches
