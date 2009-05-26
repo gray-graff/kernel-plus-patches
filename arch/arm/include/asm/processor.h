@@ -50,6 +50,10 @@ struct thread_struct {
 	unsigned long		error_code;
 							/* debugging	  */
 	struct debug_info	debug;
+
+#ifdef CONFIG_PERFCTR_VIRTUAL
+	struct vperfctr		*perfctr;		/* performance counters */
+#endif
 };
 
 #define INIT_THREAD  {	}
