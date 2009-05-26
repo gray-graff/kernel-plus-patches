@@ -4,6 +4,7 @@ nvidia
 
 #network card drivers
 igb
+ofa
 
 #wireless network card drivers
 ndiswrapper
@@ -11,7 +12,6 @@ rt2860
 bcmwl
 
 #vendor specific  hardware features drives
-acerhk
 tp_smapi
 heci
 omnibook
