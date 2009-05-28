@@ -45,7 +45,8 @@ static const int nfs_set_port_max = 65535;
  * If the kernel has IPv6 support available, always listen for
  * both AF_INET and AF_INET6 requests.
  */
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if (defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)) && \
+	defined(CONFIG_SUNRPC_REGISTER_V4)
 static const sa_family_t	nfs_callback_family = AF_INET6;
 #else
 static const sa_family_t	nfs_callback_family = AF_INET;
