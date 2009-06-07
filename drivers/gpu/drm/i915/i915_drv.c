@@ -36,7 +36,7 @@
 #include "drm_pciids.h"
 #include <linux/console.h>
 
-static unsigned int i915_modeset = -1;
+static unsigned int i915_modeset = 0;
 module_param_named(modeset, i915_modeset, int, 0400);
 
 unsigned int i915_fbpercrtc = 0;
