@@ -482,6 +482,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	+disable GEM on i8xx 
 	+disable KMS by default
 	+allow tiled front buffers on 965+
+- add Usb-serial driver for Moxa NP1240/1220/1220I
 
 * Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
 - add missed bootsplash patch 
