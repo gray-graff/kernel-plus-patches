@@ -10,6 +10,7 @@ ofa
 ndiswrapper
 rt2860
 bcmwl
+madwifi-hal
 
 #vendor specific  hardware features drives
 tp_smapi
