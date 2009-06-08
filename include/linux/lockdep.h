@@ -58,7 +58,7 @@ enum lock_usage_bit
 #define LOCKF_USED_IN_IRQ_READ \
 		(LOCKF_USED_IN_HARDIRQ_READ | LOCKF_USED_IN_SOFTIRQ_READ)
 
-#define MAX_LOCKDEP_SUBCLASSES		8UL
+#define MAX_LOCKDEP_SUBCLASSES		12UL
 
 /*
  * Lock-classes are keyed via unique addresses, by embedding the
