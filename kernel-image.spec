@@ -483,6 +483,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	+disable KMS by default
 	+allow tiled front buffers on 965+
 - add Usb-serial driver for Moxa NP1240/1220/1220I
+- update aufs patch. Replaced by aufs-standalone (closes: #20344)
 
 * Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
 - add missed bootsplash patch 
