@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.29
-Release: alt2
+Release: alt3
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -477,6 +477,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Sun Jun 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt3
+- fix i915 support(shrek@):
+	+disable GEM on i8xx 
+	+disable KMS by default
+	+allow tiled front buffers on 965+
+
 * Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
 - add missed bootsplash patch 
 
