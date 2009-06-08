@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -251,13 +260,7 @@ static void epilog(struct inode *dir, struct dentry *dentry,
 {
 	struct inode *inode;
 
-	/*
-	 * even if this is not a dir,
-	 * set S_DEAD here since we need to detect the dead inode.
-	 */
 	inode = dentry->d_inode;
-	if (!inode->i_nlink)
-		inode->i_flags |= S_DEAD;
 	d_drop(dentry);
 	inode->i_ctime = dir->i_ctime;
 
@@ -396,7 +399,7 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 	aufs_read_lock(dentry, AuLock_DW | AuLock_FLUSH);
 	parent = dentry->d_parent; /* dir inode is locked */
 	di_write_lock_parent(parent);
-	err = au_test_empty(dentry, args->whlist);
+	err = au_test_empty(dentry, &args->whlist);
 	if (unlikely(err))
 		goto out_args;
 
@@ -412,7 +415,7 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 	dget(h_dentry);
 	rmdir_later = 0;
 	if (bindex == bstart) {
-		err = renwh_and_rmdir(dentry, bstart, args->whlist, dir);
+		err = renwh_and_rmdir(dentry, bstart, &args->whlist, dir);
 		if (err > 0) {
 			rmdir_later = err;
 			err = 0;

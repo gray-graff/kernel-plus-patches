@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -16,7 +25,6 @@
 
 #ifdef __KERNEL__
 
-#include <linux/fs.h>
 #include <linux/aufs_type.h>
 #include "dir.h"
 
@@ -52,7 +60,7 @@ struct au_whtmp_rmdir {
 	struct inode *dir;
 	aufs_bindex_t bindex;
 	struct dentry *wh_dentry;
-	struct au_nhash *whlist;
+	struct au_nhash whlist;
 };
 
 struct au_whtmp_rmdir *au_whtmp_rmdir_alloc(struct super_block *sb, gfp_t gfp);

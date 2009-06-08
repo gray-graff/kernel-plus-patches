@@ -5,12 +5,23 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
  * mount options/flags
  */
 
+#include <linux/file.h>
+#include <linux/namei.h>
 #include <linux/types.h> /* a distribution requires */
 #include <linux/parser.h>
 #include "aufs.h"
@@ -22,10 +33,12 @@ enum {
 	Opt_add, Opt_del, Opt_mod, Opt_reorder, Opt_append, Opt_prepend,
 	Opt_idel, Opt_imod, Opt_ireorder,
 	Opt_dirwh, Opt_rdcache, Opt_rdblk, Opt_rdhash, Opt_rendir,
+	Opt_rdblk_def, Opt_rdhash_def,
 	Opt_xino, Opt_zxino, Opt_noxino,
 	Opt_trunc_xino, Opt_trunc_xino_v, Opt_notrunc_xino,
 	Opt_trunc_xino_path, Opt_itrunc_xino,
 	Opt_trunc_xib, Opt_notrunc_xib,
+	Opt_shwh, Opt_noshwh,
 	Opt_plink, Opt_noplink, Opt_list_plink,
 	Opt_udba,
 	/* Opt_lock, Opt_unlock, */
@@ -92,8 +105,12 @@ static match_table_t options = {
 	{Opt_ignore_silent, "coo=%s"},
 	{Opt_ignore_silent, "nodlgt"},
 	{Opt_ignore_silent, "nodirperm1"},
-	{Opt_ignore_silent, "noshwh"},
 	{Opt_ignore_silent, "clean_plink"},
+
+#ifdef CONFIG_AUFS_SHWH
+	{Opt_shwh, "shwh"},
+#endif
+	{Opt_noshwh, "noshwh"},
 
 	{Opt_rendir, "rendir=%d"},
 
@@ -113,7 +130,9 @@ static match_table_t options = {
 
 	{Opt_rdcache, "rdcache=%d"},
 	{Opt_rdblk, "rdblk=%d"},
+	{Opt_rdblk_def, "rdblk=def"},
 	{Opt_rdhash, "rdhash=%d"},
+	{Opt_rdhash_def, "rdhash=def"},
 
 	{Opt_wbr_create, "create=%s"},
 	{Opt_wbr_create, "create_policy=%s"},
@@ -218,7 +237,11 @@ static match_table_t au_wbr_create_policy = {
 	{-1, NULL}
 };
 
-/* cf. linux/lib/parser.c */
+/*
+ * cf. linux/lib/parser.c and cmdline.c
+ * gave up calling memparse() since it uses simple_strtoull() instead of
+ * strict_...().
+ */
 static int au_match_ull(substring_t *s, unsigned long long *result)
 {
 	int err;
@@ -392,8 +415,14 @@ static void dump_opts(struct au_opts *opts)
 		case Opt_rdblk:
 			AuDbg("rdblk %u\n", opt->rdblk);
 			break;
+		case Opt_rdblk_def:
+			AuDbg("rdblk_def\n");
+			break;
 		case Opt_rdhash:
 			AuDbg("rdhash %u\n", opt->rdhash);
+			break;
+		case Opt_rdhash_def:
+			AuDbg("rdhash_def\n");
 			break;
 		case Opt_xino:
 			u.xino = &opt->xino;
@@ -421,6 +450,12 @@ static void dump_opts(struct au_opts *opts)
 			break;
 		case Opt_notrunc_xib:
 			AuLabel(notrunc_xib);
+			break;
+		case Opt_shwh:
+			AuLabel(shwh);
+			break;
+		case Opt_noshwh:
+			AuLabel(noshwh);
 			break;
 		case Opt_plink:
 			AuLabel(plink);
@@ -907,6 +942,8 @@ int au_opts_parse(struct super_block *sb, char *str, struct au_opts *opts)
 		case Opt_noxino:
 		case Opt_trunc_xib:
 		case Opt_notrunc_xib:
+		case Opt_shwh:
+		case Opt_noshwh:
 		case Opt_plink:
 		case Opt_noplink:
 		case Opt_list_plink:
@@ -921,6 +958,8 @@ int au_opts_parse(struct super_block *sb, char *str, struct au_opts *opts)
 		case Opt_sum:
 		case Opt_nosum:
 		case Opt_wsum:
+		case Opt_rdblk_def:
+		case Opt_rdhash_def:
 			err = 0;
 			opt->type = token;
 			break;
@@ -1110,8 +1149,21 @@ static int au_opt_simple(struct super_block *sb, struct au_opt *opt,
 	case Opt_rdblk:
 		sbinfo->si_rdblk = opt->rdblk;
 		break;
+	case Opt_rdblk_def:
+		sbinfo->si_rdblk = AUFS_RDBLK_DEF;
+		break;
 	case Opt_rdhash:
 		sbinfo->si_rdhash = opt->rdhash;
+		break;
+	case Opt_rdhash_def:
+		sbinfo->si_rdhash = AUFS_RDHASH_DEF;
+		break;
+
+	case Opt_shwh:
+		au_opt_set(sbinfo->si_mntflags, SHWH);
+		break;
+	case Opt_noshwh:
+		au_opt_clr(sbinfo->si_mntflags, SHWH);
 		break;
 
 	case Opt_trunc_xino:
@@ -1263,9 +1315,12 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 	sbinfo = au_sbi(sb);
 	AuDebugOn(!(sbinfo->si_mntflags & AuOptMask_UDBA));
 
-	if (unlikely(!(sb_flags & MS_RDONLY)
-		     && !au_br_writable(au_sbr_perm(sb, 0))))
-		AuWarn("first branch should be rw\n");
+	if (!(sb_flags & MS_RDONLY)) {
+		if (unlikely(!au_br_writable(au_sbr_perm(sb, 0))))
+			AuWarn("first branch should be rw\n");
+		if (unlikely(au_opt_test(sbinfo->si_mntflags, SHWH)))
+			AuWarn("shwh should be used with ro\n");
+	}
 
 	if (au_opt_test((sbinfo->si_mntflags | pending), UDBA_HINOTIFY)
 	    && !au_opt_test(sbinfo->si_mntflags, XINO))

@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -16,10 +25,13 @@
 
 #ifdef __KERNEL__
 
+#include <linux/bug.h>
+/* #include <linux/err.h> */
+/* #include <linux/init.h> */
+/* #include <linux/kernel.h> */
 #include <linux/delay.h>
-#include <linux/fs.h>
-#include <linux/kd.h>
-#include <linux/vt_kern.h>
+/* #include <linux/kd.h> */
+/* #include <linux/vt_kern.h> */
 #include <linux/sysrq.h>
 #include <linux/aufs_type.h>
 
@@ -106,18 +118,23 @@ static inline int au_debug_test(void)
 
 struct au_sbinfo;
 struct au_finfo;
+struct dentry;
 #ifdef CONFIG_AUFS_DEBUG
 extern char *au_plevel;
 struct au_nhash;
 void au_dpri_whlist(struct au_nhash *whlist);
 struct au_vdir;
 void au_dpri_vdir(struct au_vdir *vdir);
+struct inode;
 void au_dpri_inode(struct inode *inode);
 void au_dpri_dentry(struct dentry *dentry);
+struct file;
 void au_dpri_file(struct file *filp);
+struct super_block;
 void au_dpri_sb(struct super_block *sb);
 
 void au_dbg_sleep_jiffy(int jiffy);
+struct iattr;
 void au_dbg_iattr(struct iattr *ia);
 
 void au_dbg_verify_dir_parent(struct dentry *dentry, unsigned int sigen);
@@ -179,7 +196,7 @@ static inline void au_dbg_verify_dir_parent(struct dentry *dentry,
 	/* empty */
 }
 static inline void au_dbg_verify_nondir_parent(struct dentry *dentry,
-					   unsigned int sigen)
+					       unsigned int sigen)
 {
 	/* empty */
 }

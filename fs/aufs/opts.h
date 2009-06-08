@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -16,9 +25,11 @@
 
 #ifdef __KERNEL__
 
-#include <linux/fs.h>
-#include <linux/namei.h>
+#include <linux/path.h>
 #include <linux/aufs_type.h>
+
+struct file;
+struct super_block;
 
 /* ---------------------------------------------------------------------- */
 
@@ -29,18 +40,23 @@
 #define AuOpt_UDBA_NONE		(1 << 2)	/* users direct branch access */
 #define AuOpt_UDBA_REVAL	(1 << 3)
 #define AuOpt_UDBA_HINOTIFY	(1 << 4)
-#define AuOpt_PLINK		(1 << 5)	/* pseudo-link */
-#define AuOpt_DIRPERM1		(1 << 6)	/* unimplemented */
-#define AuOpt_REFROF		(1 << 7)	/* unimplemented */
-#define AuOpt_ALWAYS_DIROPQ	(1 << 8)	/* policy to creating diropq */
-#define AuOpt_SUM		(1 << 9)	/* summation for statfs(2) */
-#define AuOpt_SUM_W		(1 << 10)	/* unimplemented */
-#define AuOpt_WARN_PERM		(1 << 11)	/* warn when add-branch */
-#define AuOpt_VERBOSE		(1 << 12)	/* busy inode when del-branch */
+#define AuOpt_SHWH		(1 << 5)	/* show whiteout */
+#define AuOpt_PLINK		(1 << 6)	/* pseudo-link */
+#define AuOpt_DIRPERM1		(1 << 7)	/* unimplemented */
+#define AuOpt_REFROF		(1 << 8)	/* unimplemented */
+#define AuOpt_ALWAYS_DIROPQ	(1 << 9)	/* policy to creating diropq */
+#define AuOpt_SUM		(1 << 10)	/* summation for statfs(2) */
+#define AuOpt_SUM_W		(1 << 11)	/* unimplemented */
+#define AuOpt_WARN_PERM		(1 << 12)	/* warn when add-branch */
+#define AuOpt_VERBOSE		(1 << 13)	/* busy inode when del-branch */
 
 #ifndef CONFIG_AUFS_HINOTIFY
 #undef AuOpt_UDBA_HINOTIFY
 #define AuOpt_UDBA_HINOTIFY	0
+#endif
+#ifndef CONFIG_AUFS_SHWH
+#undef AuOpt_SHWH
+#define AuOpt_SHWH		0
 #endif
 
 #define AuOpt_Def	(AuOpt_XINO \

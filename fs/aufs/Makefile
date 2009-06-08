@@ -1,5 +1,6 @@
 
-include ${srctree}/${src}/magic.mk
+include ${src}/magic.mk
+-include ${src}/priv_def.mk
 
 obj-$(CONFIG_AUFS_FS) += aufs.o
 aufs-y := module.o sbinfo.o super.o branch.o xino.o sysaufs.o opts.o \

@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -860,7 +869,7 @@ static int del_wh_children(struct dentry *h_dentry, struct au_nhash *whlist,
 struct del_wh_children_args {
 	int *errp;
 	struct dentry *h_dentry;
-	struct au_nhash *whlist;
+	struct au_nhash whlist;
 	aufs_bindex_t bindex;
 	struct au_branch *br;
 };
@@ -868,7 +877,7 @@ struct del_wh_children_args {
 static void call_del_wh_children(void *args)
 {
 	struct del_wh_children_args *a = args;
-	*a->errp = del_wh_children(a->h_dentry, a->whlist, a->bindex, a->br);
+	*a->errp = del_wh_children(a->h_dentry, &a->whlist, a->bindex, a->br);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -876,29 +885,32 @@ static void call_del_wh_children(void *args)
 struct au_whtmp_rmdir *au_whtmp_rmdir_alloc(struct super_block *sb, gfp_t gfp)
 {
 	struct au_whtmp_rmdir *whtmp;
+	int err;
 
 	whtmp = kmalloc(sizeof(*whtmp), gfp);
-	if (unlikely(!whtmp))
+	if (unlikely(!whtmp)) {
+		whtmp = ERR_PTR(-ENOMEM);
 		goto out;
+	}
 
 	whtmp->dir = NULL;
 	whtmp->wh_dentry = NULL;
-	whtmp->whlist = au_nhash_alloc(sb, /*bend*/0, gfp);
-	if (unlikely(!whtmp->whlist))
-		goto out_whtmp;
-	return whtmp; /* success */
+	err = au_nhash_alloc(&whtmp->whlist, au_sbi(sb)->si_rdhash, gfp);
+	if (!err)
+		return whtmp; /* success */
 
- out_whtmp:
 	kfree(whtmp);
+	whtmp = ERR_PTR(err);
+
  out:
-	return ERR_PTR(-ENOMEM);
+	return whtmp;
 }
 
 void au_whtmp_rmdir_free(struct au_whtmp_rmdir *whtmp)
 {
 	dput(whtmp->wh_dentry);
 	iput(whtmp->dir);
-	au_nhash_wh_free(whtmp->whlist, /*bend*/0);
+	au_nhash_wh_free(&whtmp->whlist);
 	kfree(whtmp);
 }
 
@@ -932,7 +944,7 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 		struct del_wh_children_args args = {
 			.errp		= &err,
 			.h_dentry	= wh_dentry,
-			.whlist		= whlist,
+			.whlist		= *whlist,
 			.bindex		= bindex,
 			.br		= br
 		};
@@ -993,7 +1005,7 @@ static void call_rmdir_whtmp(void *args)
 		err = mnt_want_write(br->br_mnt);
 		if (!err) {
 			err = au_whtmp_rmdir(a->dir, a->bindex, a->wh_dentry,
-					     a->whlist);
+					     &a->whlist);
 			mnt_drop_write(br->br_mnt);
 		}
 	}

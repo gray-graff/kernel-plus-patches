@@ -5,6 +5,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
@@ -12,6 +21,15 @@
  */
 
 #include "aufs.h"
+
+struct inode *au_igrab(struct inode *inode)
+{
+	if (inode) {
+		AuDebugOn(!atomic_read(&inode->i_count));
+		atomic_inc(&inode->i_count);
+	}
+	return inode;
+}
 
 static void au_refresh_hinode_attr(struct inode *inode, int do_version)
 {
@@ -182,7 +200,13 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 		goto out;
 	}
 
+	/* do not set inotify for whiteouted dirs (SHWH mode) */
 	flags = au_hi_flags(inode, isdir);
+	if (au_opt_test(au_mntflags(dentry->d_sb), SHWH)
+	    && au_ftest_hi(flags, HINOTIFY)
+	    && dentry->d_name.len > AUFS_WH_PFX_LEN
+	    && !memcmp(dentry->d_name.name, AUFS_WH_PFX, AUFS_WH_PFX_LEN))
+		au_fclr_hi(flags, HINOTIFY);
 	iinfo = au_ii(inode);
 	iinfo->ii_bstart = bstart;
 	iinfo->ii_bend = btail;
@@ -216,11 +240,8 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 	if (unlikely(inode->i_ino == parent_ino(dentry)))
 		goto out;
 
-	ii_write_lock_new_child(inode);
-	if (unlikely(IS_DEADDIR(inode)))
-		goto out_unlock;
-
 	err = 0;
+	ii_write_lock_new_child(inode);
 	h_dinode = au_h_dptr(dentry, au_dbstart(dentry))->d_inode;
 	bend = au_ibend(inode);
 	for (bindex = au_ibstart(inode); bindex <= bend; bindex++) {
@@ -234,7 +255,6 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 		}
 	}
 
- out_unlock:
 	if (unlikely(err))
 		ii_write_unlock(inode);
  out:

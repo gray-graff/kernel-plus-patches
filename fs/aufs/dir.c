@@ -5,12 +5,22 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
  * directory operations
  */
 
+#include <linux/file.h>
 #include <linux/fs_stack.h>
 #include "aufs.h"
 
@@ -318,21 +328,27 @@ static int aufs_readdir(struct file *file, void *dirent, filldir_t filldir)
 /* ---------------------------------------------------------------------- */
 
 #define AuTestEmpty_WHONLY	1
-#define AuTestEmpty_CALLED	(1 << 2)
+#define AuTestEmpty_CALLED	(1 << 1)
+#define AuTestEmpty_SHWH	(1 << 2)
 #define au_ftest_testempty(flags, name)	((flags) & AuTestEmpty_##name)
 #define au_fset_testempty(flags, name)	{ (flags) |= AuTestEmpty_##name; }
 #define au_fclr_testempty(flags, name)	{ (flags) &= ~AuTestEmpty_##name; }
 
+#ifndef CONFIG_AUFS_SHWH
+#undef AuTestEmpty_SHWH
+#define AuTestEmpty_SHWH	0
+#endif
+
 struct test_empty_arg {
-	struct au_nhash *whlist;
+	struct au_nhash whlist;
 	unsigned int flags;
 	int err;
 	aufs_bindex_t bindex;
 };
 
 static int test_empty_cb(void *__arg, const char *__name, int namelen,
-			 loff_t offset __maybe_unused, u64 ino __maybe_unused,
-			 unsigned int d_type __maybe_unused)
+			 loff_t offset __maybe_unused, u64 ino,
+			 unsigned int d_type)
 {
 	struct test_empty_arg *arg = __arg;
 	char *name = (void *)__name;
@@ -347,16 +363,17 @@ static int test_empty_cb(void *__arg, const char *__name, int namelen,
 	if (namelen <= AUFS_WH_PFX_LEN
 	    || memcmp(name, AUFS_WH_PFX, AUFS_WH_PFX_LEN)) {
 		if (au_ftest_testempty(arg->flags, WHONLY)
-		    && !au_nhash_test_known_wh(arg->whlist, name, namelen))
+		    && !au_nhash_test_known_wh(&arg->whlist, name, namelen))
 			arg->err = -ENOTEMPTY;
 		goto out;
 	}
 
 	name += AUFS_WH_PFX_LEN;
 	namelen -= AUFS_WH_PFX_LEN;
-	if (!au_nhash_test_known_wh(arg->whlist, name, namelen))
+	if (!au_nhash_test_known_wh(&arg->whlist, name, namelen))
 		arg->err = au_nhash_append_wh
-			(arg->whlist, name, namelen, arg->bindex);
+			(&arg->whlist, name, namelen, ino, d_type, arg->bindex,
+			 au_ftest_testempty(arg->flags, SHWH));
 
  out:
 	/* smp_mb(); */
@@ -444,16 +461,16 @@ int au_test_empty_lower(struct dentry *dentry)
 	int err;
 	aufs_bindex_t bindex, bstart, btail;
 	struct test_empty_arg arg;
-	struct au_nhash *whlist;
 
-	whlist = au_nhash_alloc(dentry->d_sb, /*bend*/0, GFP_NOFS);
-	err = PTR_ERR(whlist);
-	if (IS_ERR(whlist))
+	err = au_nhash_alloc(&arg.whlist, au_sbi(dentry->d_sb)->si_rdhash,
+			     GFP_NOFS);
+	if (unlikely(err))
 		goto out;
 
 	bstart = au_dbstart(dentry);
-	arg.whlist = whlist;
 	arg.flags = 0;
+	if (au_opt_test(au_mntflags(dentry->d_sb), SHWH))
+		au_fset_testempty(arg.flags, SHWH);
 	arg.bindex = bstart;
 	err = do_test_empty(dentry, &arg);
 	if (unlikely(err))
@@ -472,7 +489,7 @@ int au_test_empty_lower(struct dentry *dentry)
 	}
 
  out_whlist:
-	au_nhash_wh_free(whlist, /*bend*/0);
+	au_nhash_wh_free(&arg.whlist);
  out:
 	return err;
 }
@@ -484,8 +501,10 @@ int au_test_empty(struct dentry *dentry, struct au_nhash *whlist)
 	aufs_bindex_t bindex, btail;
 
 	err = 0;
-	arg.whlist = whlist;
+	arg.whlist = *whlist;
 	arg.flags = AuTestEmpty_WHONLY;
+	if (au_opt_test(au_mntflags(dentry->d_sb), SHWH))
+		au_fset_testempty(arg.flags, SHWH);
 	btail = au_dbtaildir(dentry);
 	for (bindex = au_dbstart(dentry); !err && bindex <= btail; bindex++) {
 		struct dentry *h_dentry;

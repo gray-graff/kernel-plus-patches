@@ -5,12 +5,22 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
 /*
  * lookup and dentry operations
  */
 
+#include <linux/namei.h>
 #include "aufs.h"
 
 static void au_h_nd(struct nameidata *h_nd, struct nameidata *nd)
@@ -157,6 +167,14 @@ au_do_lookup(struct dentry *h_parent, struct dentry *dentry,
 	return h_dentry;
 }
 
+static int au_test_shwh(struct super_block *sb, const struct qstr *name)
+{
+	if (unlikely(!au_opt_test(au_mntflags(sb), SHWH)
+		     && !strncmp(name->name, AUFS_WH_PFX, AUFS_WH_PFX_LEN)))
+		return -EPERM;
+	return 0;
+}
+
 /*
  * returns the number of lower positive dentries,
  * otherwise an error.
@@ -178,9 +196,9 @@ int au_lkup_dentry(struct dentry *dentry, aufs_bindex_t bstart, mode_t type,
 	struct dentry *parent;
 	struct inode *inode;
 
-	err = -EPERM;
 	parent = dget_parent(dentry);
-	if (unlikely(!strncmp(name->name, AUFS_WH_PFX, AUFS_WH_PFX_LEN)))
+	err = au_test_shwh(dentry->d_sb, name);
+	if (unlikely(err))
 		goto out;
 
 	err = au_wh_name_alloc(&whname, name);
