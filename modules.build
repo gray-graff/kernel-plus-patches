@@ -1,0 +1,42 @@
+#video drivers
+fglrx
+nvidia
+
+#network card drivers
+igb
+ofa
+
+#wireless network card drivers
+ndiswrapper
+rt2860
+bcmwl
+madwifi-hal
+
+#vendor specific  hardware features drives
+tp_smapi
+heci
+omnibook
+
+#virtualization drivers
+kqemu
+virtualbox
+virtualbox-vfs
+virtualbox-addition
+kvm
+
+#other drivers
+lirc
+subfs
+svgalib_helper
+etercifs
+
+#telephony drivers
+zaptel
+wanpipe 
+cronyx
+
+#network block devices and cluster filesystems
+dst
+drbd8
+gnbd
+gfs
