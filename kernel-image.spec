@@ -478,7 +478,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Jun 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt4
-- 
+- 2.6.29.5 
 
 * Sun Jun 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt3
 - fix i915 support(shrek@) (closes #20239):
