@@ -350,7 +350,8 @@ static struct dm_dev_internal *find_device(struct list_head *l, dev_t dev)
 static int open_dev(struct dm_dev_internal *d, dev_t dev,
 		    struct mapped_device *md)
 {
-	static char *_claim_ptr = "I belong to device-mapper";
+	static char *_default_claim_ptr = "I belong to device-mapper";
+	void *_claim_ptr = _default_claim_ptr;
 	struct block_device *bdev;
 
 	int r;
@@ -360,6 +361,18 @@ static int open_dev(struct dm_dev_internal *d, dev_t dev,
 	bdev = open_by_devnum(dev, d->dm_dev.mode);
 	if (IS_ERR(bdev))
 		return PTR_ERR(bdev);
+
+	/*
+	 * Hack for EVMS: when claiming a whole device (not a partition), pass
+	 * bd_claim as holder.  This holder is used by bd_claim() internally
+	 * to claim the whole device when someone claims a partition on it;
+	 * using bd_claim here allows DM and kernel partitioning code to
+	 * coexist on the same disk, which is needed for configurations not
+	 * using EVMS exclusively.
+	 */
+	if (bdev->bd_contains == bdev)
+		_claim_ptr = bd_claim;
+
 	r = bd_claim_by_disk(bdev, _claim_ptr, dm_disk(md));
 	if (r)
 		blkdev_put(bdev, d->dm_dev.mode);
