@@ -599,6 +599,11 @@ config USB_SERIAL_OPTICON
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called opticon.
+config USB_SERIAL_MXU2S
+	tristate "USB Moxa NP1240/1220/1220I Driver"
+	help
+		To compile this driver as module, choose M here: the 
+		module will be called mxu2s
 
 config USB_SERIAL_DEBUG
 	tristate "USB Debugging Device"
