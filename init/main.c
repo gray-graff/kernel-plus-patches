@@ -792,6 +792,7 @@ static void __init do_pre_smp_initcalls(void)
 
 static void run_init_process(char *init_filename)
 {
+	printk(KERN_INFO "Executing init=%s\n", init_filename);
 	argv_init[0] = init_filename;
 	kernel_execve(init_filename, argv_init, envp_init);
 }
@@ -836,8 +837,7 @@ static noinline int init_post(void)
 					"defaults...\n", execute_command);
 	}
 	run_init_process("/sbin/init");
-	run_init_process("/etc/init");
-	run_init_process("/bin/init");
+	run_init_process("/sbin/sash");
 	run_init_process("/bin/sh");
 
 	panic("No init found.  Try passing init= option to kernel.");
