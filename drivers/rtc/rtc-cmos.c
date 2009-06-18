@@ -1163,6 +1163,7 @@ static void cmos_platform_shutdown(struct platform_device *pdev)
 
 /* work with hotplug and coldplug */
 MODULE_ALIAS("platform:rtc_cmos");
+MODULE_ALIAS("acpi*:PNP0B0[0,1,2]:*");
 
 static struct platform_driver cmos_platform_driver = {
 	.remove		= __exit_p(cmos_platform_remove),
