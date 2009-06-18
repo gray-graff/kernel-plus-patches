@@ -224,7 +224,7 @@ config HAVE_MLOCKED_PAGE_BIT
 	default y if HAVE_MLOCK=y && UNEVICTABLE_LRU=y
 
 config MMU_NOTIFIER
-	bool
+	bool "MMU notifier" 
 
 config NOMMU_INITIAL_TRIM_EXCESS
 	int "Turn on mmap() excess space trimming before booting"
