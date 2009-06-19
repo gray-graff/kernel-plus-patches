@@ -481,6 +481,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Tue Jun 16 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt1
 - 2.6.30 
 - missed perfcounter patch
+- vanilla ALSA
+- missed DSDT from initrd patch.
 
 * Sun Jun 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt3
 - fix i915 support(shrek@) (closes #20239):
