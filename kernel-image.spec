@@ -52,6 +52,7 @@ BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
+BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
 
 %if_enabled docs
