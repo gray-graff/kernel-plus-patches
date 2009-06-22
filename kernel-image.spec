@@ -370,6 +370,7 @@ KbuildFiles="
 	.config
 	.kernelrelease
 	gcc_version.inc
+	System.map
 "
 for f in $KbuildFiles; do
 	[ -e "$f" ] || continue
