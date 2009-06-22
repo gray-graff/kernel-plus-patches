@@ -484,6 +484,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - missed perfcounter patch
 - vanilla ALSA
 - missed DSDT from initrd patch.
+- Infiniband support from kernel source
 
 * Sun Jun 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt3
 - fix i915 support(shrek@) (closes #20239):

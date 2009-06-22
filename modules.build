@@ -4,7 +4,6 @@ nvidia
 
 #network card drivers
 igb
-ofa
 
 #wireless network card drivers
 ndiswrapper
