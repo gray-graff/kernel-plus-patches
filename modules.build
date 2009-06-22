@@ -36,7 +36,6 @@ wanpipe
 cronyx
 
 #network block devices and cluster filesystems
-dst
 drbd8
 gnbd
 gfs
