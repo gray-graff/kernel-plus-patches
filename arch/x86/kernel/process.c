@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/clockchips.h>
+#include <linux/perfctr.h>
 #include <trace/power.h>
 #include <asm/system.h>
 #include <asm/apic.h>
@@ -83,6 +84,7 @@ void exit_thread(void)
 		put_cpu();
 		kfree(bp);
 	}
+	perfctr_exit_thread(t);
 
 	ds_exit_thread(current);
 }

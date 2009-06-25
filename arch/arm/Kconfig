@@ -732,6 +732,10 @@ config IWMMXT
 	  Enable support for iWMMXt context switching at run time if
 	  running on a CPU that supports it.
 
+if CPU_XSCALE
+source drivers/perfctr/Kconfig
+endif
+
 #  bool 'Use XScale PMU as timer source' CONFIG_XSCALE_PMU_TIMER
 config XSCALE_PMU
 	bool

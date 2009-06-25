@@ -30,6 +30,7 @@
 #include <linux/proc_fs.h>
 #include <linux/kthread.h>
 #include <linux/mempolicy.h>
+#include <linux/perfctr.h>
 #include <linux/taskstats_kern.h>
 #include <linux/delayacct.h>
 #include <linux/freezer.h>
@@ -206,6 +207,7 @@ repeat:
 			leader->exit_state = EXIT_DEAD;
 	}
 
+	perfctr_release_task(p);
 	write_unlock_irq(&tasklist_lock);
 	release_thread(p);
 	call_rcu(&p->rcu, delayed_put_task_struct);

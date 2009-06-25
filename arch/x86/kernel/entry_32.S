@@ -812,6 +812,23 @@ ENDPROC(name)
 /* The include is where all of the SMP etc. interrupts come from */
 #include <asm/entry_arch.h>
 
+#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_KPERFCTR)
+ENTRY(perfctr_interrupt)
+	RING0_INT_FRAME
+	pushl $~(LOCAL_PERFCTR_VECTOR)
+	CFI_ADJUST_CFA_OFFSET 4
+	SAVE_ALL
+	TRACE_IRQS_OFF
+	pushl %esp
+	CFI_ADJUST_CFA_OFFSET 4
+	call smp_perfctr_interrupt
+	addl $4, %esp
+	CFI_ADJUST_CFA_OFFSET -4
+	jmp ret_from_intr
+	CFI_ENDPROC
+ENDPROC(perfctr_interrupt)
+#endif
+
 ENTRY(coprocessor_error)
 	RING0_INT_FRAME
 	pushl $0

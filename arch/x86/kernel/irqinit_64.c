@@ -21,6 +21,7 @@
 #include <asm/pgtable.h>
 #include <asm/desc.h>
 #include <asm/apic.h>
+#include <asm/perfctr.h>
 #include <asm/i8259.h>
 
 /*
@@ -171,6 +172,8 @@ void __init native_init_IRQ(void)
 	}
 
 	apic_intr_init();
+
+	perfctr_vector_init();
 
 	if (!acpi_ioapic)
 		setup_irq(2, &irq2);

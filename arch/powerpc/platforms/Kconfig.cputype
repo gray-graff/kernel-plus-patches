@@ -276,4 +276,8 @@ config NOT_COHERENT_CACHE
 config CHECK_CACHE_COHERENCY
 	bool
 
+if PPC32
+source "drivers/perfctr/Kconfig"
+endif
+
 endmenu

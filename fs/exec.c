@@ -50,6 +50,7 @@
 #include <linux/tsacct_kern.h>
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
+#include <linux/perfctr.h>
 #include <linux/tracehook.h>
 #include <linux/kmod.h>
 #include <linux/fsnotify.h>
@@ -971,6 +972,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	set_task_comm(current, tcomm);
 
 	current->flags &= ~PF_RANDOMIZE;
+	perfctr_flush_thread(&current->thread);
 	flush_thread();
 
 	/* Set the new mm task size. We have to do that late because it may

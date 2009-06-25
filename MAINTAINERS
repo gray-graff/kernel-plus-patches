@@ -4392,6 +4392,12 @@ S:	Maintained
 F:	include/linux/delayacct.h
 F:	kernel/delayacct.c
 
+PERFORMANCE-MONITORING COUNTERS DRIVER
+P:	Mikael Pettersson
+M:	mikpe@it.uu.se
+W:	http://user.it.uu.se/~mikpe/linux/perfctr/
+S:	Maintained
+
 PERSONALITY HANDLING
 P:	Christoph Hellwig
 M:	hch@infradead.org
