@@ -20,6 +20,7 @@
 #include <asm/apic.h>
 #include <asm/setup.h>
 #include <asm/i8259.h>
+#include <asm/perfctr.h>
 #include <asm/traps.h>
 
 
@@ -188,6 +189,8 @@ void __init native_init_IRQ(void)
 
 	if (!acpi_ioapic)
 		setup_irq(2, &irq2);
+
+	perfctr_vector_init();
 
 	/*
 	 * Call quirks after call gates are initialised (usually add in

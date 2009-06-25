@@ -32,6 +32,7 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
+#include <linux/perfctr.h>
 #include <linux/random.h>
 #include <linux/notifier.h>
 #include <linux/kprobes.h>
@@ -309,6 +310,8 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 	savesegment(es, p->thread.es);
 	savesegment(ds, p->thread.ds);
 
+	perfctr_copy_task(p, regs);
+
 	if (unlikely(test_tsk_thread_flag(me, TIF_IO_BITMAP))) {
 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
 		if (!p->thread.io_bitmap_ptr) {
@@ -491,6 +494,9 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 */
 	if (tsk_used_math(next_p) && next_p->fpu_counter > 5)
 		math_state_restore();
+
+	perfctr_resume_thread(next);
+
 	return prev_p;
 }
 

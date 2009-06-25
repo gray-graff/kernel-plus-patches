@@ -54,6 +54,7 @@
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
 #include <linux/percpu.h>
+#include <linux/perfctr.h>
 #include <linux/kthread.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -6645,6 +6646,8 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 	unsigned long flags;
 	struct rq *rq;
 	int ret = 0;
+
+	perfctr_set_cpus_allowed(p, *new_mask); /* XXX: convert to _ptr */
 
 	rq = task_rq_lock(p, &flags);
 	if (!cpumask_intersects(new_mask, cpu_online_mask)) {

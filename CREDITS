@@ -2764,6 +2764,7 @@ N: Mikael Pettersson
 E: mikpe@it.uu.se
 W: http://user.it.uu.se/~mikpe/linux/
 D: Miscellaneous fixes
+D: Performance-monitoring counters driver
 
 N: Reed H. Petty
 E: rhp@draper.net

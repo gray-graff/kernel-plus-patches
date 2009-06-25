@@ -1424,6 +1424,8 @@ config CC_STACKPROTECTOR
 	  detected and for those versions, this configuration option is
 	  ignored. (and a warning is printed during bootup)
 
+source "drivers/perfctr/Kconfig"
+
 source kernel/Kconfig.hz
 
 config KEXEC

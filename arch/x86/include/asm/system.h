@@ -55,6 +55,7 @@ do {									\
 	 */								\
 	unsigned long ebx, ecx, edx, esi, edi;				\
 									\
+	perfctr_suspend_thread(&(prev)->thread);			\
 	asm volatile("pushfl\n\t"		/* save    flags */	\
 		     "pushl %%ebp\n\t"		/* save    EBP   */	\
 		     "movl %%esp,%[prev_sp]\n\t"	/* save    ESP   */ \
@@ -123,7 +124,8 @@ do {									\
 #endif	/* CC_STACKPROTECTOR */
 
 /* Save restore flags to clear handle leaking NT */
-#define switch_to(prev, next, last) \
+#define switch_to(prev, next, last) do { \
+	perfctr_suspend_thread(&(prev)->thread); \
 	asm volatile(SAVE_CONTEXT					  \
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
@@ -146,7 +148,8 @@ do {									\
 	       [thread_info] "i" (offsetof(struct task_struct, stack)),   \
 	       [current_task] "m" (per_cpu_var(current_task))		  \
 	       __switch_canary_iparam					  \
-	     : "memory", "cc" __EXTRA_CLOBBER)
+	     : "memory", "cc" __EXTRA_CLOBBER); \
+} while (0)
 #endif
 
 #ifdef __KERNEL__

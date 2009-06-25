@@ -215,7 +215,9 @@ extern struct task_struct *__switch_to(struct task_struct *, struct thread_info 
 
 #define switch_to(prev,next,last)					\
 do {									\
+	perfctr_suspend_thread(&(prev)->thread);			\
 	last = __switch_to(prev,task_thread_info(prev), task_thread_info(next));	\
+	perfctr_resume_thread(&(current)->thread);			\
 } while (0)
 
 #if defined(CONFIG_CPU_SA1100) || defined(CONFIG_CPU_SA110)

@@ -30,6 +30,7 @@
 #include <linux/init_task.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
+#include <linux/perfctr.h>
 #include <linux/mqueue.h>
 #include <linux/hardirq.h>
 #include <linux/utsname.h>
@@ -409,8 +410,10 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	 * window where the kernel stack SLB and the kernel stack are out
 	 * of sync. Hard disable here.
 	 */
+	perfctr_suspend_thread(&prev->thread);
 	hard_irq_disable();
 	last = _switch(old_thread, new_thread);
+	perfctr_resume_thread(&current->thread);
 
 	local_irq_restore(flags);
 
@@ -550,6 +553,7 @@ void show_regs(struct pt_regs * regs)
 void exit_thread(void)
 {
 	discard_lazy_cpu_state();
+	perfctr_exit_thread(&current->thread);
 }
 
 void flush_thread(void)
@@ -675,6 +679,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 #else
 	kregs->nip = (unsigned long)ret_from_fork;
 #endif
+
+	perfctr_copy_task(p, regs);
 
 	return 0;
 }
