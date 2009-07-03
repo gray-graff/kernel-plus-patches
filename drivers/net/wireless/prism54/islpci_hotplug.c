@@ -61,6 +61,13 @@ static const struct pci_device_id prism54_id_tbl[] = {
 	 0, 0, 0
 	},
 
+	/* Intersil PRISM Javelin/Xbow Wireless LAN adapter */
+	{
+	 0x1260, 0x3886,
+	 PCI_ANY_ID, PCI_ANY_ID,
+	 0, 0, 0
+	},
+
 	/* End of list */
 	{0,0,0,0,0,0,0}
 };

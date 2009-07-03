@@ -31,6 +31,12 @@ MODULE_ALIAS("prism54pci");
 MODULE_FIRMWARE("isl3886pci");
 
 static struct pci_device_id p54p_table[] __devinitdata = {
+	/* Intersil PRISM Duette/Prism GT Wireless LAN adapter */
+	{ PCI_DEVICE(0x1260, 0x3890) },
+	/* 3COM 3CRWE154G72 Wireless LAN adapter */
+	{ PCI_DEVICE(0x10b7, 0x6001) },
+	/* Intersil PRISM Indigo Wireless LAN adapter */
+	{ PCI_DEVICE(0x1260, 0x3877) },
 	/* Intersil PRISM Javelin/Xbow Wireless LAN adapter */
 	{ PCI_DEVICE(0x1260, 0x3886) },
 	{ },
