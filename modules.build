@@ -24,17 +24,17 @@ virtualbox-addition
 kvm
 
 #other drivers
-lirc
+#lirc
 subfs
-svgalib_helper
-etercifs
+#svgalib_helper
+#etercifs
 
 #telephony drivers
-zaptel
-wanpipe 
-cronyx
+#zaptel
+#wanpipe 
+#cronyx
 
 #network block devices and cluster filesystems
-drbd8
-gnbd
-gfs
+#drbd8
+#gnbd
+#gfs
