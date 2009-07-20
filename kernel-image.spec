@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.30
-Release: alt4
+Release: alt5
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Jul 20 2009 Valery Inozemtsev <shrek@altlinux.ru> 1:2.6.30-alt5
+- 2.6.30.2
+
 * Tue Jul 14 2009 Valery Inozemtsev <shrek@altlinux.ru> 1:2.6.30-alt4
 - CVE-2009-1895: personality: fix PER_CLEAR_ON_SETID
 
