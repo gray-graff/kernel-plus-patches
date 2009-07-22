@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.30
-Release: alt5
+Release: alt6
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Jul 22 2009 Valery Inozemtsev <shrek@altlinux.ru> 1:2.6.30-alt6
+- drm/intel: merged Intel 2009Q2
+
 * Mon Jul 20 2009 Valery Inozemtsev <shrek@altlinux.ru> 1:2.6.30-alt5
 - 2.6.30.2
 
