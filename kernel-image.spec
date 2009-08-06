@@ -482,6 +482,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Fri Jul 31 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt7
 - 2.6.30.4
 - add wacom intuos4 support (tnx shrek@)
+- fix pulseaudio support (tnx shrek@)
 
 * Wed Jul 22 2009 Valery Inozemtsev <shrek@altlinux.ru> 1:2.6.30-alt6
 - drm/intel: merged Intel 2009Q2
