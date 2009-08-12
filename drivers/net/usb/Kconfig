@@ -358,5 +358,10 @@ config USB_HSO
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called hso.
+config USB_NET_U200
+	tristate "Samsung SWC-U200 Mobile WiMax USB dongle"
+	default n
+	help
+		Choose this option if you have Samsung SWC-U200 Mobile WiMax from YOTA.
 
 endmenu
