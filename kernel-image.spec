@@ -480,7 +480,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Wed Aug 12 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt8
-- 
+- Add Samsung SWC-U200 WiMax dongle support.
 
 * Fri Jul 31 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt7
 - 2.6.30.4
