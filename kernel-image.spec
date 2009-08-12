@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.30
-Release: alt7
+Release: alt8
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Aug 12 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt8
+- 
+
 * Fri Jul 31 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt7
 - 2.6.30.4
 - add wacom intuos4 support (tnx shrek@)
