@@ -481,6 +481,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Fri Sep 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt11
 - 2.6.30.6 
+- Echo canceler module moved to zaptel package
 
 * Mon Aug 17 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt10
 - 2.6.30.5 
