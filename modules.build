@@ -8,6 +8,7 @@ igb
 #wireless network card drivers
 ndiswrapper
 rt2860
+rtl8187se
 bcmwl
 madwifi-hal
 
@@ -29,9 +30,9 @@ subfs
 #etercifs
 
 #telephony drivers
-#zaptel
-#wanpipe 
-#cronyx
+dahdi
+wanpipe 
+cronyx
 
 #network block devices and cluster filesystems
 #drbd8
