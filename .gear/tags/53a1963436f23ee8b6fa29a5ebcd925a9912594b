@@ -1,0 +1,13 @@
+object b419148e567728f6af0c3b01965c1cc141e3e13a
+type commit
+tag v2.6.32-rc6
+tagger Linus Torvalds <torvalds@linux-foundation.org> 1257277079 -0800
+
+Linux 2.6.32-rc6
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (GNU/Linux)
+
+iEYEABECAAYFAkrwhp8ACgkQF3YsRnbiHLtUXQCgi6R4is2JwwzPSpSEkPYETv/U
+5HcAoK+OhOsjs8AN17rm8GFVLJaEXdb1
+=lAa/
+-----END PGP SIGNATURE-----
