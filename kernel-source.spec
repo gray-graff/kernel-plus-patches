@@ -14,7 +14,7 @@
 # 0.0.X -- preX
 # 0.X.0 -- rcX, testX
 # 1.0.0 -- release
-%define patch_level_numeric     0.8.0
+%define patch_level_numeric     1.0.0
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
@@ -51,14 +51,8 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
-* Mon Nov 23 2009 Valery Inozemtsev <shrek@altlinux.ru> 0.8.0-alt1
-- 2.6.32-rc8
-
-* Fri Nov 13 2009 Valery Inozemtsev <shrek@altlinux.ru> 0.7.0-alt1
-- 2.6.32-rc7
-
-* Wed Nov 04 2009 Valery Inozemtsev <shrek@altlinux.ru> 0.6.0-alt1
-- 2.6.32-rc6
+* Thu Dec 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
+- 2.6.32
 
 * Thu Sep 10 2009 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
 - 2.6.31
