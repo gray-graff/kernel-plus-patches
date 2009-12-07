@@ -481,6 +481,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Dec 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt15
 - [SECURITY] Fix CVE-2009-1298 
+- fixes in Samsung U200 driver. thx to mikhail@linux-rb.ru
 
 * Tue Oct 06 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt14
 - 2.6.30.9 
