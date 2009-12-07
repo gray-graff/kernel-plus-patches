@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.30
-Release: alt14
+Release: alt15
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Dec 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt15
+- 
+
 * Tue Oct 06 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt14
 - 2.6.30.9 
 
