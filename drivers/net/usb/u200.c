@@ -11,6 +11,7 @@
  *
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -34,8 +35,10 @@ char *wimax_states[] = {"INIT", "SYNC", "NEGO", "NORMAL", "SLEEP", "IDLE", "HHO"
 
 /* table of devices that work with this driver */
 static struct usb_device_id  u200_table [] = {
-	{ USB_DEVICE(0x04e8, 0x6761) },
+	{ USB_DEVICE(USB_U200_VENDOR_ID, USB_U200_PRODUCT_ID) },
 	{ USB_DEVICE(0x04e9, 0x6761) },
+	{ USB_DEVICE(0x04e8, 0x6731) },
+	{ USB_DEVICE(0x04e8, 0x6780) },
 	{ }					/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, u200_table);
@@ -286,6 +289,7 @@ static int process_normal_C_response(struct usb_u200 *dev, const unsigned char *
 		       return -EIO;
 	       }
 	       dev->net_found = 0;
+	       netif_carrier_off(dev->net);
 	       printk("U200:net lost\n");
 	       return 0;
        }
@@ -294,13 +298,17 @@ static int process_normal_C_response(struct usb_u200 *dev, const unsigned char *
 		       printk("U200:process_normal_C_response:bad param_len\n");
 		       return -EIO;
 	       }
-	       dev->iwstat.qual.qual=92+buf[0x1b];
-	       dev->iwstat.qual.level =buf[0x1b];
+	       dev->iwstat.qual.qual = (short)((buf[0x1c] << 8) + buf[0x1d]) / 8; // CINR
+	       if ( dev->iwstat.qual.qual > 25 )
+	       	 dev->iwstat.qual.qual = 25;
 	       dev->iwstat.qual.noise  = buf[0x1b]-buf[0x1d];
-	       dev->iwstat.qual.updated=IW_QUAL_DBM|IW_QUAL_ALL_UPDATED ;
+	       dev->iwstat.qual.level = (buf[0x1a] << 8) + buf[0x1b]; // RSSI
+	       dev->iwstat.qual.updated = IW_QUAL_DBM | IW_QUAL_ALL_UPDATED;
 	       memcpy(dev->bsid, buf + 0x1e, 0x6);
 	       dev->txpwr = (buf[0x26] << 8) + buf[0x27];
-	       dev->freq = (buf[0x28] << 24) + (buf[0x29] << 16) + (buf[0x2a] << 8) + buf[0x2b];
+	       dev->freq = (buf[0x28] << 24) + (buf[0x29] << 16) + (buf[0x2a] << 8) + buf[0x2b]; // in MHz
+	       dev->iwstat.discard.nwid = 0;
+	       dev->iwstat.miss.beacon = 0;
 	   //    printk("U200: rssi:%i cinr:%i bsid:%s txpwr:%i freq:%i\n",dev->rssi,(int)dev->cinr,dev->bsid,dev->txpwr,dev->freq);
 	       return 0;
        }
@@ -455,8 +463,13 @@ int u200_close(struct net_device* net)
 //	printk("u200:close\n");
 	return 0;
 }
+// Odem
 void u200_tx_timeout(struct net_device* net)
 {
+	struct usb_u200 *priv = netdev_priv(net);
+//	priv->status = 0x0002;
+	priv->stats.tx_errors++;
+	netif_wake_queue(net);
 	printk("u200:tx_timeout\n");
 }
 int u200_ioctl(struct net_device *net,struct ifreq *ifr, int cmd)
@@ -664,17 +677,21 @@ u200_get_range(struct net_device *net, struct iw_request_info *info,
         range->we_version_source = SUPPORTED_WIRELESS_EXT;
 	range->we_version_compiled = WIRELESS_EXT;
 	
-	range->sensitivity=92;//May be
+	range->min_retry = 0;
+	range->max_retry = 255;
 
-	range->max_qual.qual=92;
-	range->max_qual.level=-10;
-	range->max_qual.noise=0;
+	range->sensitivity=127;//May be 92
+	range->throughput = 10 * 1000 * 1000;
 
-	range->avg_qual.qual=50;
-	range->avg_qual.level=-50;
-	range->avg_qual.noise=-10;
+	range->max_qual.qual=25; // 92
+	range->max_qual.level=-20; // -10
+	range->max_qual.noise=0; // 0
 
-	range->bitrate[0]=100*1024*1024;
+	range->avg_qual.qual=15; // 50
+	range->avg_qual.level=-60; // -50
+	range->avg_qual.noise=-95; // -10
+
+	range->bitrate[0]=10*1024*1024;
 	range->num_bitrates=1;
 
 	range->num_frequency=1;
@@ -724,10 +741,15 @@ static int u200_get_scan(struct net_device *net, struct iw_request_info *info,un
 	iw.u.data.length = sizeof("YOTA");
 	ev = iwe_stream_add_point(info, ev, stop,&iw, "YOTA");
 
-        iw.u.qual=dev->iwstat.qual;
-	iw.cmd = IWEVQUAL;
-	ev= iwe_stream_add_event(info, ev, stop,&iw, IW_EV_QUAL_LEN);
+	iw.cmd = SIOCGIWFREQ;
+	iw.u.freq.m = dev->freq;
+	iw.u.freq.e = 3;
+	iw.u.freq.i = 1;
+	ev = iwe_stream_add_event(info, ev, stop,&iw, IW_EV_FREQ_LEN);
 
+    iw.u.qual=dev->iwstat.qual;
+	iw.cmd = IWEVQUAL;
+	ev = iwe_stream_add_event(info, ev, stop,&iw, IW_EV_QUAL_LEN);
 
 	dwrq->data.length=ev-extra;
 	dwrq->data.flags=0;
@@ -1067,6 +1089,17 @@ static struct usb_class_driver u200_class = {
 	.minor_base =	USB_SKEL_MINOR_BASE,
 };
 */
+// Odem: adapt to the new kernel API
+static const struct net_device_ops u200NetDevOps =
+{
+    .ndo_open = u200_open,
+    .ndo_stop = u200_close,
+    .ndo_tx_timeout = u200_tx_timeout,
+    .ndo_do_ioctl = u200_ioctl,
+    .ndo_start_xmit = u200_start_xmit,
+    .ndo_set_multicast_list = u200_set_multicast,
+    .ndo_get_stats = u200_netdev_stats,
+};
 
 static int u200_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
@@ -1132,15 +1165,10 @@ static int u200_probe(struct usb_interface *interface, const struct usb_device_i
 	/* save our data pointer in this interface device */
 	usb_set_intfdata(interface, dev);	
 	SET_NETDEV_DEV(net, &interface->dev);
-   	net->open = u200_open;
-        net->stop = u200_close;
+	strcpy(net->name, "yota%d");
 	net->watchdog_timeo = 10;
-	net->tx_timeout = u200_tx_timeout;
-	net->do_ioctl = u200_ioctl;
-	net->hard_start_xmit = u200_start_xmit;
-	net->set_multicast_list = u200_set_multicast;
-	net->get_stats = u200_netdev_stats;
-	net->mtu=1400;
+	net->netdev_ops = &u200NetDevOps;
+	net->mtu=1386;
 	net->wireless_handlers=&u200_handler_def;
 
 
