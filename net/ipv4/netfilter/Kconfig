@@ -181,6 +181,15 @@ config IP_NF_TARGET_MASQUERADE
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
+config IP_NF_TARGET_NETFLOW
+	tristate "NETFLOW target support"
+	depends on NF_NAT
+	depends on NETFILTER_ADVANCED
+	help
+	  NETFLOW is an implementation of in-kernel netflow probe
+
+	  To compile it as a module, choose M here.  If unsure, say N.
+
 config IP_NF_TARGET_NETMAP
 	tristate "NETMAP target support"
 	depends on NF_NAT
