@@ -365,6 +365,7 @@ KbuildFiles="
 	scripts/gcc-version.sh
 	scripts/recordmcount.pl
 	scripts/gcc-x86_64-has-stack-protector.sh
+	scripts/module-common.lds
 
 
 	.config
