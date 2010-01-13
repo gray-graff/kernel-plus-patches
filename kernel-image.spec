@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt2
+Release: alt3
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -159,6 +159,21 @@ and to the kernel.  The first major use for the DRI is to create fast
 OpenGL implementations.
 
 These are modules for your ALT Linux system
+
+%package -n kernel-modules-kvm-%flavour
+Summary: Linux KVM (Kernel Virtual Machine) modules
+Group: System/Kernel and hardware
+Provides:  kernel-modules-kvm-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-kvm-%flavour
+Linux kernel module for Kernel Virtual Machine virtualization
+environment.
 
 
 %package -n kernel-modules-v4l-%flavour
@@ -421,6 +436,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-drm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-kvm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-kvm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-modules-v4l-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -447,6 +468,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/arch/x86/kvm
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
@@ -475,12 +497,18 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 
+%files -n kernel-modules-kvm-%flavour
+%modules_dir/kernel/drivers/arch/x86/kvm
+
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Jan 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt3
+- kvm enabled
+
 * Tue Jan 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt2
-2.6.32.3
+- 2.6.32.3
 
 * Fri Dec 25 2009 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt1
 - try to run before of locomotive
