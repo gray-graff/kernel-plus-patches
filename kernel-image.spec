@@ -498,7 +498,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/gpu/drm
 
 %files -n kernel-modules-kvm-%flavour
-%modules_dir/kernel/drivers/arch/x86/kvm
+%modules_dir/kernel/arch/x86/kvm
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
@@ -506,6 +506,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Wed Jan 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt3
 - kvm enabled
+- aufs enabled
 
 * Tue Jan 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt2
 - 2.6.32.3
