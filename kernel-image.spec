@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt3
+Release: alt4
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -504,6 +504,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Fri Jan 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt4
+- bootsplash patch added
+
 * Wed Jan 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt3
 - kvm enabled
 - aufs enabled
@@ -515,7 +518,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - try to run before of locomotive
 
 * Tue Oct 06 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt14
-- 2.6.30.9 
+- 2.6.30.9
 
 * Mon Sep 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt13
 - 2.6.30.8
