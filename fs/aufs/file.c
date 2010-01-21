@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,8 +43,8 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	struct inode *h_inode;
 	struct super_block *sb;
 	struct au_branch *br;
-	int err, exec_flag;
 	struct path h_path;
+	int err, exec_flag;
 
 	/* a race condition can happen between open and unlink/rmdir */
 	h_file = ERR_PTR(-ENOENT);
@@ -72,16 +72,14 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	atomic_inc(&br->br_count);
 	h_path.dentry = h_dentry;
 	h_path.mnt = br->br_mnt;
-	path_get(&h_path);
-	h_file = vfsub_dentry_open(&h_path, flags, current_cred());
 	if (!au_special_file(h_inode->i_mode))
-		h_file = vfsub_dentry_open(&h_path, flags, current_cred());
+		h_file = vfsub_dentry_open(&h_path, flags);
 	else {
 		/* this block depends upon the configuration */
 		di_read_unlock(dentry, AuLock_IR);
 		fi_write_unlock(file);
 		si_read_unlock(sb);
-		h_file = vfsub_dentry_open(&h_path, flags, current_cred());
+		h_file = vfsub_dentry_open(&h_path, flags);
 		si_noflush_read_lock(sb);
 		fi_write_lock(file);
 		di_read_lock_child(dentry, AuLock_IR);
@@ -109,7 +107,6 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 {
 	int err;
-	unsigned int flags;
 	struct dentry *dentry;
 	struct super_block *sb;
 
@@ -121,10 +118,7 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 		goto out;
 
 	di_read_lock_child(dentry, AuLock_IR);
-	spin_lock(&file->f_lock);
-	flags = file->f_flags;
-	spin_unlock(&file->f_lock);
-	err = open(file, flags);
+	err = open(file, vfsub_file_flags(file));
 	di_read_unlock(dentry, AuLock_IR);
 
 	fi_write_unlock(file);
@@ -138,7 +132,6 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 int au_reopen_nondir(struct file *file)
 {
 	int err;
-	unsigned int flags;
 	aufs_bindex_t bstart, bindex, bend;
 	struct dentry *dentry;
 	struct file *h_file, *h_file_tmp;
@@ -158,10 +151,8 @@ int au_reopen_nondir(struct file *file)
 	AuDebugOn(au_fbstart(file) < bstart
 		  || au_fi(file)->fi_hfile[0 + bstart].hf_file);
 
-	spin_lock(&file->f_lock);
-	flags = file->f_flags & ~O_TRUNC;
-	spin_unlock(&file->f_lock);
-	h_file = au_h_open(dentry, bstart, flags, file);
+	h_file = au_h_open(dentry, bstart, vfsub_file_flags(file) & ~O_TRUNC,
+			   file);
 	err = PTR_ERR(h_file);
 	if (IS_ERR(h_file))
 		goto out; /* todo: close all? */
@@ -218,6 +209,7 @@ static int au_ready_to_write_wh(struct file *file, loff_t len,
 	struct super_block *sb;
 
 	dentry = file->f_dentry;
+	au_update_dbstart(dentry);
 	inode = dentry->d_inode;
 	hi_wh = au_hi_wh(inode, bcpup);
 	if (!hi_wh)

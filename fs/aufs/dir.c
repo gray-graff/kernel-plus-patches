@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -112,9 +112,7 @@ static int reopen_dir(struct file *file)
 		au_set_h_fptr(file, bindex, NULL);
 	au_set_fbend(file, btail);
 
-	spin_lock(&file->f_lock);
-	flags = file->f_flags;
-	spin_unlock(&file->f_lock);
+	flags = vfsub_file_flags(file);
 	for (bindex = bstart; bindex <= btail; bindex++) {
 		h_dentry = au_h_dptr(dentry, bindex);
 		if (!h_dentry)

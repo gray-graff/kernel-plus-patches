@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 #include <linux/mman.h>
 #include <linux/mm.h>
 #include <linux/security.h>
+#include <linux/smp_lock.h>
 #include "aufs.h"
 
 /* common function to regular file and dir */
@@ -469,35 +470,62 @@ static struct vm_operations_struct aufs_vm_ops = {
 
 /* ---------------------------------------------------------------------- */
 
+/* cf. linux/include/linux/mman.h: calc_vm_prot_bits() */
+#define AuConv_VM_PROT(f, b)	_calc_vm_trans(f, VM_##b, PROT_##b)
+
+static unsigned long au_arch_prot_conv(unsigned long flags)
+{
+	/* currently ppc64 only */
+#ifdef CONFIG_PPC64
+	/* cf. linux/arch/powerpc/include/asm/mman.h */
+	AuDebugOn(arch_calc_vm_prot_bits(-1) != VM_SAO);
+	return AuConv_VM_PROT(flags, SAO);
+#else
+	AuDebugOn(arch_calc_vm_prot_bits(-1));
+	return 0;
+#endif
+}
+
 static unsigned long au_prot_conv(unsigned long flags)
 {
-	unsigned long prot;
+	return AuConv_VM_PROT(flags, READ)
+		| AuConv_VM_PROT(flags, WRITE)
+		| AuConv_VM_PROT(flags, EXEC)
+		| au_arch_prot_conv(flags);
+}
 
-	prot = 0;
-	if (flags & VM_READ)
-		prot |= PROT_READ;
-	if (flags & VM_WRITE)
-		prot |= PROT_WRITE;
-	if (flags & VM_EXEC)
-		prot |= PROT_EXEC;
-	return prot;
+/* cf. linux/include/linux/mman.h: calc_vm_flag_bits() */
+#define AuConv_VM_MAP(f, b)	_calc_vm_trans(f, VM_##b, MAP_##b)
+
+static unsigned long au_flag_conv(unsigned long flags)
+{
+	return AuConv_VM_MAP(flags, GROWSDOWN)
+		| AuConv_VM_MAP(flags, DENYWRITE)
+		| AuConv_VM_MAP(flags, EXECUTABLE)
+		| AuConv_VM_MAP(flags, LOCKED);
 }
 
 static struct vm_operations_struct *au_vm_ops(struct file *h_file,
 					      struct vm_area_struct *vma)
 {
 	struct vm_operations_struct *vm_ops;
+	unsigned long prot;
 	int err;
-
-	/* todo: call security_file_mmap() here */
 
 	vm_ops = ERR_PTR(-ENODEV);
 	if (!h_file->f_op || !h_file->f_op->mmap)
 		goto out;
 
-	err = ima_file_mmap(h_file, au_prot_conv(vma->vm_flags));
+	prot = au_prot_conv(vma->vm_flags);
+	err = security_file_mmap(h_file, /*reqprot*/prot, prot,
+				 au_flag_conv(vma->vm_flags), vma->vm_start, 0);
 	vm_ops = ERR_PTR(err);
-	if (err)
+	if (unlikely(err))
+		goto out;
+
+	err = ima_file_mmap(h_file, prot);
+	vm_ops = ERR_PTR(err);
+	if (unlikely(err))
 		goto out;
 
 	err = h_file->f_op->mmap(h_file, vma);
@@ -562,10 +590,25 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 	dentry = file->f_dentry;
 	wlock = !!(file->f_mode & FMODE_WRITE) && (vma->vm_flags & VM_SHARED);
 	sb = dentry->d_sb;
+	/*
+	 * Very ugly BKL approach to keep the order of locks.
+	 * Here mm->mmap_sem is acquired by our caller.
+	 *
+	 * native readdir, i_mutex, copy_to_user, mmap_sem
+	 * aufs readdir, i_mutex, rwsem, nested-i_mutex, copy_to_user, mmap_sem
+	 * aufs mmap, mmap_sem, rwsem
+	 *
+	 * Unlock it temporary.
+	 */
+	lock_kernel();
+	up_write(&current->mm->mmap_sem);
 	si_read_lock(sb, AuLock_FLUSH);
 	err = au_reval_and_lock_fdi(file, au_reopen_nondir, /*wlock*/1);
-	if (unlikely(err))
+	if (unlikely(err)) {
+		down_write(&current->mm->mmap_sem);
+		unlock_kernel();
 		goto out;
+	}
 
 	mmapped = !!au_test_mmapped(file);
 	if (wlock) {
@@ -573,11 +616,16 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 
 		err = au_ready_to_write(file, -1, &pin);
 		di_downgrade_lock(dentry, AuLock_IR);
-		if (unlikely(err))
+		if (unlikely(err)) {
+			down_write(&current->mm->mmap_sem);
+			unlock_kernel();
 			goto out_unlock;
+		}
 		au_unpin(&pin);
 	} else
 		di_downgrade_lock(dentry, AuLock_IR);
+	down_write(&current->mm->mmap_sem);
+	unlock_kernel();
 
 	h_file = au_h_fptr(file, au_fbstart(file));
 	if (!mmapped && au_test_fs_bad_mapping(h_file->f_dentry->d_sb)) {

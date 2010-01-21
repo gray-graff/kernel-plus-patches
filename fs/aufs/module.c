@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -61,6 +61,8 @@ static int __init au_cache_init(void)
 static void au_cache_fin(void)
 {
 	int i;
+
+	/* including AuCache_HINOTIFY */
 	for (i = 0; i < AuCache_Last; i++)
 		if (au_cachep[i]) {
 			kmem_cache_destroy(au_cachep[i]);

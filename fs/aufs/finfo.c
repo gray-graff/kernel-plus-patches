@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,8 @@
 
 void au_hfput(struct au_hfile *hf, struct file *file)
 {
-	if (file->f_flags & vfsub_fmode_to_uint(FMODE_EXEC))
+	/* todo: direct access f_flags */
+	if (vfsub_file_flags(file) & vfsub_fmode_to_uint(FMODE_EXEC))
 		allow_write_access(hf->hf_file);
 	fput(hf->hf_file);
 	hf->hf_file = NULL;

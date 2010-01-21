@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -223,7 +223,7 @@ static int au_do_open_sp(struct file *file, int flags)
 	au_cpup_sp(dentry); /* ignore */
 
 	/* prepare h_file */
-	err = au_do_open_nondir(file, file->f_flags);
+	err = au_do_open_nondir(file, vfsub_file_flags(file));
 	if (unlikely(err))
 		goto out;
 
