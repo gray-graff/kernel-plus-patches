@@ -7,7 +7,7 @@ igb
 
 #wireless network card drivers
 ndiswrapper
-rt2860
+#rt2860
 rtl8187se
 bcmwl
 madwifi-hal
@@ -18,20 +18,19 @@ heci
 omnibook
 
 #virtualization drivers
-kqemu
 virtualbox
 virtualbox-addition
 
 #other drivers
-#lirc
+lirc
 subfs
 #svgalib_helper
 #etercifs
 
 #telephony drivers
-dahdi
-wanpipe 
-cronyx
+#dahdi
+#wanpipe 
+#cronyx
 
 #network block devices and cluster filesystems
 #drbd8
