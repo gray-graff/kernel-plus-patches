@@ -114,6 +114,29 @@ not work well.
 
 Install this package only if you really need it.
 
+%package -n kernel-modules-ide-%flavour
+Summary: IDE  driver modules (obsolete by PATA)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-ide-%flavour
+This package contains  IDE driver modules for the Linux kernel
+package %name-%version-%release.
+
+These drivers are declared obsolete by the kernel maintainers; PATA
+drivers should be used instead.  However, the older IDE drivers may be
+still useful for some hardware, if the corresponding PATA drivers do
+not work well.
+
+Install this package only if you really need it.
+
+
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
 Group: System/Kernel and hardware
@@ -431,6 +454,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-ide-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-ide-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -470,6 +500,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/arch/x86/kvm
+%exclude %modules_dir/kernel/drivers/ide/
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
@@ -478,6 +509,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
 %endif #oss
+
+%files -n kernel-modules-ide-%flavour
+%modules_dir/kernel/drivers/ide/
+
 %files -n kernel-headers-%flavour
 %kheaders_dir
 
@@ -509,6 +544,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - Build std-def based on un-def 
 - 2.6.32
 - on x86_64 turn on paravirt guest support
+- move IDE modules to separated subpackage(use PATA instead).
 
 * Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
 - aufs updated
