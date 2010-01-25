@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.32-un-def-alt3
-# Fri Jan 15 06:41:58 2010
+# Linux kernel version: 2.6.32-un-def-alt5
+# Mon Jan 25 15:16:19 2010
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -4442,7 +4442,7 @@ CONFIG_UFS_FS=m
 # CONFIG_UFS_DEBUG is not set
 CONFIG_EXOFS_FS=m
 # CONFIG_EXOFS_DEBUG is not set
-CONFIG_AUFS_FS=y
+CONFIG_AUFS_FS=m
 CONFIG_AUFS_BRANCH_MAX_127=y
 # CONFIG_AUFS_BRANCH_MAX_511 is not set
 # CONFIG_AUFS_BRANCH_MAX_1023 is not set
