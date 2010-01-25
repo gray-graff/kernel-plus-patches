@@ -505,6 +505,7 @@ int security_inode_readlink(struct dentry *dentry)
 		return 0;
 	return security_ops->inode_readlink(dentry);
 }
+EXPORT_SYMBOL(security_inode_readlink);
 
 int security_inode_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
@@ -519,6 +520,7 @@ int security_inode_permission(struct inode *inode, int mask)
 		return 0;
 	return security_ops->inode_permission(inode, mask);
 }
+EXPORT_SYMBOL(security_inode_permission);
 
 int security_inode_setattr(struct dentry *dentry, struct iattr *attr)
 {
@@ -619,6 +621,7 @@ int security_file_permission(struct file *file, int mask)
 {
 	return security_ops->file_permission(file, mask);
 }
+EXPORT_SYMBOL(security_file_permission);
 
 int security_file_alloc(struct file *file)
 {
@@ -641,6 +644,7 @@ int security_file_mmap(struct file *file, unsigned long reqprot,
 {
 	return security_ops->file_mmap(file, reqprot, prot, flags, addr, addr_only);
 }
+EXPORT_SYMBOL(security_file_mmap);
 
 int security_file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
 			    unsigned long prot)
