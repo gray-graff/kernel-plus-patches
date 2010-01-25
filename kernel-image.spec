@@ -1,6 +1,6 @@
-Name: kernel-image-un-def
+Name: kernel-image-std-def
 Version: 2.6.32
-Release: alt5
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -86,10 +86,11 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "un" variant of kernel packages is a generic 2.6.x kernel which
+The "std" variant of kernel packages is a generic 2.6.x kernel which
 should support wide range of hardware, but does not contain patches
 which are useful only for some special applications (and may have
-undesirable side effects in other cases).
+undesirable side effects in other cases).  This is the default 2.6.x
+kernel variant for ALT Linux distributions.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -504,6 +505,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
+- Build std-def based on un-def 
+
 * Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
 - aufs updated
 
