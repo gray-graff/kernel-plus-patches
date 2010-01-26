@@ -525,6 +525,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Mon Jan 25 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt6
+- 2.6.32.6
 - move aufs to module
 - merge feat-gpu-drm-intel-kms-overlay from shrek@
 - staging modules are separated to subpackage
