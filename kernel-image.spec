@@ -528,6 +528,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - move aufs to module
 - merge feat-gpu-drm-intel-kms-overlay from shrek@
 - staging modules are separated to subpackage
+- paravirtualization enabled
 
 * Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
 - aufs updated
