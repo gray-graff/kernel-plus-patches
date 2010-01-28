@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt6
+Release: alt6.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -524,6 +524,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu Jan 28 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt6.1
+- OSS disabled
+- preemption enabled
+
 * Mon Jan 25 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt6
 - 2.6.32.6
 - move aufs to module
