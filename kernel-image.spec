@@ -24,7 +24,7 @@ epoch:1
 %def_enable docs
 
 #Remove oss
-%def_enable oss
+%def_disable oss
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
@@ -91,27 +91,6 @@ should support wide range of hardware, but does not contain patches
 which are useful only for some special applications (and may have
 undesirable side effects in other cases).
 
-%package -n kernel-modules-oss-%flavour
-Summary: OSS sound driver modules (obsolete)
-Group: System/Kernel and hardware
-Provides:  kernel-modules-oss-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-oss-%flavour
-This package contains OSS sound driver modules for the Linux kernel
-package %name-%version-%release.
-
-These drivers are declared obsolete by the kernel maintainers; ALSA
-drivers should be used instead.  However, the older OSS drivers may be
-still useful for some hardware, if the corresponding ALSA drivers do
-not work well.
-
-Install this package only if you really need it.
 
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
@@ -440,12 +419,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %preun
 %preun_kernel_image %kversion-%flavour-%krelease
 
-%post -n kernel-modules-oss-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-oss-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -486,14 +459,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/arch/x86/kvm
-%if_enabled oss
-# OSS drivers
-%exclude %modules_dir/kernel/sound/oss
 /lib/firmware/*
 
-%files -n kernel-modules-oss-%flavour
-%modules_dir/kernel/sound/oss
-%endif #oss
 %files -n kernel-headers-%flavour
 %kheaders_dir
 
@@ -509,7 +476,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 %files -n kernel-modules-alsa-%flavour
 %modules_dir/kernel/sound/
-%exclude %modules_dir/kernel/sound/oss
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
