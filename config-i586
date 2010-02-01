@@ -1,7 +1,5 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.32-un-def-alt6.1
-# Thu Jan 28 19:07:54 2010
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -3682,6 +3680,7 @@ CONFIG_LOGO_LINUX_CLUT224=y
 #
 CONFIG_BOOTSPLASH=y
 CONFIG_SOUND=m
+# CONFIG_SOUND_OSS_CORE is not set
 CONFIG_SND=m
 CONFIG_SND_TIMER=m
 CONFIG_SND_PCM=m
