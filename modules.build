@@ -6,15 +6,14 @@ nvidia
 igb
 
 #wireless network card drivers
-ndiswrapper
+#ndiswrapper
 #rt2860
-rtl8187se
+#rtl8187se
 bcmwl
-madwifi-hal
+#madwifi-hal
 
 #vendor specific  hardware features drives
 tp_smapi
-heci
 omnibook
 
 #virtualization drivers
