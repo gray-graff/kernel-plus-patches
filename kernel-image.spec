@@ -216,6 +216,22 @@ Requires(postun): %name = %version-%release
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
 
+%package -n kernel-modules-staging-%flavour
+Summary:  Kernel modules under development
+Group: System/Kernel and hardware
+Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-staging-%flavour
+Drivers and filesystems that are not ready to be merged into the main
+portion of the Linux kernel tree at this point in time for various
+technical reasons.
+
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
 Group: Development/Kernel
@@ -498,6 +514,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
+%exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/arch/x86/kvm
 %exclude %modules_dir/kernel/drivers/ide/
@@ -540,6 +557,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
+
+%files -n kernel-modules-staging-%flavour
+%modules_dir/kernel/drivers/staging/
 
 %changelog
 * Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
