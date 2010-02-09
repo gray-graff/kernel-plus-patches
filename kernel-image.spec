@@ -434,6 +434,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %post -n kernel-modules-v4l-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-staging-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
 %postun -n kernel-modules-v4l-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
