@@ -91,6 +91,18 @@ The "un" variant of kernel packages is a low latency desktop oriented
 but it is not 'official' ALT Linux kernel and you can use it for you
 own risk.
 
+%package -n kernel-image-domU-%flavour
+Summary: Uncompressed linux kernel for XEN domU boot 
+Group: System/Kernel and hardware
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+
+%description -n kernel-image-domU-%flavour
+Most XEN virtualization system versions can not boot lzma-compressed
+kernel images. This is an optional package with uncompressed linux
+kernel image for this special case. If you do not know what is it XEN
+it seems that you do not need this package.
+
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
 Group: System/Kernel and hardware
@@ -306,6 +318,7 @@ KernelVer=%kversion-%flavour-%krelease
 install -Dp -m644 System.map %buildroot/boot/System.map-$KernelVer
 install -Dp -m644 arch/%base_arch/boot/bzImage \
 	%buildroot/boot/vmlinuz-$KernelVer
+install -Dp -m644 vmlinux %buildroot/boot/vmlinux-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
@@ -478,6 +491,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
+/boot/vmlinux-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
@@ -489,6 +503,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 /lib/firmware/*
+
+%files -n kernel-image-domU-%flavour
+/boot/vmlinux-%kversion-%flavour-%krelease
 
 %files -n kernel-headers-%flavour
 %kheaders_dir
