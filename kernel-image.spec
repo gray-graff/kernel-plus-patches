@@ -491,7 +491,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
-/boot/vmlinux-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
