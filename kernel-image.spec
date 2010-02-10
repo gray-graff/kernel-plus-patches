@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt7
+Release: alt8
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -86,11 +86,10 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "un" variant of kernel packages is a generic 2.6.x kernel which
-should support wide range of hardware, but does not contain patches
-which are useful only for some special applications (and may have
-undesirable side effects in other cases).
-
+The "un" variant of kernel packages is a low latency desktop oriented
+2.6.x kernel which should support wide range of hardware,
+but it is not 'official' ALT Linux kernel and you can use it for you
+own risk.
 
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
@@ -430,11 +429,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
-#remove video headers
-#rm -rf %buildroot%kbuild_dir/include/media
-#rm -rf %buildroot%kbuild_dir/drivers/media
-#rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
-
 %post
 %post_kernel_image %kversion-%flavour-%krelease
 
@@ -528,6 +522,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Feb 09 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8
+- 2.6.32.8
+- ide separated to subpackage
+- additional -domU package with uncompressed vmlinux
+
 * Thu Jan 28 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt7
 - 2.6.32.7
 - OSS disabled
