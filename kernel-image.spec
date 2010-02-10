@@ -543,6 +543,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 2.6.32.8
 - ide separated to subpackage
 - additional -domU package with uncompressed vmlinux
+- CONFIG_CGROUP_MEM_RES_CTLR enabled
 
 * Thu Jan 28 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt7
 - 2.6.32.7
