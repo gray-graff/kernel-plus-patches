@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.32
-Release: alt1
+Release: alt9
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -562,6 +562,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon Mar 01 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
+- 2.6.32.9
+- set N in altN to last kernal version number
+- NETFLOW targert enabled
+- KMS on intel by default
+
 * Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
 - Build std-def based on un-def 
 - 2.6.32.7
