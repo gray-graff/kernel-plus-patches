@@ -6,7 +6,7 @@ nvidia
 igb
 
 #wireless network card drivers
-#ndiswrapper
+ndiswrapper
 #rt2860
 #rtl8187se
 bcmwl
@@ -27,11 +27,14 @@ subfs
 #etercifs
 
 #telephony drivers
-#dahdi
+dahdi
 #wanpipe 
 #cronyx
 
 #network block devices and cluster filesystems
-#drbd8
+drbd83
 #gnbd
 #gfs
+#network additional features
+ipset
+pf_ring
