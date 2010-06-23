@@ -564,6 +564,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Tue Jun 22 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15
 - 2.6.32.15
+- turn off latencytop support
+- turn off framepointers
 
 * Mon Apr 05 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt11
 - 2.6.32.11 
