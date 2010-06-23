@@ -566,6 +566,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 2.6.32.15
 - turn off latencytop support
 - turn off framepointers
+- add some drivers
 
 * Mon Apr 05 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt11
 - 2.6.32.11 

@@ -1,4 +1,3 @@
-
 /*
  * MOXA USB to Serial Hub Linux Driver
  *
@@ -87,7 +86,6 @@
  * Function prototypes
  */
 static int  mxu2s_startup		(struct usb_serial *serial);
-static void mxu2s_shutdown		(struct usb_serial *serial);
 static int  mxu2s_open			(struct tty_struct *, struct usb_serial_port *port,
 					 struct file *filp);
 static void mxu2s_close			(struct tty_struct *,struct usb_serial_port *port,
@@ -176,7 +174,6 @@ static struct usb_serial_driver mxu2s_np1240_device = {
 	.tiocmget =		mxu2s_tiocmget,
 	.tiocmset =		mxu2s_tiocmset,
 	.attach =		mxu2s_startup,
-	.shutdown =		mxu2s_shutdown,
 	.throttle =		mxu2s_throttle,
 	.unthrottle =		mxu2s_unthrottle,
 };
@@ -200,7 +197,6 @@ static struct usb_serial_driver mxu2s_np1220_device = {
 	.tiocmget =		mxu2s_tiocmget,
 	.tiocmset =		mxu2s_tiocmset,
 	.attach =		mxu2s_startup,
-	.shutdown =		mxu2s_shutdown,
 	.throttle =		mxu2s_throttle,
 	.unthrottle =		mxu2s_unthrottle,
 };
@@ -226,7 +222,6 @@ static struct usb_serial_driver mxu2s_np1220I_device = {
 	.tiocmget =		mxu2s_tiocmget,
 	.tiocmset =		mxu2s_tiocmset,
 	.attach =		mxu2s_startup,
-	.shutdown =		mxu2s_shutdown,
 	.throttle =		mxu2s_throttle,
 	.unthrottle =		mxu2s_unthrottle,
 };
@@ -349,29 +344,6 @@ static int mxu2s_startup (struct usb_serial *serial)
 	return 0;
 } /* mxu2s_startup */
 
-
-/************************************************************************
- * mxu2s_shutdown
- ************************************************************************/
-static void mxu2s_shutdown (struct usb_serial *serial)
-{
-	int i;
-	struct mxu2s_private *priv;
-
-	dbg("%s", __FUNCTION__);
-
-	/* stop reads and writes on all ports */
-	for(i=0; i<serial->num_ports; ++i)
-	{
-		priv = usb_get_serial_port_data(serial->port[i]);
-
-		kfree(priv);
-		usb_set_serial_port_data(serial->port[i], NULL);
-	}
-	if(usb_get_serial_data(serial) != NULL)
-		kfree (usb_get_serial_data(serial));
-	usb_set_serial_data(serial, NULL);
-} /* mxu2s_shutdown */
 
 
 /************************************************************************
@@ -539,8 +511,8 @@ static void mxu2s_close (struct tty_struct *tty, struct usb_serial_port *port, s
 	mxu2s_control_msg(port, MXU2S_PURGE, USB_DIR_OUT, 
 			(MXU2S_PURGE_READ | MXU2S_PURGE_WRITE), NULL, 0);
 
-	if(tty->ldisc.ops->flush_buffer)
-		tty->ldisc.ops->flush_buffer(tty);
+	if(tty->ldisc->ops->flush_buffer)
+		tty->ldisc->ops->flush_buffer(tty);
 
 
 	rc = mxu2s_control_msg(port, MXU2S_IFC_ENABLE, USB_DIR_OUT,
