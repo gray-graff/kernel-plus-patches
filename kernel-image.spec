@@ -563,7 +563,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Fri Jul 02 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15.1
-
+- Add support for New Marvell Sky2 (Closes: #23672)
 
 * Tue Jun 22 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15
 - 2.6.32.15
