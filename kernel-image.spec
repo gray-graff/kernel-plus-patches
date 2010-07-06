@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.32
-Release: alt15.1
+Release: alt16
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -562,6 +562,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Jul 06 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt16
+- 2.6.32.16
+
 * Fri Jul 02 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15.1
 - Add support for New Marvell Sky2 (Closes: #23672)
 
