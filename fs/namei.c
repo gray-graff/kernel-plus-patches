@@ -2287,6 +2287,8 @@ int vfs_unlink(struct inode *dir, struct dentry *dentry)
 	if (!dir->i_op->unlink)
 		return -EPERM;
 
+	vfs_check_frozen(dir->i_sb, SB_FREEZE_WRITE);
+
 	vfs_dq_init(dir);
 
 	mutex_lock(&dentry->d_inode->i_mutex);
