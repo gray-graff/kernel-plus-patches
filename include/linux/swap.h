@@ -191,6 +191,7 @@ struct swap_list_t {
 extern unsigned long totalram_pages;
 extern unsigned long totalreserve_pages;
 extern unsigned int nr_free_buffer_pages(void);
+extern unsigned int nr_unallocated_buffer_pages(void);
 extern unsigned int nr_free_pagecache_pages(void);
 
 /* Definition of global_page_state not available yet */

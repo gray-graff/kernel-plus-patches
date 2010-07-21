@@ -2217,6 +2217,9 @@ void wakeup_kswapd(struct zone *zone, int order)
 	if (!populated_zone(zone))
 		return;
 
+	if (freezer_is_on())
+		return;
+
 	pgdat = zone->zone_pgdat;
 	if (zone_watermark_ok(zone, order, low_wmark_pages(zone), 0, 0))
 		return;
@@ -2409,6 +2412,7 @@ out:
 
 	return sc.nr_reclaimed;
 }
+EXPORT_SYMBOL_GPL(shrink_all_memory);
 #endif /* CONFIG_HIBERNATION */
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
