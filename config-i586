@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.32.16
-# Thu Jul 22 01:23:06 2010
+# Thu Jul 22 18:28:40 2010
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -401,7 +401,7 @@ CONFIG_TOI_CORE=m
 #
 # Image Storage (you need at least one allocator)
 #
-# CONFIG_TOI_FILE is not set
+CONFIG_TOI_FILE=m
 CONFIG_TOI_SWAP=m
 
 #
@@ -409,10 +409,10 @@ CONFIG_TOI_SWAP=m
 #
 CONFIG_TOI_CRYPTO=m
 CONFIG_TOI_USERUI=m
-CONFIG_TOI_USERUI_DEFAULT_PATH="/usr/local/sbin/tuxoniceui_text"
+CONFIG_TOI_USERUI_DEFAULT_PATH="/usr/sbin/tuxoniceui_text"
 # CONFIG_TOI_KEEP_IMAGE is not set
 CONFIG_TOI_REPLACE_SWSUSP=y
-# CONFIG_TOI_IGNORE_LATE_INITCALL is not set
+CONFIG_TOI_IGNORE_LATE_INITCALL=y
 CONFIG_TOI_DEFAULT_WAIT=25
 CONFIG_TOI_DEFAULT_EXTRA_PAGES_ALLOWANCE=2000
 # CONFIG_TOI_CHECKSUM is not set
